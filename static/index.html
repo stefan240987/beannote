@@ -34,6 +34,8 @@
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     :root { color-scheme: light; }
     html, body { background: #faf6f0; }
@@ -41,6 +43,9 @@
     .tabbar { padding-bottom: max(0.4rem, env(safe-area-inset-bottom)); }
     input, select, textarea, button { font-family: inherit; }
     .slider { accent-color: #b85c38; }
+    #origin-map, #world-map { z-index: 1; }
+    .leaflet-container { font-family: inherit; background: #f3ebe3; }
+    .coffee-pin { background: transparent !important; border: none !important; font-size: 1.6rem; line-height: 1; }
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
@@ -61,7 +66,12 @@
       editScan: false,
       toast: "",
       busy: false,
-      rate: { brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3, notes: "" },
+      beanFilter: "all",
+      exploreMode: "cards",
+      rate: {
+        brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
+        notes: "", grind_setting: "", coffee_grams: "", water_grams: "", brew_time: "",
+      },
     };
     let radarChart = null;
 
@@ -126,6 +136,7 @@
 
     async function loadBeans() {
       const q = new URLSearchParams({ search: state.search });
+      if (state.beanFilter === "favorites") q.set("favorites", "1");
       state.beans = await api(`/api/beans?${q}`);
     }
 
@@ -133,17 +144,19 @@
       state.selectedId = id;
       state.profile = await api(`/api/beans/${id}`);
       const user = state.profile.user;
-      if (user) {
-        state.rate = {
-          brew_method: user.brew_method || "V60",
-          rating: user.rating || 4,
-          acidity: user.acidity || 3,
-          sweetness: user.sweetness || 3,
-          body: user.body || 3,
-          aftertaste: user.aftertaste || 3,
-          notes: user.notes || "",
-        };
-      }
+      state.rate = {
+        brew_method: user?.brew_method || "V60",
+        rating: user?.rating || 4,
+        acidity: user?.acidity || 3,
+        sweetness: user?.sweetness || 3,
+        body: user?.body || 3,
+        aftertaste: user?.aftertaste || 3,
+        notes: user?.notes || "",
+        grind_setting: user?.grind_setting || "",
+        coffee_grams: user?.coffee_grams ?? "",
+        water_grams: user?.water_grams ?? "",
+        brew_time: user?.brew_time || "",
+      };
       state.tab = tab;
       render();
     }
@@ -179,6 +192,57 @@
         temp: rec.water_temp || source?.water_temp || "",
         ratio: rec.brew_ratio || source?.brew_ratio || "",
       };
+    }
+
+    function heartBtn(bean, extra = "") {
+      const on = !!bean?.is_favorite;
+      return `<button type="button" data-fav="${bean.id}" aria-label="${esc(on ? t("favorite_remove") : t("favorite_add"))}"
+        class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg shadow ${extra}">${on ? "❤️" : "♡"}</button>`;
+    }
+
+    function metaBadges(source) {
+      const bits = [];
+      if (source?.altitude) {
+        const raw = String(source.altitude);
+        const label = /masl|m\.o\.h|moh/i.test(raw) ? raw : `${raw} ${t("masl")}`;
+        bits.push(`<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium">${esc(label)}</span>`);
+      }
+      if (source?.varietal) {
+        bits.push(`<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium">${esc(source.varietal)}</span>`);
+      }
+      if (source?.roast_date) {
+        bits.push(`<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium">${esc(t("roast_date"))}: ${esc(source.roast_date)}</span>`);
+      }
+      return bits.length ? `<div class="flex flex-wrap gap-1">${bits.join("")}</div>` : "";
+    }
+
+    function originMapBox(source) {
+      if (source?.latitude == null || source?.longitude == null) return "";
+      const label = source.region_full || source.origin || source.name || t("map_origin");
+      return `<div id="origin-map" class="h-48 w-full rounded-xl" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
+    }
+
+    function recipeBlock(recipe) {
+      if (!recipe) return "";
+      const parts = [
+        recipe.grind_setting,
+        recipe.coffee_grams != null && recipe.coffee_grams !== "" ? `${recipe.coffee_grams}g` : "",
+        recipe.water_grams != null && recipe.water_grams !== "" ? `${recipe.water_grams}g` : "",
+        recipe.brew_time,
+      ].filter(Boolean);
+      if (!parts.length) return "";
+      return `<div class="rounded-xl bg-foam px-3 py-2">
+        <p class="text-sm font-semibold">${t("my_recipe")}</p>
+        <p class="mt-0.5 text-xs text-muted">${esc(parts.join(" · "))}</p>
+      </div>`;
+    }
+
+    function segment(name, options, current) {
+      return `<div class="grid grid-cols-2 gap-1 rounded-xl bg-foam p-1">
+        ${options.map(([id, label]) => `
+          <button type="button" data-${name}="${id}" class="min-h-10 rounded-lg px-2 text-sm font-semibold ${current === id ? "bg-white text-espresso shadow-sm" : "text-muted"}">${label}</button>
+        `).join("")}
+      </div>`;
     }
 
     function brewBadge(source) {
@@ -263,22 +327,34 @@
     }
 
     function exploreView() {
+      const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
       const cards = state.beans.map((bean) => {
         const photo = mediaSrc(bean.image_url);
-        return `<button data-open-bean="${bean.id}" class="overflow-hidden rounded-2xl bg-white text-left shadow-sm ring-1 ring-latte">
-          ${photo ? `<img src="${photo}" alt="" class="h-44 w-full object-cover">` : bagFallback()}
-          <div class="p-3">
-            <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
-            <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
-            <div class="mt-2 flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
-            <p class="mt-2 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
-          </div>
-        </button>`;
+        return `<article class="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
+          ${heartBtn(bean, "absolute right-2 top-2 z-10")}
+          <button data-open-bean="${bean.id}" class="w-full text-left">
+            ${photo ? `<img src="${photo}" alt="" class="h-44 w-full object-cover">` : bagFallback()}
+            <div class="p-3">
+              <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
+              <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
+              <div class="mt-2 flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+              <div class="mt-2">${metaBadges(bean)}</div>
+              <p class="mt-2 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
+            </div>
+          </button>
+        </article>`;
       }).join("");
       const detail = state.profile?.bean;
+      const pane = state.exploreMode === "map"
+        ? `<div id="world-map" class="mt-4 h-96 w-full overflow-hidden rounded-xl ring-1 ring-latte"></div>`
+        : `<div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>`;
       return `<section class="px-4 pb-28 pt-4">
         <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("search"))}">
-        <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${t("empty_explore")}</p>`}</div>
+        <div class="mt-3 grid gap-2">
+          ${segment("filter", [["all", t("filter_all_beans")], ["favorites", t("filter_favorites")]], state.beanFilter)}
+          ${segment("view", [["cards", t("view_cards")], ["map", t("view_map")]], state.exploreMode)}
+        </div>
+        ${pane}
         ${detail ? beanSheet(state.profile) : ""}
       </section>`;
     }
@@ -287,12 +363,18 @@
       const bean = profile.bean;
       const photo = mediaSrc(bean.image_url);
       return `<article class="mt-5 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
-        ${photo ? `<img src="${photo}" alt="" class="max-h-64 w-full object-contain bg-foam">` : bagFallback()}
+        <div class="relative">
+          ${photo ? `<img src="${photo}" alt="" class="max-h-64 w-full object-contain bg-foam">` : bagFallback()}
+          ${heartBtn(bean, "absolute right-3 top-3")}
+        </div>
         <div class="space-y-3 p-4">
           <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
           <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin)} · ${esc(bean.process)}</p>
           <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+          ${metaBadges(bean)}
+          ${originMapBox(bean)}
           ${journalBits(bean)}
+          ${recipeBlock(profile.user?.my_recipe)}
           <canvas id="radar" height="280"></canvas>
           <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
         </div>
@@ -328,6 +410,8 @@
             <h2 class="font-display text-2xl font-bold">${esc(scan.name || t("add_name"))}</h2>
             <p class="text-sm text-muted">${esc(scan.roaster)} · ${esc(scan.origin)} · ${esc(scan.process)}</p>
             <div class="flex flex-wrap gap-1">${pills(scan.flavor_tags)}</div>
+            ${metaBadges(scan)}
+            ${originMapBox(scan)}
             ${journalBits(scan)}
             ${similar ? `<div class="rounded-xl bg-foam p-3 text-sm">
               <p class="font-semibold">${t("duplicate_warning")}</p>
@@ -350,6 +434,10 @@
         <input name="name" value="${esc(scan.name || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_name"))}">
         <input name="roaster" value="${esc(scan.roaster || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_roaster"))}">
         <input name="origin" value="${esc(scan.origin || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("origin"))}">
+        <input name="region_full" value="${esc(scan.region_full || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("region_full"))}">
+        <input name="roast_date" value="${esc(scan.roast_date || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("roast_date"))}">
+        <input name="altitude" value="${esc(scan.altitude || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("altitude"))}">
+        <input name="varietal" value="${esc(scan.varietal || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("varietal"))}">
         <select name="process" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.processes, scan.process)}</select>
         <select name="roast_level" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.roast_levels, scan.roast_level)}</select>
         <textarea name="roaster_notes" class="min-h-20 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("add_roaster_notes"))}">${esc(scan.roaster_notes || "")}</textarea>
@@ -371,6 +459,24 @@
         <label class="block text-sm font-medium">${t("brew_method")}
           <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${brew}</select>
         </label>
+        <fieldset class="space-y-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+          <legend class="px-1 text-sm font-semibold">${t("my_recipe")}</legend>
+          <p class="text-xs text-muted">${t("recipe_help")}</p>
+          <label class="block text-sm font-medium">${t("grind_setting")}
+            <input id="grind_setting" value="${esc(state.rate.grind_setting || "")}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("grind_setting_ph"))}">
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-sm font-medium">${t("coffee_grams")}
+              <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("coffee_grams_ph"))}">
+            </label>
+            <label class="block text-sm font-medium">${t("water_grams")}
+              <input id="water_grams" type="number" inputmode="decimal" step="1" min="0" value="${esc(state.rate.water_grams)}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("water_grams_ph"))}">
+            </label>
+          </div>
+          <label class="block text-sm font-medium">${t("brew_time")}
+            <input id="brew_time" value="${esc(state.rate.brew_time || "")}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("brew_time_ph"))}">
+          </label>
+        </fieldset>
         ${slider("rating", t("rating"), t("help_rating"), state.rate.rating)}
         ${slider("acidity", t("acidity"), t("help_acidity"), state.rate.acidity)}
         ${slider("sweetness", t("sweetness"), t("help_sweetness"), state.rate.sweetness)}
@@ -392,9 +498,11 @@
           <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
           <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
         </div>
-        <label class="block text-sm font-medium">${t("language")}
-          <select id="lang" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${langs}</select>
-        </label>
+        <div class="space-y-2">
+          <p class="text-sm font-medium">${t("language")}</p>
+          ${segment("setlang", [["da", "Dansk"], ["en", "English"]], state.config.lang)}
+          <select id="lang" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3">${langs}</select>
+        </div>
         <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold">${t("export_csv")}</a>
         <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("logout")}</button>
       </section>`;
@@ -467,12 +575,71 @@
       });
     }
 
+    function coffeeIcon() {
+      return L.divIcon({
+        className: "coffee-pin",
+        html: '<span aria-hidden="true">☕</span>',
+        iconSize: [32, 32],
+        iconAnchor: [16, 28],
+        popupAnchor: [0, -24],
+      });
+    }
+
+    function addOsm(map) {
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap",
+        maxZoom: 18,
+      }).addTo(map);
+    }
+
+    function drawMaps() {
+      if (!window.L) return;
+      const origin = $("#origin-map");
+      if (origin) {
+        const lat = Number(origin.dataset.lat);
+        const lng = Number(origin.dataset.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const map = L.map(origin, { scrollWheelZoom: false }).setView([lat, lng], 7);
+          addOsm(map);
+          L.marker([lat, lng], { icon: coffeeIcon() })
+            .addTo(map)
+            .bindPopup(origin.dataset.label || t("map_origin"));
+          requestAnimationFrame(() => map.invalidateSize());
+        }
+      }
+      const world = $("#world-map");
+      if (world) {
+        const map = L.map(world, { scrollWheelZoom: false }).setView([8, 20], 2);
+        addOsm(map);
+        const bounds = [];
+        state.beans.forEach((bean) => {
+          const lat = Number(bean.latitude);
+          const lng = Number(bean.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+          const marker = L.marker([lat, lng], { icon: coffeeIcon() }).addTo(map);
+          marker.bindPopup(
+            `<button type="button" class="font-semibold text-terracotta" data-open-bean="${bean.id}">${esc(bean.name)}</button><br>${esc(bean.roaster)}<br>${esc(bean.region_full || bean.origin || "")}`
+          );
+          bounds.push([lat, lng]);
+        });
+        if (bounds.length === 1) map.setView(bounds[0], 6);
+        else if (bounds.length > 1) map.fitBounds(bounds, { padding: [28, 28] });
+        map.on("popupopen", () => {
+          document.querySelectorAll(".leaflet-popup-content [data-open-bean]").forEach((btn) => {
+            btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean)));
+          });
+        });
+        requestAnimationFrame(() => map.invalidateSize());
+      }
+    }
+
     function render() {
       const root = $("#app");
       if (!state.config) {
         root.innerHTML = `<p class="p-8 text-center text-muted">BeanNote…</p>`;
         return;
       }
+      document.documentElement.lang = state.config.lang || "da";
       if (!state.user) {
         root.innerHTML = authView();
         bindAuth();
@@ -482,6 +649,7 @@
       root.innerHTML = `${header()}${body}${tabbar()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-20 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-30 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
       drawRadar();
+      drawMaps();
     }
 
     function bindAuth() {
@@ -540,6 +708,10 @@
         name: data.get("name"),
         roaster: data.get("roaster"),
         origin: data.get("origin"),
+        region_full: data.get("region_full"),
+        roast_date: data.get("roast_date"),
+        altitude: data.get("altitude"),
+        varietal: data.get("varietal"),
         process: data.get("process"),
         roast_level: data.get("roast_level"),
         roaster_notes: data.get("roaster_notes"),
@@ -554,7 +726,8 @@
       try {
         const body = new FormData();
         body.append("file", file);
-        state.scan = await api("/api/scan", { method: "POST", body });
+        const lang = localStorage.getItem(LANG_KEY) || "da";
+        state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
         if (state.scan.scan_action === "rate" && state.scan.scan_match?.id) {
           toast(t("bean_found"));
           await openBean(state.scan.scan_match.id, "rate");
@@ -580,6 +753,32 @@
         await loadBeans();
         render();
       });
+      document.querySelectorAll("[data-filter]").forEach((btn) => btn.addEventListener("click", async () => {
+        state.beanFilter = btn.dataset.filter;
+        state.selectedId = null;
+        state.profile = null;
+        await loadBeans();
+        render();
+      }));
+      document.querySelectorAll("[data-view]").forEach((btn) => btn.addEventListener("click", () => {
+        state.exploreMode = btn.dataset.view;
+        render();
+      }));
+      document.querySelectorAll("[data-fav]").forEach((btn) => btn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          const result = await api(`/api/beans/${btn.dataset.fav}/favorite`, { method: "POST", body: "{}" });
+          const id = Number(result.bean_id);
+          state.beans = state.beans.map((bean) => bean.id === id ? { ...bean, is_favorite: result.is_favorite } : bean);
+          if (state.profile?.bean?.id === id) state.profile.bean.is_favorite = result.is_favorite;
+          if (state.beanFilter === "favorites") await loadBeans();
+          toast(t(result.is_favorite ? "favorite_saved" : "favorite_removed"));
+          render();
+        } catch (err) {
+          toast(t(err.detail || "auth_required"));
+        }
+      }));
       document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean))));
       document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.rateBean), "rate")));
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
@@ -605,6 +804,12 @@
               water_temp: scan.water_temp || scan.brew_recommendation?.water_temp || "",
               brew_ratio: scan.brew_ratio || scan.brew_recommendation?.brew_ratio || "",
               brew_recommendation: scan.brew_recommendation || {},
+              roast_date: scan.roast_date || "",
+              altitude: scan.altitude || "",
+              varietal: scan.varietal || "",
+              latitude: scan.latitude,
+              longitude: scan.longitude,
+              region_full: scan.region_full || "",
               skip_fuzzy: false,
             }),
           });
@@ -635,12 +840,21 @@
       $("#rate-bean")?.addEventListener("change", (event) => openBean(Number(event.target.value), "rate"));
       $("#brew")?.addEventListener("change", (event) => { state.rate.brew_method = event.target.value; });
       $("#notes")?.addEventListener("input", (event) => { state.rate.notes = event.target.value; });
+      ["grind_setting", "brew_time", "coffee_grams", "water_grams"].forEach((key) => {
+        $(`#${key}`)?.addEventListener("input", (event) => { state.rate[key] = event.target.value; });
+      });
       $("#save-rating")?.addEventListener("click", async () => {
         if (!state.selectedId) return toast(t("select_bean"));
         try {
+          const grams = (value) => value === "" || value == null ? null : Number(value);
           const result = await api("/api/ratings", {
             method: "POST",
-            body: JSON.stringify({ bean_id: Number(state.selectedId), ...state.rate }),
+            body: JSON.stringify({
+              bean_id: Number(state.selectedId),
+              ...state.rate,
+              coffee_grams: grams(state.rate.coffee_grams),
+              water_grams: grams(state.rate.water_grams),
+            }),
           });
           state.profile = result.profile;
           toast(t("saved_toast"));
@@ -649,11 +863,16 @@
           toast(t(err.detail || "required"));
         }
       });
-      $("#lang")?.addEventListener("change", async (event) => {
-        localStorage.setItem(LANG_KEY, event.target.value);
-        state.config = await api(`/api/config?lang=${event.target.value}`);
+      async function changeLang(lang) {
+        localStorage.setItem(LANG_KEY, lang);
+        state.config = await api(`/api/config?lang=${lang}`);
+        document.documentElement.lang = lang;
         render();
+      }
+      document.querySelectorAll("[data-setlang]").forEach((btn) => {
+        btn.addEventListener("click", () => changeLang(btn.dataset.setlang));
       });
+      $("#lang")?.addEventListener("change", (event) => changeLang(event.target.value));
       $("#logout")?.addEventListener("click", async () => {
         await api("/api/auth/logout", { method: "POST", body: "{}" });
         localStorage.removeItem(TOKEN_KEY);

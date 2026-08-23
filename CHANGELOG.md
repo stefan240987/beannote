@@ -2,6 +2,15 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.5.0] - 2026-08-23
+
+- Local mobile testing: Uvicorn binds `0.0.0.0:8501`, CORS allows all origins, and startup/`run_local.sh` print the LAN URL plus a terminal QR code so a phone on the same Wi-Fi can open BeanNote immediately.
+- Full i18n for new UI (favorites filters, map toggles, recipe fields, map popups, toasts). Gemini Vision prompts now receive the active `da`/`en` language; the Profile tab switcher still persists in `localStorage`.
+- Favorites table (`user_id`, `bean_id`) with a heart toggle on every coffee card and detail modal, plus an Explore filter for All Beans / Favorites.
+- Enthusiast metadata (`roast_date`, `altitude`, `varietal`, `latitude`, `longitude`, `region_full`) from Gemini Vision, shown as MASL / varietal badges with localized brew recommendations. Ratings store personal brew parameters as My Recipe.
+- Leaflet origin map in the AI preview and detail modal (☕ pin) plus an Explore Cards / World Map toggle for all saved beans.
+- `ENVIRONMENT=local` flushes every SQLite table on startup for clean test runs.
+
 ## [2.1.0] - 2026-08-23
 
 - Local/test startup now performs an absolute wipe of `beans`, `ratings`, and `users` (plus bag photos) when `ENVIRONMENT=local` or `RESET_DB_ON_START=true`. Demo beans are no longer seeded, so every test run starts empty.

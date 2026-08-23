@@ -8,3 +8,4 @@ cryptography>=43.0.0
 pytesseract>=0.3.13
 Pillow>=10.4.0
 google-genai>=1.0.0
+qrcode>=7.4.2

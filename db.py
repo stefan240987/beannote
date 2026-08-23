@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.1.0"
+VERSION = "2.5.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -86,11 +86,16 @@ def _flush_local_db() -> None:
 
 
 def _wipe_all_tables(conn: sqlite3.Connection) -> None:
-    """Empty beans, ratings, and users even if the file delete was skipped."""
+    """Empty every application table so local test runs start clean."""
     conn.execute("PRAGMA foreign_keys = OFF")
-    conn.execute("DELETE FROM ratings")
-    conn.execute("DELETE FROM beans")
-    conn.execute("DELETE FROM users")
+    tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    for table in tables:
+        conn.execute(f"DELETE FROM {table}")
     conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -129,6 +134,12 @@ def init_db() -> None:
                 grind_size TEXT DEFAULT '',
                 water_temp TEXT DEFAULT '',
                 brew_ratio TEXT DEFAULT '',
+                roast_date TEXT DEFAULT '',
+                altitude TEXT DEFAULT '',
+                varietal TEXT DEFAULT '',
+                latitude REAL,
+                longitude REAL,
+                region_full TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 UNIQUE (name, roaster) ON CONFLICT IGNORE
             );
@@ -144,9 +155,22 @@ def init_db() -> None:
                 body REAL DEFAULT 3.0,
                 aftertaste REAL DEFAULT 3.0,
                 notes TEXT DEFAULT '',
+                grind_setting TEXT DEFAULT '',
+                coffee_grams REAL,
+                water_grams REAL,
+                brew_time TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id INTEGER NOT NULL,
+                bean_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, bean_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_beans_origin ON beans(origin);
@@ -154,6 +178,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ratings_bean ON ratings(bean_id);
             CREATE INDEX IF NOT EXISTS idx_ratings_user ON ratings(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(auth_provider, oauth_id);
+            CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
             """
         )
         _ensure_columns(conn)
@@ -168,12 +193,30 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
     if "story" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
-    for column in ("recommended_method", "grind_size", "water_temp", "brew_ratio"):
+    for column in (
+        "recommended_method",
+        "grind_size",
+        "water_temp",
+        "brew_ratio",
+        "roast_date",
+        "altitude",
+        "varietal",
+        "region_full",
+    ):
         if column not in beans:
             conn.execute(f"ALTER TABLE beans ADD COLUMN {column} TEXT DEFAULT ''")
+    for column, decl in (("latitude", "REAL"), ("longitude", "REAL")):
+        if column not in beans:
+            conn.execute(f"ALTER TABLE beans ADD COLUMN {column} {decl}")
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
+    for column in ("grind_setting", "brew_time"):
+        if column not in ratings:
+            conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} TEXT DEFAULT ''")
+    for column in ("coffee_grams", "water_grams"):
+        if column not in ratings:
+            conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} REAL")
 
 
 def get_images_dir() -> Path:
@@ -221,6 +264,105 @@ def update_bean_story(bean_id: int, story: str) -> None:
         )
 
 
+ORIGIN_COORDS: dict[str, tuple[float, float, str]] = {
+    "yirgacheffe": (6.1624, 38.2070, "Yirgacheffe, Ethiopia"),
+    "sidamo": (6.6167, 38.4167, "Sidamo, Ethiopia"),
+    "sidama": (6.6167, 38.4167, "Sidama, Ethiopia"),
+    "guji": (5.7333, 39.2500, "Guji, Ethiopia"),
+    "harrar": (9.3111, 42.1258, "Harrar, Ethiopia"),
+    "limu": (8.1500, 36.3500, "Limu, Ethiopia"),
+    "ethiopia": (9.1450, 38.7667, "Ethiopia"),
+    "etiopien": (9.1450, 38.7667, "Ethiopia"),
+    "huila": (2.5359, -75.5277, "Huila, Colombia"),
+    "narino": (1.2892, -77.3579, "Nariño, Colombia"),
+    "nariño": (1.2892, -77.3579, "Nariño, Colombia"),
+    "antioquia": (6.2442, -75.5812, "Antioquia, Colombia"),
+    "cauca": (2.4448, -76.6147, "Cauca, Colombia"),
+    "colombia": (4.5709, -74.2973, "Colombia"),
+    "nyeri": (-0.4167, 36.9500, "Nyeri, Kenya"),
+    "kirinyaga": (-0.5000, 37.3000, "Kirinyaga, Kenya"),
+    "kenya": (-0.0236, 37.9062, "Kenya"),
+    "cerrado": (-16.6869, -49.2648, "Cerrado, Brazil"),
+    "minas gerais": (-18.5122, -44.5550, "Minas Gerais, Brazil"),
+    "sul de minas": (-21.2500, -45.0000, "Sul de Minas, Brazil"),
+    "brazil": (-14.2350, -51.9253, "Brazil"),
+    "brasilien": (-14.2350, -51.9253, "Brazil"),
+    "antigua": (14.5611, -90.7295, "Antigua, Guatemala"),
+    "huehuetenango": (15.3197, -91.4675, "Huehuetenango, Guatemala"),
+    "guatemala": (15.7835, -90.2308, "Guatemala"),
+    "tarrazu": (9.6500, -84.0000, "Tarrazú, Costa Rica"),
+    "tarrazú": (9.6500, -84.0000, "Tarrazú, Costa Rica"),
+    "costa rica": (9.7489, -83.7534, "Costa Rica"),
+    "rwanda": (-1.9403, 29.8739, "Rwanda"),
+    "burundi": (-3.3731, 29.9189, "Burundi"),
+    "yemen": (15.5527, 48.5164, "Yemen"),
+    "jemen": (15.5527, 48.5164, "Yemen"),
+    "peru": (-9.1900, -75.0152, "Peru"),
+    "honduras": (15.2000, -86.2419, "Honduras"),
+    "el salvador": (13.7942, -88.8965, "El Salvador"),
+    "panama": (8.5380, -80.7821, "Panama"),
+    "boquete": (8.7800, -82.4300, "Boquete, Panama"),
+    "indonesia": (-0.7893, 113.9213, "Indonesia"),
+    "indonesien": (-0.7893, 113.9213, "Indonesia"),
+    "sumatra": (0.5897, 101.3431, "Sumatra, Indonesia"),
+    "java": (-7.6145, 110.7122, "Java, Indonesia"),
+    "india": (20.5937, 78.9629, "India"),
+    "indien": (20.5937, 78.9629, "India"),
+    "mexico": (23.6345, -102.5528, "Mexico"),
+    "tanzania": (-6.3690, 34.8888, "Tanzania"),
+    "uganda": (1.3733, 32.2903, "Uganda"),
+    "nicaragua": (12.2650, -85.2072, "Nicaragua"),
+    "bolivia": (-16.2902, -63.5887, "Bolivia"),
+}
+
+
+def _as_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_origin_geo(
+    origin: str = "",
+    region_full: str = "",
+    latitude: Any = None,
+    longitude: Any = None,
+) -> tuple[float | None, float | None, str]:
+    lat = _as_float(latitude)
+    lng = _as_float(longitude)
+    region = _normalize(region_full)
+    if lat is not None and lng is not None:
+        return lat, lng, region or _normalize(origin)
+    blob = f"{region} {origin}".lower()
+    for key, (clat, clng, label) in sorted(ORIGIN_COORDS.items(), key=lambda item: len(item[0]), reverse=True):
+        if key in blob:
+            return clat, clng, region or label
+    return lat, lng, region or _normalize(origin)
+
+
+def _normalize_meta_fields(
+    roast_date: str = "",
+    altitude: str = "",
+    varietal: str = "",
+    latitude: Any = None,
+    longitude: Any = None,
+    region_full: str = "",
+    origin: str = "",
+) -> dict[str, Any]:
+    lat, lng, region = resolve_origin_geo(origin, region_full, latitude, longitude)
+    return {
+        "roast_date": (roast_date or "").strip(),
+        "altitude": (altitude or "").strip(),
+        "varietal": _normalize(varietal),
+        "latitude": lat,
+        "longitude": lng,
+        "region_full": region,
+    }
+
+
 def _normalize_brew_fields(
     recommended_method: str = "",
     grind_size: str = "",
@@ -260,7 +402,29 @@ def _apply_brew_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], brew: d
     bean["brew_recommendation"] = dict(brew)
 
 
-def _row_to_bean(row: sqlite3.Row | None) -> dict[str, Any] | None:
+def _apply_meta_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], meta: dict[str, Any]) -> None:
+    if not bean:
+        return
+    updates: dict[str, Any] = {}
+    for key in ("roast_date", "altitude", "varietal", "region_full"):
+        incoming = (meta.get(key) or "").strip()
+        if incoming and not (bean.get(key) or "").strip():
+            updates[key] = incoming
+    if meta.get("latitude") is not None and bean.get("latitude") is None:
+        updates["latitude"] = meta["latitude"]
+    if meta.get("longitude") is not None and bean.get("longitude") is None:
+        updates["longitude"] = meta["longitude"]
+    if not updates:
+        return
+    assignments = ", ".join(f"{key} = ?" for key in updates)
+    conn.execute(
+        f"UPDATE beans SET {assignments} WHERE id = ?",
+        (*updates.values(), bean["id"]),
+    )
+    bean.update(updates)
+
+
+def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str, Any] | None:
     if row is None:
         return None
     data = dict(row)
@@ -278,6 +442,20 @@ def _row_to_bean(row: sqlite3.Row | None) -> dict[str, Any] | None:
     }
     data.update(brew)
     data["brew_recommendation"] = brew
+    lat, lng, region = resolve_origin_geo(
+        data.get("origin") or "",
+        data.get("region_full") or "",
+        data.get("latitude"),
+        data.get("longitude"),
+    )
+    data["roast_date"] = (data.get("roast_date") or "").strip()
+    data["altitude"] = (data.get("altitude") or "").strip()
+    data["varietal"] = (data.get("varietal") or "").strip()
+    data["latitude"] = lat
+    data["longitude"] = lng
+    data["region_full"] = region
+    favorite = data.pop("is_favorite", None)
+    data["is_favorite"] = bool(is_favorite if favorite is None else favorite)
     return data
 
 
@@ -372,6 +550,12 @@ def insert_bean(
     water_temp: str = "",
     brew_ratio: str = "",
     brew_recommendation: dict[str, Any] | None = None,
+    roast_date: str = "",
+    altitude: str = "",
+    varietal: str = "",
+    latitude: Any = None,
+    longitude: Any = None,
+    region_full: str = "",
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
@@ -383,6 +567,15 @@ def insert_bean(
         water_temp,
         brew_ratio,
         brew_recommendation,
+    )
+    meta = _normalize_meta_fields(
+        roast_date,
+        altitude,
+        varietal,
+        latitude,
+        longitude,
+        region_full,
+        origin,
     )
     if not name or not roaster:
         raise ValueError("name_roaster_required")
@@ -397,9 +590,11 @@ def insert_bean(
         if story and not (bean.get("story") or "").strip():
             update_bean_story(bean["id"], story)
             bean["story"] = story
-        if any(brew.values()):
+        if any(brew.values()) or any(meta.values()):
             with connect() as conn:
-                _apply_brew_if_empty(conn, bean, brew)
+                if any(brew.values()):
+                    _apply_brew_if_empty(conn, bean, brew)
+                _apply_meta_if_empty(conn, bean, meta)
         return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
@@ -411,8 +606,9 @@ def insert_bean(
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
                 flavor_tags, story, image_url, recommended_method, grind_size,
-                water_temp, brew_ratio, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                water_temp, brew_ratio, roast_date, altitude, varietal,
+                latitude, longitude, region_full, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -428,6 +624,12 @@ def insert_bean(
                 brew["grind_size"],
                 brew["water_temp"],
                 brew["brew_ratio"],
+                meta["roast_date"],
+                meta["altitude"],
+                meta["varietal"],
+                meta["latitude"],
+                meta["longitude"],
+                meta["region_full"],
                 _now(),
             ),
         )
@@ -451,6 +653,7 @@ def insert_bean(
                 bean["story"] = story
             if bean:
                 _apply_brew_if_empty(conn, bean, brew)
+                _apply_meta_if_empty(conn, bean, meta)
             return {"status": "exists", "bean": bean}
 
         bean = conn.execute(
@@ -459,10 +662,46 @@ def insert_bean(
         return {"status": "created", "bean": _row_to_bean(bean)}
 
 
-def get_bean(bean_id: int) -> dict[str, Any] | None:
+def get_bean(bean_id: int, user_id: int | None = None) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM beans WHERE id = ?", (bean_id,)).fetchone()
-    return _row_to_bean(row)
+        favorite = False
+        if user_id is not None and row is not None:
+            favorite = bool(
+                conn.execute(
+                    "SELECT 1 FROM favorites WHERE user_id = ? AND bean_id = ?",
+                    (user_id, bean_id),
+                ).fetchone()
+            )
+    return _row_to_bean(row, is_favorite=favorite)
+
+
+def is_favorite(user_id: int, bean_id: int) -> bool:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM favorites WHERE user_id = ? AND bean_id = ?",
+            (user_id, bean_id),
+        ).fetchone()
+    return bool(row)
+
+
+def toggle_favorite(user_id: int, bean_id: int) -> bool:
+    with connect() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM favorites WHERE user_id = ? AND bean_id = ?",
+            (user_id, bean_id),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM favorites WHERE user_id = ? AND bean_id = ?",
+                (user_id, bean_id),
+            )
+            return False
+        conn.execute(
+            "INSERT INTO favorites (user_id, bean_id, created_at) VALUES (?, ?, ?)",
+            (user_id, bean_id, _now()),
+        )
+        return True
 
 
 def list_beans(
@@ -470,20 +709,33 @@ def list_beans(
     origin: str = "",
     roast_level: str = "",
     min_rating: float = 0.0,
+    user_id: int | None = None,
+    favorites_only: bool = False,
 ) -> list[dict[str, Any]]:
-    query = """
+    favorite_select = "0 AS is_favorite"
+    favorite_join = ""
+    params: list[Any] = []
+    if user_id is not None:
+        favorite_select = "CASE WHEN f.bean_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite"
+        if favorites_only:
+            favorite_join = "INNER JOIN favorites f ON f.bean_id = b.id AND f.user_id = ?"
+        else:
+            favorite_join = "LEFT JOIN favorites f ON f.bean_id = b.id AND f.user_id = ?"
+        params.append(user_id)
+    query = f"""
         SELECT b.*,
                AVG(r.rating) AS avg_rating,
                COUNT(r.id) AS rating_count,
                AVG(r.acidity) AS avg_acidity,
                AVG(r.sweetness) AS avg_sweetness,
                AVG(r.body) AS avg_body,
-               AVG(r.aftertaste) AS avg_aftertaste
+               AVG(r.aftertaste) AS avg_aftertaste,
+               {favorite_select}
         FROM beans b
         LEFT JOIN ratings r ON r.bean_id = b.id
+        {favorite_join}
         WHERE 1=1
     """
-    params: list[Any] = []
     if search:
         query += " AND (b.name LIKE ? OR b.roaster LIKE ? OR b.origin LIKE ? OR b.flavor_tags LIKE ?)"
         like = f"%{search}%"
@@ -530,14 +782,19 @@ def insert_rating(
     aftertaste: float,
     notes: str = "",
     user_id: int | None = None,
+    grind_setting: str = "",
+    coffee_grams: float | None = None,
+    water_grams: float | None = None,
+    brew_time: str = "",
 ) -> dict[str, Any]:
     with connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO ratings (
                 bean_id, user_id, brew_method, rating, acidity, sweetness, body,
-                aftertaste, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                aftertaste, notes, grind_setting, coffee_grams, water_grams,
+                brew_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 bean_id,
@@ -549,6 +806,10 @@ def insert_rating(
                 _snap_half(body),
                 _snap_half(aftertaste),
                 (notes or "").strip(),
+                (grind_setting or "").strip(),
+                _as_float(coffee_grams),
+                _as_float(water_grams),
+                (brew_time or "").strip(),
                 _now(),
             ),
         )
@@ -575,7 +836,7 @@ def list_ratings(bean_id: int | None = None) -> list[dict[str, Any]]:
 
 
 def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, Any]:
-    bean = get_bean(bean_id)
+    bean = get_bean(bean_id, user_id=user_id)
     if not bean:
         return {}
     with connect() as conn:
@@ -619,6 +880,13 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
         "rating_count": stats["rating_count"] or 0,
     }
     user = dict(latest) if latest else None
+    if user:
+        user["my_recipe"] = {
+            "grind_setting": (user.get("grind_setting") or "").strip(),
+            "coffee_grams": user.get("coffee_grams"),
+            "water_grams": user.get("water_grams"),
+            "brew_time": (user.get("brew_time") or "").strip(),
+        }
     return {"bean": bean, "community": community, "user": user}
 
 
@@ -641,6 +909,10 @@ def export_ratings(fmt: str = "csv") -> tuple[str, str, bytes]:
         "body",
         "aftertaste",
         "notes",
+        "grind_setting",
+        "coffee_grams",
+        "water_grams",
+        "brew_time",
         "created_at",
     ]
     writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")

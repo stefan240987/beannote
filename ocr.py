@@ -13,7 +13,15 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
-from db import classify_matches, find_similar_beans, scan_destination
+from db import classify_matches, find_similar_beans, resolve_origin_geo, scan_destination
+
+STORY_LANG = {
+    "da": "Danish",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+}
 
 ORIGINS = [
     "Ethiopia", "Etiopien", "Colombia", "Kenya", "Brazil", "Brasilien",
@@ -355,6 +363,18 @@ def normalize_scan_fields(parsed: dict[str, Any]) -> dict[str, Any]:
     out["flavor_notes"] = flavors
     out["flavor_tags"] = flavors
     out["story"] = (parsed.get("story") or "").strip()
+    out["roast_date"] = (parsed.get("roast_date") or "").strip()
+    out["altitude"] = (parsed.get("altitude") or "").strip()
+    out["varietal"] = (parsed.get("varietal") or parsed.get("variety") or "").strip()
+    lat, lng, region = resolve_origin_geo(
+        out["origin"],
+        parsed.get("region_full") or "",
+        parsed.get("latitude"),
+        parsed.get("longitude"),
+    )
+    out["latitude"] = lat
+    out["longitude"] = lng
+    out["region_full"] = region
     brew = infer_brew_recommendation(out)
     out["brew_recommendation"] = brew
     out.update(brew)
@@ -442,10 +462,11 @@ def infer_brew_recommendation(parsed: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _gemini_prompt() -> str:
+def _gemini_prompt(lang: str = "da") -> str:
     flavors = ", ".join(f'"{name}"' for name in FLAVOR_NOTES)
     processes = ", ".join(f'"{name}"' for name in PROCESSES)
     roasts = ", ".join(f'"{name}"' for name in ROAST_LEVELS)
+    story_lang = STORY_LANG.get((lang or "da").lower(), "Danish")
     return (
         "You are a specialty-coffee label reader for BeanNote. "
         "Inspect this coffee bag photo and return ONE JSON object only "
@@ -453,11 +474,17 @@ def _gemini_prompt() -> str:
         '- "roaster": roaster / brand name\n'
         '- "bean_name": coffee / lot name (not the roaster)\n'
         '- "origin": country and optional region, e.g. "Ethiopia, Yirgacheffe"\n'
+        '- "region_full": full origin place name, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
+        '- "latitude": float WGS84 latitude of the farm or origin region\n'
+        '- "longitude": float WGS84 longitude of the farm or origin region\n'
+        '- "roast_date": roast date string if printed, else ""\n'
+        '- "altitude": altitude in MASL, e.g. "1800-2100 masl"\n'
+        '- "varietal": bean variety, e.g. "Geisha", "Bourbon", "Caturra", "Heirloom"\n'
         f'- "process": exactly one of [{processes}]\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
         f'- "flavor_tags": array of 1–6 descriptors chosen only from [{flavors}]\n'
         '- "official_notes": raw tasting-notes text from the label\n'
-        '- "story": 2–4 engaging Danish sentences ("Kaffens Historie"). '
+        f'- "story": 2–4 engaging {story_lang} sentences ("Kaffens Historie"). '
         "Combine printed label facts (farm, region, altitude, varietals, process, "
         "flavor notes) with your specialty-coffee knowledge into a short "
         "background story. Include farm, region, altitude, varietals, or a "
@@ -478,6 +505,8 @@ def _gemini_prompt() -> str:
         "92-94°C, 1:16. Darker or espresso-oriented roasts suit Espresso and a "
         "fine grind. Full-bodied naturals can use Stempelkande (French Press) "
         "with a coarse grind.\n"
+        "If latitude/longitude are not printed, infer the best-known coordinates "
+        "for the origin region (for example Yirgacheffe ≈ 6.16, 38.21). "
         "Read printed text first. If a field is missing on the label, "
         "use your coffee knowledge (origin, process, typical roast and flavors "
         "for that lot or origin) to fill it. Prefer Danish process/roast labels. "
@@ -642,13 +671,13 @@ def verify_gemini_connection(model_name: str = "gemini-1.5-flash") -> dict[str, 
     return {"ok": False, "model": model_name, "error": last_error}
 
 
-def scan_label_gemini(image_bytes: bytes) -> dict[str, Any] | None:
+def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | None:
     """Call Gemini 1.5 Flash Vision and return a normalized BeanNote field dict."""
     key = get_gemini_api_key()
     if not key:
         return None
     image = _prepare_scan_image(image_bytes)
-    prompt = _gemini_prompt()
+    prompt = _gemini_prompt(lang)
     data: dict[str, Any] | None = None
     try:
         data = _scan_with_genai(image, key, prompt)
@@ -719,6 +748,15 @@ def parse_label(text: str) -> dict[str, Any]:
     roaster = _find_roaster(lines, blob)
     name = _find_bean_name(lines, roaster, origin)
     notes_text, flavors = _find_notes(blob)
+    altitude = _value_after_label(
+        lines, blob, ("altitude", "højde", "masl", "m.o.h", "højde over havet")
+    )
+    varietal = _value_after_label(
+        lines, blob, ("variety", "varietal", "sort", "varietet", "cultivar")
+    )
+    roast_date = _value_after_label(
+        lines, blob, ("roast date", "ristet", "ristningsdato", "ristedato", "roasted")
+    )
 
     return {
         "name": name,
@@ -729,13 +767,16 @@ def parse_label(text: str) -> dict[str, Any]:
         "roaster_notes": notes_text,
         "flavor_notes": flavors,
         "story": "",
+        "altitude": altitude,
+        "varietal": varietal,
+        "roast_date": roast_date,
         "raw_text": text,
     }
 
 
-def scan_label(image_bytes: bytes) -> dict[str, Any]:
+def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
     if gemini_available():
-        parsed = scan_label_gemini(image_bytes)
+        parsed = scan_label_gemini(image_bytes, lang=lang)
         if parsed is None:
             raise RuntimeError("Gemini Vision scan failed")
     else:

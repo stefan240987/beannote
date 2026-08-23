@@ -12,7 +12,8 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -34,6 +35,7 @@ from db import (
     insert_rating,
     list_beans,
     resolve_image_path,
+    toggle_favorite,
     save_bean_image,
     should_auto_flush,
     upsert_oauth_user,
@@ -255,7 +257,51 @@ def _apple_client_secret() -> str:
     )
 
 
+def _lan_ipv4() -> str:
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
+
+
+def _print_lan_banner() -> None:
+    ip = _lan_ipv4()
+    url = f"http://{ip}:8501"
+    width = max(56, len(url) + 8)
+    bar = "─" * width
+    print()
+    print(f"┌{bar}┐")
+    print(f"│  BeanNote on your phone{' ' * (width - 24)}│")
+    print(f"│  {url}{' ' * (width - len(url) - 2)}│")
+    print(f"│  http://127.0.0.1:8501{' ' * (width - 24)}│")
+    print(f"│  Scan the QR code, or open the LAN URL{' ' * (width - 40)}│")
+    print(f"└{bar}┘")
+    try:
+        import qrcode
+
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.make(fit=True)
+        qr.print_ascii(invert=True)
+    except Exception:
+        print("  (install qrcode for a terminal QR code)")
+    print()
+
+
 app = FastAPI(title="BeanNote", version=VERSION)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -265,6 +311,8 @@ def _startup() -> None:
     ensure_local_env()
     load_local_env()
     init_db()
+    if ENVIRONMENT == "local":
+        _print_lan_banner()
 
 
 @app.get("/api/health")
@@ -327,6 +375,12 @@ class BeanIn(BaseModel):
     water_temp: str = ""
     brew_ratio: str = ""
     brew_recommendation: dict[str, Any] = Field(default_factory=dict)
+    roast_date: str = ""
+    altitude: str = ""
+    varietal: str = ""
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    region_full: str = ""
     skip_fuzzy: bool = False
 
 
@@ -339,6 +393,10 @@ class RatingIn(BaseModel):
     body: float = 3.0
     aftertaste: float = 3.0
     notes: str = ""
+    grind_setting: str = ""
+    coffee_grams: Optional[float] = None
+    water_grams: Optional[float] = None
+    brew_time: str = ""
 
 
 def _auth_error(code: str) -> HTTPException:
@@ -563,9 +621,17 @@ def beans(
     origin: str = "",
     roast_level: str = "",
     min_rating: float = 0.0,
-    _user: dict[str, Any] = Depends(current_user),
+    favorites: bool = False,
+    user: dict[str, Any] = Depends(current_user),
 ) -> list[dict[str, Any]]:
-    return list_beans(search=search, origin=origin, roast_level=roast_level, min_rating=min_rating)
+    return list_beans(
+        search=search,
+        origin=origin,
+        roast_level=roast_level,
+        min_rating=min_rating,
+        user_id=user["id"],
+        favorites_only=favorites,
+    )
 
 
 @app.get("/api/beans/{bean_id}")
@@ -601,15 +667,29 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             water_temp=payload.water_temp,
             brew_ratio=payload.brew_ratio,
             brew_recommendation=payload.brew_recommendation,
+            roast_date=payload.roast_date,
+            altitude=payload.altitude,
+            varietal=payload.varietal,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            region_full=payload.region_full,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result
 
 
+@app.post("/api/beans/{bean_id}/favorite")
+def favorite_bean(bean_id: int, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not get_bean(bean_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"is_favorite": toggle_favorite(user["id"], bean_id), "bean_id": bean_id}
+
+
 @app.post("/api/scan")
 async def scan(
     file: UploadFile = File(...),
+    lang: str = Query("da"),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     del user
@@ -618,9 +698,11 @@ async def scan(
         raise HTTPException(status_code=400, detail="empty_image")
     if not scan_available():
         raise HTTPException(status_code=503, detail="ocr_missing")
+    if lang not in LANGS:
+        lang = "da"
     try:
         jpeg = encode_scan_jpeg(raw)
-        parsed = scan_label(jpeg)
+        parsed = scan_label(jpeg, lang=lang)
     except RuntimeError as exc:
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     image_url = save_bean_image(jpeg, filename="scan.jpg")
@@ -643,6 +725,10 @@ def create_rating(payload: RatingIn, user: dict[str, Any] = Depends(current_user
         aftertaste=payload.aftertaste,
         notes=payload.notes,
         user_id=user["id"],
+        grind_setting=payload.grind_setting,
+        coffee_grams=payload.coffee_grams,
+        water_grams=payload.water_grams,
+        brew_time=payload.brew_time,
     )
     return {"rating": rating, "profile": get_flavor_profile(payload.bean_id, user_id=user["id"])}
 
