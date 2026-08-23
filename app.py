@@ -323,6 +323,14 @@ def inject_css() -> None:
             max-width: 100% !important;
             height: auto !important;
         }
+        [data-testid="stFileUploader"] img,
+        [data-testid="stVerticalBlock"]:has(.bn-upload-preview-flag) [data-testid="stImage"] img {
+            max-height: 140px !important;
+            height: 140px !important;
+            width: 100% !important;
+            object-fit: cover !important;
+            border-radius: 10px;
+        }
         [data-testid="stPlotlyChart"],
         [data-testid="stPlotlyChart"] > div,
         .js-plotly-plot,
@@ -854,6 +862,10 @@ def apply_pending_ui() -> None:
     pending_notes = st.session_state.pop("pending_review_notes", None)
     if pending_notes is not None:
         st.session_state.review_notes = pending_notes
+    if "add_process" in st.session_state and st.session_state.add_process not in PROCESSES:
+        st.session_state.add_process = None
+    if "add_roast" in st.session_state and st.session_state.add_roast not in ROAST_LEVELS:
+        st.session_state.add_roast = None
     if not st.session_state.pop("reset_add_form", False):
         return
     st.session_state.ocr_form = {}
@@ -862,8 +874,8 @@ def apply_pending_ui() -> None:
     st.session_state.add_name = ""
     st.session_state.add_roaster = ""
     st.session_state.add_origin = ""
-    st.session_state.add_process = ""
-    st.session_state.add_roast = ""
+    st.session_state.add_process = None
+    st.session_state.add_roast = None
     st.session_state.add_notes = ""
     st.session_state.add_flavors = []
     st.session_state.add_story = ""
@@ -876,9 +888,9 @@ def apply_ocr_form(parsed: dict) -> None:
     process = parsed.get("process") or ""
     roast = parsed.get("roast_level") or ""
     if process not in PROCESSES:
-        process = ""
+        process = None
     if roast not in ROAST_LEVELS:
-        roast = ""
+        roast = None
     st.session_state.ocr_form = parsed
     st.session_state.pending_similar = parsed.get("similar") or []
     st.session_state.add_name = parsed.get("name") or ""
@@ -1223,33 +1235,6 @@ def render_review(lang: str) -> None:
 
 
 def render_add(lang: str) -> None:
-    from ocr import scan_available, scan_label
-
-    uploaded = st.file_uploader(
-        t(lang, "upload"),
-        type=SCAN_IMAGE_TYPES,
-        help=t(lang, "upload_help"),
-        accept_multiple_files=False,
-    )
-    if uploaded and st.button(t(lang, "scan"), type="primary", use_container_width=True):
-        if not scan_available():
-            st.error(t(lang, "ocr_missing"))
-        else:
-            try:
-                raw = uploaded.getvalue()
-                try:
-                    image_bytes = encode_scan_jpeg(raw)
-                    filename = "scan.jpg"
-                except Exception:
-                    image_bytes = raw
-                    filename = uploaded.name
-                parsed = scan_label(image_bytes)
-                parsed["image_url"] = save_bean_image(image_bytes, filename)
-                apply_ocr_form(parsed)
-                st.rerun()
-            except Exception:
-                st.error(t(lang, "ocr_fail"))
-
     flash = st.session_state.pop("ocr_flash", None)
     if flash == "scanned":
         st.success(t(lang, "scanned"))
@@ -1263,16 +1248,34 @@ def render_add(lang: str) -> None:
     attached = resolve_image_path(pending_image_url())
     if attached:
         st.caption(t(lang, "attached_label"))
-        st.image(str(attached), width=180)
+        st.markdown('<div class="bn-upload-preview-flag"></div>', unsafe_allow_html=True)
+        st.image(str(attached), use_container_width=True)
 
     form = st.session_state.get("ocr_form") or {}
     name = st.text_input(t(lang, "add_name"), key="add_name")
     roaster = st.text_input(t(lang, "add_roaster"), key="add_roaster")
     c1, c2, c3 = st.columns(3)
     origin = c1.text_input(t(lang, "origin"), key="add_origin")
-    process = c2.selectbox(t(lang, "add_process"), [""] + PROCESSES, key="add_process")
-    roast = c3.selectbox(t(lang, "add_roast"), [""] + ROAST_LEVELS, key="add_roast")
-    flavors = st.multiselect(t(lang, "add_flavor_notes"), FLAVOR_NOTES, key="add_flavors")
+    process = c2.selectbox(
+        t(lang, "add_process"),
+        PROCESSES,
+        index=None,
+        placeholder=t(lang, "choose_process"),
+        key="add_process",
+    )
+    roast = c3.selectbox(
+        t(lang, "add_roast"),
+        ROAST_LEVELS,
+        index=None,
+        placeholder=t(lang, "choose_roast"),
+        key="add_roast",
+    )
+    flavors = st.multiselect(
+        t(lang, "add_flavor_notes"),
+        FLAVOR_NOTES,
+        placeholder=t(lang, "choose_flavors"),
+        key="add_flavors",
+    )
     roaster_notes = st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
     st.markdown(
         f'<div class="bn-story-head">📖 {escape(t(lang, "bean_story"))}</div>',
@@ -1286,10 +1289,6 @@ def render_add(lang: str) -> None:
         placeholder=t(lang, "bean_story_ph"),
         label_visibility="collapsed",
     )
-    if "raw_text" in form:
-        with st.expander(t(lang, "raw_ocr")):
-            st.code(form.get("raw_text") or "—")
-
     if name.strip():
         similar = find_similar_beans(name, roaster)
     else:
@@ -1318,8 +1317,8 @@ def render_add(lang: str) -> None:
             name=name,
             roaster=roaster,
             origin=origin,
-            process=process,
-            roast_level=roast,
+            process=process or "",
+            roast_level=roast or "",
             roaster_notes=roaster_notes or ", ".join(flavors),
             flavor_tags=extract_flavor_tags(flavors) or None,
             skip_fuzzy=force,

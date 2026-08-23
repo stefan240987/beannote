@@ -178,11 +178,10 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent
 
 
-def load_local_env() -> None:
-    """Load root .env into os.environ without overwriting existing vars."""
-    env_path = _project_root() / ".env"
+def _parse_env_file(env_path: Path) -> dict[str, str]:
+    parsed: dict[str, str] = {}
     if not env_path.is_file():
-        return
+        return parsed
     for line in env_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
@@ -190,32 +189,100 @@ def load_local_env() -> None:
         key, _, value = stripped.partition("=")
         key = key.strip()
         value = value.strip().strip("'").strip('"')
+        if key:
+            parsed[key] = value
+    return parsed
+
+
+def load_local_env() -> None:
+    """Load root .env into os.environ without overwriting existing vars."""
+    for key, value in _parse_env_file(_project_root() / ".env").items():
         if key and key not in os.environ:
             os.environ[key] = value
 
 
+def _persist_gemini_key(env_path: Path, key: str) -> None:
+    """Write or fill GEMINI_API_KEY in .env. Never clears a non-empty value."""
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    written = False
+    out: list[str] = []
+    for line in lines:
+        if line.strip().startswith("GEMINI_API_KEY="):
+            _, _, current = line.partition("=")
+            if current.strip().strip("'").strip('"'):
+                out.append(line)
+            else:
+                out.append(f"GEMINI_API_KEY={key}")
+            written = True
+        else:
+            out.append(line)
+    if not written:
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"GEMINI_API_KEY={key}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def _write_streamlit_secrets(key: str) -> Path | None:
+    """Mirror a non-empty key into gitignored Streamlit secrets."""
+    if not key:
+        return None
+    secrets_dir = _project_root() / ".streamlit"
+    secrets_dir.mkdir(parents=True, exist_ok=True)
+    secrets_path = secrets_dir / "secrets.toml"
+    if secrets_path.is_file():
+        existing = _parse_env_file(secrets_path).get("GEMINI_API_KEY", "")
+        if not existing:
+            match = re.search(
+                r'(?m)^GEMINI_API_KEY\s*=\s*["\']?([^"\'\n]*)["\']?',
+                secrets_path.read_text(encoding="utf-8"),
+            )
+            existing = (match.group(1) if match else "").strip()
+        if existing:
+            return secrets_path
+    escaped = key.replace("\\", "\\\\").replace('"', '\\"')
+    secrets_path.write_text(f'GEMINI_API_KEY = "{escaped}"\n', encoding="utf-8")
+    return secrets_path
+
+
 def ensure_local_env() -> Path:
-    """Create an empty local .env if missing. Never writes a real API key."""
+    """Create or repair local .env so GEMINI_API_KEY is always declared."""
     env_path = _project_root() / ".env"
     if not env_path.exists():
         env_path.write_text(ENV_PLACEHOLDER, encoding="utf-8")
+    elif "GEMINI_API_KEY" not in env_path.read_text(encoding="utf-8"):
+        prefix = "" if env_path.read_text(encoding="utf-8").endswith("\n") else "\n"
+        with env_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{prefix}{ENV_PLACEHOLDER}")
+    load_local_env()
+    file_key = _parse_env_file(env_path).get("GEMINI_API_KEY", "").strip()
+    env_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    key = env_key or file_key
+    if env_key and not file_key:
+        _persist_gemini_key(env_path, env_key)
+        key = env_key
+    if key:
+        os.environ["GEMINI_API_KEY"] = key
+        _write_streamlit_secrets(key)
     return env_path
 
 
 def get_gemini_api_key() -> str:
+    ensure_local_env()
     load_local_env()
     key = (os.getenv("GEMINI_API_KEY") or "").strip()
-    if key:
-        return key
-    try:
-        import streamlit as st
+    if not key:
+        try:
+            import streamlit as st
 
-        secrets = getattr(st, "secrets", None)
-        if secrets is not None:
-            return str(secrets.get("GEMINI_API_KEY") or "").strip()
-    except Exception:
-        return ""
-    return ""
+            secrets = getattr(st, "secrets", None)
+            if secrets is not None:
+                key = str(secrets.get("GEMINI_API_KEY") or "").strip()
+        except Exception:
+            key = ""
+    if key:
+        os.environ["GEMINI_API_KEY"] = key
+    return key
 
 
 def gemini_available() -> bool:
@@ -409,6 +476,42 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     return None
 
 
+def verify_gemini_connection(model_name: str = "gemini-1.5-flash") -> dict[str, Any]:
+    """Ping Gemini with the configured key. Never logs or returns the secret."""
+    key = get_gemini_api_key()
+    if not key:
+        return {"ok": False, "model": model_name, "error": "GEMINI_API_KEY missing"}
+    last_error = ""
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=key)
+        response = client.models.generate_content(
+            model=model_name,
+            contents="Reply with the single word OK.",
+        )
+        text = (_response_text(response) or "").strip()
+        candidates = list(getattr(response, "candidates", None) or [])
+        if text or candidates:
+            return {"ok": True, "model": model_name, "sdk": "google.genai"}
+        last_error = "empty Gemini response"
+    except Exception as exc:
+        last_error = str(exc)
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=key)
+        response = genai.GenerativeModel(model_name).generate_content("Reply with the single word OK.")
+        text = (getattr(response, "text", None) or "").strip()
+        if text or getattr(response, "candidates", None):
+            return {"ok": True, "model": model_name, "sdk": "google.generativeai"}
+        last_error = last_error or "empty Gemini response"
+    except Exception as exc:
+        if "No module named" not in str(exc) or not last_error:
+            last_error = str(exc)
+    return {"ok": False, "model": model_name, "error": last_error}
+
+
 def scan_label_gemini(image_bytes: bytes) -> dict[str, Any] | None:
     """Call Gemini 1.5 Flash Vision and return a normalized BeanNote field dict."""
     key = get_gemini_api_key()
@@ -503,11 +606,14 @@ def parse_label(text: str) -> dict[str, Any]:
 
 
 def scan_label(image_bytes: bytes) -> dict[str, Any]:
-    parsed = scan_label_gemini(image_bytes)
-    if not parsed or not ((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip()):
+    if gemini_available():
+        parsed = scan_label_gemini(image_bytes)
+        if parsed is None:
+            raise RuntimeError("Gemini Vision scan failed")
+    else:
         raw = extract_text(image_bytes)
         parsed = normalize_scan_fields(parse_label(raw))
-        parsed["scan_source"] = parsed.get("scan_source") or "tesseract"
+        parsed["scan_source"] = "tesseract"
     similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
     parsed["similar"] = similar
     parsed["match_tier"] = classify_matches(similar)

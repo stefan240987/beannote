@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.4.4] - 2026-08-23
+
+- Autonomous env verification: `.env` is created or repaired, `GEMINI_API_KEY` is loaded into `os.environ` and mirrored to `.streamlit/secrets.toml`, and Gemini 1.5 Flash is pinged before any Tesseract fallback.
+- When a Gemini key is present, bag scans stay on Vision only — noisy Tesseract OCR is never used as a fallback.
+- Single unified scanner (`st.file_uploader`) on the scan card; the duplicate add-tab uploader and the "Rå scan-data" debug expander are gone.
+- Localized dropdown placeholders (e.g. "Vælg smagsnoter...") and a 140px `object-fit: cover` upload preview so mobile form fields stay on screen.
+
 ## [1.4.2] - 2026-08-23
 
 - Replaced the WebRTC `st.camera_input` frame with a native `st.file_uploader` (JPG, JPEG, PNG, HEIC, WebP) so Safari, Chrome, Firefox, Edge, and Samsung Internet on iOS and Android open the OS camera / photo-library picker instead of getUserMedia.
