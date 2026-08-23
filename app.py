@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
+from html import escape
+from pathlib import Path
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -19,11 +22,11 @@ from db import (
     insert_bean,
     insert_rating,
     list_beans,
-    matching_flavor_tags,
     resolve_image_path,
     save_bean_image,
     update_bean_image,
 )
+from ocr import FLAVOR_NOTES, compare_flavor_notes, extract_flavor_tags
 from translations import LANGS, t
 
 BREW_METHODS = [
@@ -140,6 +143,7 @@ def inject_css() -> None:
             overflow: hidden;
             max-width: 100%;
         }
+        .bn-card { cursor: pointer; }
         .bn-card.has-photo { padding: 0; }
         .bn-card.has-photo .bn-card-body { padding: 0.75rem 0.85rem 0.65rem; }
         .bn-card-under-photo {
@@ -147,27 +151,87 @@ def inject_css() -> None:
             border-radius: 0 0 12px 12px;
         }
         .bn-card-fallback {
-            height: 160px;
-            border-radius: 8px 8px 0 0;
+            height: 200px;
+            border-radius: 12px 12px 0 0;
             background: linear-gradient(160deg, #4a3328 0%, #3c2a21 58%, #b85c38 145%);
             display: flex;
             align-items: center;
             justify-content: center;
+            cursor: pointer;
         }
-        [data-testid="column"]:has(.bn-bag-flag) [data-testid="stImage"] {
-            margin-bottom: -1px;
-            background: #fffdf9;
-            border: 1px solid #eae3d9;
-            border-bottom: 0;
+        .bn-bag-img,
+        .bn-card.has-photo img.bn-bag-img {
+            height: 200px !important;
+            width: 100% !important;
+            object-fit: cover !important;
             border-radius: 12px 12px 0 0;
-            overflow: hidden;
-        }
-        [data-testid="column"]:has(.bn-bag-flag) [data-testid="stImage"] img {
-            object-fit: cover;
-            height: 160px;
-            width: 100%;
-            border-radius: 8px 8px 0 0;
+            cursor: pointer;
             display: block;
+        }
+        .bn-card-cta {
+            margin-top: 0.4rem;
+            font-size: 12px;
+            font-weight: 600;
+            color: #b85c38;
+        }
+        .bn-match-box {
+            background: #fff4e8;
+            border: 1px solid #e2b089;
+            border-radius: 12px;
+            padding: 0.65rem 0.8rem;
+            margin: 0.55rem 0 0.2rem;
+        }
+        [data-testid="stColumn"]:has(.bn-card-hit),
+        [data-testid="column"]:has(.bn-card-hit) {
+            position: relative;
+        }
+        [data-testid="stColumn"]:has(.bn-card-hit):hover .bn-card,
+        [data-testid="column"]:has(.bn-card-hit):hover .bn-card {
+            border-color: #d7c4b4;
+            box-shadow: 0 8px 18px rgba(60, 42, 33, 0.08);
+        }
+        [data-testid="stColumn"]:has(.bn-card-hit) [data-testid="stElementContainer"]:has([data-testid="stButton"]),
+        [data-testid="column"]:has(.bn-card-hit) [data-testid="stElementContainer"]:has([data-testid="stButton"]),
+        [data-testid="stColumn"]:has(.bn-card-hit) [data-testid="stButton"],
+        [data-testid="column"]:has(.bn-card-hit) [data-testid="stButton"] {
+            position: absolute !important;
+            inset: 0 !important;
+            z-index: 2;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        [data-testid="stColumn"]:has(.bn-card-hit) [data-testid="stButton"] button,
+        [data-testid="column"]:has(.bn-card-hit) [data-testid="stButton"] button {
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 100% !important;
+            opacity: 0 !important;
+            cursor: pointer !important;
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stDialog"] img,
+        [data-testid="stModal"] img,
+        div[role="dialog"] img {
+            max-height: 250px !important;
+            width: auto !important;
+            max-width: 100% !important;
+            object-fit: contain !important;
+            display: block;
+            margin: 0 auto;
+            border-radius: 12px;
+        }
+        .js-plotly-plot,
+        .plot-container,
+        .svg-container {
+            max-width: 100% !important;
+            overflow: hidden !important;
         }
         .bn-scan-slot { margin: 0 0 0.7rem; }
         .bn-roaster {
@@ -354,10 +418,23 @@ def inject_css() -> None:
             .bn-hero { padding: 0.75rem 0.9rem; border-radius: 12px; }
             .bn-hero h1 { font-size: 1.35rem; }
             .bn-card { width: 100%; }
+            div[data-testid="stDialog"] > div,
+            div[data-testid="stDialog"] div[role="dialog"],
+            [data-testid="stModal"] > div,
+            div[role="dialog"] {
+                width: 95vw !important;
+                max-width: 95vw !important;
+                padding: 12px !important;
+            }
+            [data-testid="stDialog"] .js-plotly-plot,
+            [data-testid="stDialog"] .plot-container {
+                max-height: 250px;
+            }
             .stButton button, .stDownloadButton button,
             button[data-testid="stBaseButton-primary"] { width: 100%; min-height: 48px; }
             button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 40px; }
             [data-testid="stSlider"] { padding-bottom: 0.85rem; }
+            [data-testid="stColumn"],
             [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
             div[data-testid="stButtonGroup"] {
                 flex-wrap: wrap;
@@ -448,23 +525,55 @@ def flavor_radar(
     fig.update_layout(
         polar=dict(
             bgcolor="#fffdf9",
-            radialaxis=dict(visible=True, range=[0, 5], tickfont=dict(size=11)),
-            angularaxis=dict(tickfont=dict(size=13, color="#3c2a21")),
+            radialaxis=dict(visible=True, range=[0, 5], tickfont=dict(size=9)),
+            angularaxis=dict(tickfont=dict(size=11, color="#3c2a21")),
         ),
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.18),
-        margin=dict(l=30, r=30, t=20, b=40),
-        height=340,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.06, font=dict(size=11)),
+        margin=dict(l=8, r=8, t=4, b=22),
+        height=260,
+        autosize=True,
     )
     return fig
 
 
 def note_chips(tags: list[str], overlap: list[str]) -> str:
+    pills = extract_flavor_tags(tags)
     html = []
-    for tag in tags:
-        klass = "bn-badge match" if any(tag == o or tag in o or o in tag for o in overlap) else "bn-badge"
-        html.append(f'<span class="{klass}">{tag}</span>')
-    return "".join(html) or '<span class="bn-badge">—</span>'
+    for tag in pills:
+        klass = "bn-badge match" if tag in overlap else "bn-badge"
+        html.append(f'<span class="{klass}">{escape(tag)}</span>')
+    return "".join(html)
+
+
+def bag_image_markup(photo: Path) -> str:
+    raw = photo.read_bytes()
+    suffix = photo.suffix.lower()
+    mime = "image/png" if suffix == ".png" else "image/jpeg"
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f'<img class="bn-bag-img" src="data:{mime};base64,{encoded}" alt="" />'
+
+
+def bean_card_markup(bean: dict, lang: str) -> str:
+    avg = bean.get("avg_rating") or 0
+    tags = extract_flavor_tags(bean.get("flavor_tags"), bean.get("roaster_notes"))
+    tags_html = "".join(f'<span class="bn-badge">{escape(tag)}</span>' for tag in tags[:4])
+    photo = resolve_image_path(bean.get("image_url") or "")
+    media = bag_image_markup(photo) if photo else BAG_PLACEHOLDER
+    return (
+        f'<div class="bn-card has-photo bn-card-hit">'
+        f"{media}"
+        f'<div class="bn-card-body">'
+        f'<div class="bn-roaster">{escape(str(bean.get("roaster") or ""))}</div>'
+        f'<h3 class="bn-name">{escape(str(bean.get("name") or ""))}</h3>'
+        f'<div class="bn-stars">{stars(avg)}</div>'
+        f'<div class="bn-meta">{escape(str(bean.get("origin") or "—"))} · '
+        f'{escape(str(bean.get("process") or "—"))} · '
+        f'{escape(str(bean.get("roast_level") or "—"))}</div>'
+        f"<div>{tags_html}</div>"
+        f'<div class="bn-card-cta">{escape(t(lang, "details"))}</div>'
+        f"</div></div>"
+    )
 
 
 def go_review(bean_id: int, notes: str | None = None) -> None:
@@ -687,8 +796,8 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     photo = resolve_image_path(bean.get("image_url") or "")
     if photo:
         st.image(str(photo), width="stretch")
-    st.markdown(f'<div class="bn-roaster">{bean["roaster"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<h3 class="bn-name">{bean["name"]}</h3>', unsafe_allow_html=True)
+    st.markdown(f'<div class="bn-roaster">{escape(str(bean["roaster"]))}</div>', unsafe_allow_html=True)
+    st.markdown(f'<h3 class="bn-name">{escape(str(bean["name"]))}</h3>', unsafe_allow_html=True)
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
     avg = community.get("avg_rating") or 0
     st.markdown(
@@ -696,30 +805,44 @@ def bean_dialog(bean_id: int, lang: str) -> None:
         f'<div class="bn-meta">{community["rating_count"]} {t(lang, "reviews")}</div>',
         unsafe_allow_html=True,
     )
-    tags = bean.get("flavor_tags") or []
-    st.markdown("".join(f'<span class="bn-badge">{tag}</span>' for tag in tags), unsafe_allow_html=True)
+    tags = extract_flavor_tags(bean.get("flavor_tags"), bean.get("roaster_notes"))
+    if tags:
+        st.markdown("".join(f'<span class="bn-badge">{escape(tag)}</span>' for tag in tags), unsafe_allow_html=True)
     labels = [t(lang, k) for k in ("acidity", "sweetness", "body", "aftertaste")]
     st.plotly_chart(
         flavor_radar(user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
         use_container_width=True,
+        config={"displayModeBar": False, "responsive": True},
     )
-    compare_notes(lang, bean.get("roaster_notes") or "", (user or {}).get("notes") or "")
+    compare_notes(
+        lang,
+        bean.get("roaster_notes") or "",
+        (user or {}).get("notes") or "",
+        bean.get("flavor_tags") or [],
+    )
     if st.button(t(lang, "tab_review"), type="primary", use_container_width=True):
         go_review(bean_id)
         st.rerun()
 
 
-def compare_notes(lang: str, roaster_notes: str, user_notes: str) -> None:
-    match = matching_flavor_tags(roaster_notes, user_notes)
+def compare_notes(
+    lang: str,
+    roaster_notes: str,
+    user_notes: str,
+    flavor_tags: list[str] | None = None,
+) -> None:
+    match = compare_flavor_notes(roaster_notes, user_notes, flavor_tags)
     left, right = st.columns(2)
     left.markdown(f"**{t(lang, 'roaster_notes')}**")
-    left.write(roaster_notes or "—")
-    left.markdown(note_chips(match["roaster"], match["overlap"]), unsafe_allow_html=True)
+    left.markdown(note_chips(match["roaster"], match["overlap"]) or "—", unsafe_allow_html=True)
     right.markdown(f"**{t(lang, 'user_notes')}**")
-    right.write(user_notes or "—")
-    right.markdown(note_chips(match["user"], match["overlap"]), unsafe_allow_html=True)
+    right.markdown(note_chips(match["user"], match["overlap"]) or "—", unsafe_allow_html=True)
     if match["overlap"]:
-        st.success(f"{t(lang, 'matching_notes')}: {', '.join(match['overlap'])}")
+        pills = "".join(f'<span class="bn-badge match">{escape(tag)}</span>' for tag in match["overlap"])
+        st.markdown(
+            f'<div class="bn-match-box"><div class="bn-meta">{escape(t(lang, "matching_notes"))}</div>{pills}</div>',
+            unsafe_allow_html=True,
+        )
     else:
         st.caption(t(lang, "no_match_notes"))
 
@@ -739,32 +862,7 @@ def render_explore(lang: str, filters: dict, query: str = "") -> None:
         cols = st.columns(2)
         for col, bean in zip(cols, beans[start : start + 2]):
             with col:
-                avg = bean.get("avg_rating") or 0
-                tags = "".join(
-                    f'<span class="bn-badge">{tag}</span>'
-                    for tag in (bean.get("flavor_tags") or [])[:4]
-                )
-                inner = (
-                    f'<div class="bn-roaster">{bean["roaster"]}</div>'
-                    f'<h3 class="bn-name">{bean["name"]}</h3>'
-                    f'<div class="bn-stars">{stars(avg)}</div>'
-                    f'<div class="bn-meta">{bean["origin"]} · {bean["process"] or "—"} · {bean["roast_level"] or "—"}</div>'
-                    f"<div>{tags}</div>"
-                )
-                photo = resolve_image_path(bean.get("image_url") or "")
-                if photo:
-                    st.markdown('<div class="bn-bag-flag"></div>', unsafe_allow_html=True)
-                    st.image(str(photo), width="stretch")
-                    st.markdown(
-                        f'<div class="bn-card bn-card-under-photo">{inner}</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        f'<div class="bn-card has-photo">{BAG_PLACEHOLDER}'
-                        f'<div class="bn-card-body">{inner}</div></div>',
-                        unsafe_allow_html=True,
-                    )
+                st.markdown(bean_card_markup(bean, lang), unsafe_allow_html=True)
                 if st.button(t(lang, "details"), key=f"open-{bean['id']}", type="secondary"):
                     st.session_state.detail_bean_id = bean["id"]
                     bean_dialog(bean["id"], lang)
@@ -830,8 +928,14 @@ def render_review(lang: str) -> None:
     st.plotly_chart(
         flavor_radar(live_user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
         use_container_width=True,
+        config={"displayModeBar": False, "responsive": True},
     )
-    compare_notes(lang, bean.get("roaster_notes") or "", notes or ((latest or {}).get("notes") or ""))
+    compare_notes(
+        lang,
+        bean.get("roaster_notes") or "",
+        notes or ((latest or {}).get("notes") or ""),
+        bean.get("flavor_tags") or [],
+    )
 
     if st.button(t(lang, "save_rating"), type="primary", use_container_width=True):
         insert_rating(bean_id, brew, rating, acidity, sweetness, body, aftertaste, notes)
@@ -840,7 +944,7 @@ def render_review(lang: str) -> None:
 
 
 def render_add(lang: str) -> None:
-    from ocr import FLAVOR_NOTES, configure_tesseract, scan_label
+    from ocr import configure_tesseract, scan_label
 
     uploaded = st.file_uploader(
         t(lang, "upload"),
@@ -918,7 +1022,7 @@ def render_add(lang: str) -> None:
             process=process,
             roast_level=roast,
             roaster_notes=roaster_notes or ", ".join(flavors),
-            flavor_tags=flavors or None,
+            flavor_tags=extract_flavor_tags(flavors) or None,
             skip_fuzzy=force,
             image_url=pending_image_url() or (form.get("image_url") or ""),
         )

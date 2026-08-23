@@ -483,8 +483,51 @@ def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
     return ""
 
 
+MAX_FLAVOR_WORDS = 2
+MAX_FLAVOR_CHARS = 28
+
+
+def is_short_flavor(tag: str) -> bool:
+    compact = re.sub(r"\s+", " ", (tag or "").strip())
+    if not compact or len(compact) > MAX_FLAVOR_CHARS:
+        return False
+    return 1 <= len(compact.split()) <= MAX_FLAVOR_WORDS
+
+
+def _canonical_flavor(token: str) -> str:
+    lowered = re.sub(r"\s+", " ", (token or "").strip()).lower()
+    if not lowered:
+        return ""
+    for option in FLAVOR_NOTES:
+        if option.lower() == lowered:
+            return option
+    for option, aliases in FLAVOR_ALIASES.items():
+        if lowered in {alias.lower() for alias in aliases}:
+            return option
+    return ""
+
+
+def _dedupe_flavors(tags: list[str]) -> list[str]:
+    """Keep official pills only; drop generics covered by a longer official tag."""
+    order = {name: index for index, name in enumerate(FLAVOR_NOTES)}
+    unique: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        if tag not in order or tag in seen:
+            continue
+        seen.add(tag)
+        unique.append(tag)
+    kept = [
+        tag
+        for tag in unique
+        if not any(tag != other and tag.lower() in other.lower() for other in unique)
+    ]
+    kept.sort(key=lambda name: order[name])
+    return kept
+
+
 def _match_flavors(text: str) -> list[str]:
-    lowered = text.lower()
+    lowered = (text or "").lower()
     hits: list[str] = []
     consumed = lowered
     for option in sorted(FLAVOR_NOTES, key=len, reverse=True):
@@ -493,9 +536,54 @@ def _match_flavors(text: str) -> list[str]:
             hits.append(option)
             for alias in aliases:
                 consumed = re.sub(rf"\b{re.escape(alias)}\b", " ", consumed)
-    order = {name: index for index, name in enumerate(FLAVOR_NOTES)}
-    hits.sort(key=lambda name: order[name])
-    return hits
+    return _dedupe_flavors(hits)
+
+
+def extract_flavor_tags(*sources: str | list[str] | None) -> list[str]:
+    """Official 1–2 word flavor pills only. Never returns sentence fragments."""
+    hits: list[str] = []
+    blobs: list[str] = []
+    for source in sources:
+        if not source:
+            continue
+        if isinstance(source, (list, tuple)):
+            for item in source:
+                text = str(item).strip()
+                if not text:
+                    continue
+                canon = _canonical_flavor(text)
+                if canon:
+                    hits.append(canon)
+                elif is_short_flavor(text):
+                    hits.extend(_match_flavors(text))
+                blobs.append(text)
+            continue
+        blobs.append(str(source))
+    blob = " ".join(blobs)
+    if blob:
+        hits.extend(_match_flavors(blob))
+    return _dedupe_flavors(hits)
+
+
+def compare_flavor_notes(
+    roaster_notes: str,
+    user_notes: str,
+    extra_roaster: list[str] | None = None,
+) -> dict[str, list[str]]:
+    roaster = extract_flavor_tags(roaster_notes, extra_roaster)
+    user = extract_flavor_tags(user_notes)
+    overlap = [tag for tag in roaster if tag in user]
+    return {"roaster": roaster, "user": user, "overlap": overlap}
+
+
+def _flavor_source(blob: str, snippet: str) -> str:
+    if snippet:
+        return snippet
+    stripped = blob
+    for aliases in (*PROCESS_MAP.values(), *ROAST_MAP.values()):
+        for alias in aliases:
+            stripped = re.sub(rf"\b{re.escape(alias)}\b", " ", stripped, flags=re.IGNORECASE)
+    return stripped
 
 
 def _find_notes(blob: str) -> tuple[str, list[str]]:
@@ -504,7 +592,7 @@ def _find_notes(blob: str) -> tuple[str, list[str]]:
     if match:
         snippet = re.split(rf"(?i)\s+(?:{_NEXT_FIELD})\b", match.group(1), maxsplit=1)[0]
         snippet = re.sub(r"\s+", " ", snippet).strip(" -:.,")[:180]
-    flavors = _match_flavors(blob)
+    flavors = extract_flavor_tags(_flavor_source(blob, snippet))
     if not snippet and flavors:
         snippet = ", ".join(flavors)
     return snippet, flavors

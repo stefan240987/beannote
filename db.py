@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -578,8 +578,14 @@ def export_ratings(fmt: str = "csv") -> tuple[str, str, bytes]:
     return f"beannote-log-{stamp}.csv", "text/csv", buffer.getvalue().encode("utf-8")
 
 
+def _is_short_tag(tag: str) -> bool:
+    compact = " ".join((tag or "").split())
+    return bool(compact) and 1 <= len(compact.split()) <= 2 and len(compact) <= 28
+
+
 def _tags_from_notes(notes: str) -> list[str]:
-    return [part.strip() for part in (notes or "").replace(";", ",").split(",") if part.strip()]
+    parts = [part.strip() for part in (notes or "").replace(";", ",").split(",") if part.strip()]
+    return [part for part in parts if _is_short_tag(part)]
 
 
 def matching_flavor_tags(roaster_notes: str, user_notes: str) -> dict[str, list[str]]:
@@ -596,9 +602,8 @@ def matching_flavor_tags(roaster_notes: str, user_notes: str) -> dict[str, list[
     }
     def extract(text: str) -> list[str]:
         lowered = (text or "").lower()
-        found = [term for term in vocab if term in lowered]
-        extras = [p.strip() for p in lowered.replace(";", ",").split(",") if p.strip()]
-        return sorted(set(found + extras), key=len, reverse=True)
+        found = [term for term in vocab if _is_short_tag(term) and term in lowered]
+        return sorted(set(found), key=len, reverse=True)
 
     roaster = extract(roaster_notes)
     user = extract(user_notes)
