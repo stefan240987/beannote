@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "5.4.0"
+VERSION = "5.5.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -123,6 +123,75 @@ def _maybe_json(raw: Any) -> Any:
         except json.JSONDecodeError:
             return text
     return text
+
+
+GEAR_KINDS = ("espresso_machine", "grinder", "brewer", "other")
+
+
+def _json_list(raw: Any) -> list[Any]:
+    parsed = _maybe_json(raw)
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, str) and parsed.strip():
+        return [parsed.strip()]
+    return []
+
+
+def _gear_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug[:48]
+
+
+def normalize_gear_item(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    kind = str(item.get("kind") or "other").strip().lower()
+    if kind not in GEAR_KINDS:
+        kind = "other"
+    raw_highlights = item.get("highlights") or []
+    if isinstance(raw_highlights, str):
+        highlights = [part.strip() for part in raw_highlights.split(",") if part.strip()]
+    elif isinstance(raw_highlights, list):
+        highlights = [str(part).strip() for part in raw_highlights if str(part).strip()]
+    else:
+        highlights = []
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    return {
+        "id": str(item.get("id") or _gear_slug(name) or name),
+        "kind": kind,
+        "name": name,
+        "brand": str(item.get("brand") or "").strip(),
+        "highlights": highlights[:8],
+        "summary": str(item.get("summary") or "").strip()[:400],
+        "details": details,
+    }
+
+
+def normalize_gear_specs(raw: Any) -> list[dict[str, Any]]:
+    parsed = _maybe_json(raw)
+    items: list[Any] = []
+    if isinstance(parsed, list):
+        items = parsed
+    elif isinstance(parsed, dict):
+        if parsed.get("name"):
+            items = [parsed]
+        else:
+            items = list(parsed.values())
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        card = normalize_gear_item(item)
+        if not card:
+            continue
+        key = card["id"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(card)
+    return out
 
 
 def _is_flat_brew(obj: Any) -> bool:
@@ -374,6 +443,10 @@ def init_db() -> None:
                 auth_provider TEXT NOT NULL DEFAULT 'email',
                 oauth_id TEXT DEFAULT '',
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                espresso_machine TEXT DEFAULT '',
+                grinder TEXT DEFAULT '',
+                brewer_types TEXT DEFAULT '[]',
+                gear_specs TEXT DEFAULT '[]',
                 created_at TEXT NOT NULL
             );
 
@@ -489,6 +562,14 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     users = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "is_admin" not in users:
         conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    if "espresso_machine" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN espresso_machine TEXT DEFAULT ''")
+    if "grinder" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN grinder TEXT DEFAULT ''")
+    if "brewer_types" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN brewer_types TEXT DEFAULT '[]'")
+    if "gear_specs" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN gear_specs TEXT DEFAULT '[]'")
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
@@ -756,6 +837,36 @@ def _rating_public(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] |
     data["brew_time"] = (data.get("brew_time") or "").strip()
     data["brew_method"] = (data.get("brew_method") or "").strip()
     return data
+
+
+def _recipe_anonymous(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Community recipe card: brew data only, no user identity."""
+    data = _rating_public(row)
+    if not data:
+        return None
+    coffee = data.get("coffee_grams")
+    water = data.get("water_grams")
+    ratio = ""
+    if coffee not in (None, "") and water not in (None, ""):
+        ratio = f"{coffee}g : {water}g"
+    return {
+        "id": data.get("id"),
+        "bean_id": data.get("bean_id"),
+        "brew_method": data.get("brew_method") or "",
+        "rating": data.get("rating"),
+        "acidity": data.get("acidity"),
+        "sweetness": data.get("sweetness"),
+        "body": data.get("body"),
+        "aftertaste": data.get("aftertaste"),
+        "notes": data.get("notes") or "",
+        "tasting_notes_user": data.get("tasting_notes_user") or "",
+        "grind_setting": data.get("grind_setting") or "",
+        "coffee_grams": coffee,
+        "water_grams": water,
+        "brew_time": data.get("brew_time") or "",
+        "ratio": ratio,
+        "created_at": data.get("created_at") or "",
+    }
 
 
 def resolve_origin_geo(
@@ -1560,6 +1671,59 @@ def list_ratings(bean_id: int | None = None) -> list[dict[str, Any]]:
     return [_rating_public(r) for r in rows if r is not None]
 
 
+def list_user_journal(user_id: int) -> list[dict[str, Any]]:
+    """Chronological tasting diary across every bean for one user."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.*, b.name AS bean_name, b.roaster, b.image_url AS bean_image_url
+            FROM ratings r
+            JOIN beans b ON b.id = r.bean_id
+            WHERE r.user_id = ?
+            ORDER BY r.created_at DESC, r.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = _rating_public(row)
+        if not item:
+            continue
+        coffee = item.get("coffee_grams")
+        water = item.get("water_grams")
+        ratio = ""
+        if coffee not in (None, "") and water not in (None, ""):
+            ratio = f"{coffee}g : {water}g"
+        item["ratio"] = ratio
+        out.append(item)
+    return out
+
+
+def list_community_recipes(
+    bean_id: int,
+    exclude_user_id: int | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Anonymized recipes from other users for one bean."""
+    sql = """
+        SELECT r.id, r.bean_id, r.brew_method, r.rating, r.acidity, r.sweetness,
+               r.body, r.aftertaste, r.notes, r.grind_setting, r.coffee_grams,
+               r.water_grams, r.brew_time, r.created_at
+        FROM ratings r
+        WHERE r.bean_id = ?
+    """
+    params: list[Any] = [bean_id]
+    if exclude_user_id is not None:
+        sql += " AND (r.user_id IS NULL OR r.user_id != ?)"
+        params.append(exclude_user_id)
+    sql += " ORDER BY r.created_at DESC, r.id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 100)))
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [item for item in (_recipe_anonymous(row) for row in rows) if item]
+
+
+
 def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, Any]:
     bean = get_bean(bean_id, user_id=user_id)
     if not bean:
@@ -1613,8 +1777,12 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
             "brew_time": (user.get("brew_time") or "").strip(),
         }
     history = []
+    community_history = []
     if user_id is not None:
         history = [row for row in list_ratings(bean_id) if row.get("user_id") == user_id]
+        community_history = list_community_recipes(bean_id, exclude_user_id=user_id)
+    else:
+        community_history = list_community_recipes(bean_id)
     roaster_profile = {
         "acidity": bean.get("roaster_acidity") if bean else None,
         "body": bean.get("roaster_body") if bean else None,
@@ -1629,6 +1797,7 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
         "community": community,
         "user": user,
         "history": history,
+        "community_history": community_history,
         "roaster_profile": roaster_profile,
     }
 
@@ -1729,6 +1898,22 @@ def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | N
     data = dict(row)
     data.pop("password_hash", None)
     data["is_admin"] = bool(data.get("is_admin"))
+    data["espresso_machine"] = str(data.get("espresso_machine") or "").strip()
+    data["grinder"] = str(data.get("grinder") or "").strip()
+    brew_types = [
+        str(item).strip()
+        for item in _json_list(data.get("brewer_types"))
+        if str(item).strip()
+    ]
+    data["brewer_types"] = brew_types
+    specs = normalize_gear_specs(data.get("gear_specs"))
+    data["gear_specs"] = specs
+    if not data["espresso_machine"]:
+        machine = next((item["name"] for item in specs if item["kind"] == "espresso_machine"), "")
+        data["espresso_machine"] = machine
+    if not data["grinder"]:
+        grinder = next((item["name"] for item in specs if item["kind"] == "grinder"), "")
+        data["grinder"] = grinder
     return data
 
 
@@ -1863,4 +2048,39 @@ def upsert_oauth_user(
     user = _public_user(row)
     if not user:
         raise ValueError("oauth_create_failed")
+    return user
+
+
+def update_user_gear(
+    user_id: int,
+    espresso_machine: str = "",
+    grinder: str = "",
+    brewer_types: list[str] | None = None,
+    gear_specs: Any = None,
+) -> dict[str, Any]:
+    specs = normalize_gear_specs(gear_specs)
+    machine = (espresso_machine or "").strip()
+    mill = (grinder or "").strip()
+    if not machine:
+        machine = next((item["name"] for item in specs if item["kind"] == "espresso_machine"), "")
+    if not mill:
+        mill = next((item["name"] for item in specs if item["kind"] == "grinder"), "")
+    brew_types = [
+        str(item).strip()
+        for item in (brewer_types or [])
+        if str(item).strip()
+    ]
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET espresso_machine = ?, grinder = ?, brewer_types = ?, gear_specs = ?
+            WHERE id = ?
+            """,
+            (machine, mill, json.dumps(brew_types, ensure_ascii=False), json.dumps(specs, ensure_ascii=False), user_id),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    user = _public_user(row)
+    if not user:
+        raise ValueError("not_found")
     return user

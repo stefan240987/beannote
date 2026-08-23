@@ -172,6 +172,19 @@
     .modal-cover-fav {
       z-index: 10;
     }
+    .modal-close-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 0;
+      display: flex;
+      justify-content: flex-end;
+      pointer-events: none;
+    }
+    .modal-close-bar button {
+      pointer-events: auto;
+      margin: 0.75rem 0.75rem 0 0;
+    }
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
@@ -329,6 +342,11 @@
       suitabilityFilter: "",
       savedPrompt: null,
       supportOpen: false,
+      journal: [],
+      recipeTab: "mine",
+      gearQuery: "",
+      gearKind: "espresso_machine",
+      gearHit: null,
       rate: {
         brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
         notes: "", grind_setting: "", coffee_grams: "", water_grams: "",         brew_time: "",
@@ -472,6 +490,31 @@
       state.beans = await api(`/api/beans?${q}`);
     }
 
+    async function loadJournal() {
+      try {
+        const data = await api("/api/journal");
+        state.journal = data?.entries || [];
+      } catch {
+        state.journal = [];
+      }
+    }
+
+    async function persistGear(next) {
+      const result = await api("/api/gear", { method: "PUT", body: JSON.stringify(next) });
+      if (result.user) state.user = result.user;
+      toast(t("gear_saved"));
+      render();
+    }
+
+    function resetScanPreview() {
+      state.scan = null;
+      state.editScan = false;
+      state.busy = false;
+      state.tab = "scan";
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     async function openBean(id, tab = "explore") {
       state.selectedId = id;
       state.profile = await api(`/api/beans/${id}`);
@@ -491,6 +534,7 @@
       };
       state.tab = tab;
       state.editBean = false;
+      state.recipeTab = "mine";
       render();
     }
 
@@ -1033,7 +1077,7 @@
       return `<section class="space-y-3">
         <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted" data-i18n="personal_log">${esc(t("personal_log"))}</p>
         ${latestTastingCard(profile)}
-        ${tastingHistory(profile?.history)}
+        ${recipeLogSection(profile)}
       </section>`;
     }
 
@@ -1055,9 +1099,26 @@
     function tastingHistory(history) {
       const rows = history || [];
       if (!rows.length) return "";
+      return rows.map(recipeCard).join("");
+    }
+
+    function recipeLogSection(profile) {
+      const tab = state.recipeTab === "community" ? "community" : "mine";
+      const mine = profile?.history || [];
+      const community = profile?.community_history || [];
+      const rows = tab === "community" ? community : mine;
+      const emptyKey = tab === "community" ? "community_empty" : "no_ratings";
+      const tabBtn = (id, key) => {
+        const on = tab === id;
+        return `<button type="button" data-recipe-tab="${id}" class="min-h-10 flex-1 rounded-lg px-2 text-sm font-semibold ${on ? "bg-white text-espresso shadow-sm" : "text-muted"}" data-i18n="${key}">${esc(t(key))}</button>`;
+      };
       return `<section class="space-y-2">
         <p class="text-sm font-semibold" data-i18n="recipe_log">${esc(t("recipe_log"))}</p>
-        ${rows.map(recipeCard).join("")}
+        <div class="flex gap-1 rounded-xl bg-foam p-1" role="tablist">
+          ${tabBtn("mine", "my_recipes")}
+          ${tabBtn("community", "community_recipes")}
+        </div>
+        ${rows.length ? tastingHistory(rows) : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="${emptyKey}">${esc(t(emptyKey))}</p>`}
       </section>`;
     }
 
@@ -1087,9 +1148,13 @@
       const visit = site
         ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-espresso font-semibold text-cream" data-i18n="visit_roaster">${t("visit_roaster")}</a>`
         : "";
+      const rate = bean?.id
+        ? `<button type="button" data-rate-bean="${bean.id}" class="flex min-h-12 items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="go_rate_existing">${t("go_rate_existing")}</button>`
+        : "";
       return `<div class="grid gap-2">
         ${visit}
-        <a href="${esc(search)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="find_retailer">${t("find_retailer")}</a>
+        <a href="${esc(search)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="find_retailer">${t("find_retailer")}</a>
+        ${rate}
       </div>`;
     }
 
@@ -1100,10 +1165,12 @@
       const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
       return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
         <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+          <div class="modal-close-bar">
+            <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
+          </div>
           <div class="modal-cover rounded-t-3xl sm:rounded-t-3xl">
-            <button type="button" data-close-modal class="modal-cover-close absolute left-3 top-3 grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
             ${photo || bagFallback("h-56")}
-            ${heartBtn(bean, "modal-cover-fav absolute right-3 top-3 z-10")}
+            ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
           </div>
           <div class="space-y-4 p-4 pb-8">
             <section class="space-y-3">
@@ -1123,7 +1190,6 @@
             ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
             ${editor}
             ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
-            <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="go_rate_existing">${t("go_rate_existing")}</button>
           </div>
         </article>
       </div>`;
@@ -1170,7 +1236,10 @@
               <p class="mt-1 text-muted">${esc(similar.name)} · ${esc(similar.roaster)} (${Math.round((similar.confidence || 0) * 100)}% ${t("confidence")})</p>
               <button data-rate-bean="${similar.id}" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-cream">${t("use_existing")}</button>
             </div>` : ""}
-            <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("approve_save")}</button>
+            <div class="flex flex-col gap-2">
+              <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="approve_save">${t("approve_save")}</button>
+              <button type="button" id="undo-scan" class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="undo_rescan">${t("undo_rescan")}</button>
+            </div>
             ${canEdit ? `<button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
             ${fields}
           </div>
@@ -1297,6 +1366,97 @@
       </section>`;
     }
 
+    function userGear() {
+      return {
+        espresso_machine: state.user?.espresso_machine || "",
+        grinder: state.user?.grinder || "",
+        brewer_types: Array.isArray(state.user?.brewer_types) ? [...state.user.brewer_types] : [],
+        gear_specs: Array.isArray(state.user?.gear_specs) ? [...state.user.gear_specs] : [],
+      };
+    }
+
+    function gearKindLabel(kind) {
+      const key = { espresso_machine: "gear_machine", grinder: "gear_grinder", other: "gear_other" }[kind] || "gear_other";
+      return t(key);
+    }
+
+    function gearCard(item, pending = false) {
+      if (!item?.name) return "";
+      const chips = (item.highlights || []).map((chip) =>
+        `<span class="rounded-full bg-foam px-2 py-0.5 text-[11px] font-semibold">${esc(chip)}</span>`
+      ).join("");
+      const action = pending
+        ? `<button type="button" id="gear-add" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-sm font-semibold text-cream" data-i18n="gear_add">${esc(t("gear_add"))}</button>`
+        : `<button type="button" data-gear-remove="${esc(item.id)}" class="mt-2 text-xs font-semibold text-muted" data-i18n="gear_remove">${esc(t("gear_remove"))}</button>`;
+      return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(item.kind))}</p>
+        <h3 class="font-display text-lg font-bold">${esc(item.name)}</h3>
+        ${item.summary ? `<p class="mt-1 text-sm leading-5 text-muted">${esc(item.summary)}</p>` : ""}
+        ${chips ? `<div class="mt-2 flex flex-wrap gap-1">${chips}</div>` : ""}
+        ${action}
+      </article>`;
+    }
+
+    function gearSetup() {
+      const gear = userGear();
+      const kinds = [
+        ["espresso_machine", "gear_machine"],
+        ["grinder", "gear_grinder"],
+        ["other", "gear_other"],
+      ];
+      const kindBtns = kinds.map(([id, key]) => {
+        const on = state.gearKind === id;
+        return `<button type="button" data-gear-kind="${id}" class="min-h-10 flex-1 rounded-lg px-2 text-xs font-semibold ${on ? "bg-white text-espresso shadow-sm" : "text-muted"}" data-i18n="${key}">${esc(t(key))}</button>`;
+      }).join("");
+      const brewBtns = (state.config?.brew_methods || []).map((method) => {
+        const on = gear.brewer_types.includes(method);
+        return `<button type="button" data-brewer-toggle="${esc(method)}" class="min-h-10 rounded-full px-3 text-xs font-semibold ${on ? "bg-espresso text-cream" : "bg-foam text-muted"}">${esc(localizeBrewMethod(method))}</button>`;
+      }).join("");
+      const saved = gear.gear_specs.map((item) => gearCard(item)).join("");
+      return `<section class="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+        <div>
+          <h2 class="font-display text-xl font-bold" data-i18n="gear_setup">${esc(t("gear_setup"))}</h2>
+          <p class="mt-1 text-sm text-muted" data-i18n="gear_setup_sub">${esc(t("gear_setup_sub"))}</p>
+        </div>
+        <div class="flex gap-1 rounded-xl bg-foam p-1">${kindBtns}</div>
+        <div class="flex gap-2">
+          <input id="gear-query" value="${esc(state.gearQuery)}" class="min-h-12 flex-1 rounded-xl border border-latte bg-cream px-3 text-sm" data-i18n-placeholder="gear_search_ph" placeholder="${esc(t("gear_search_ph"))}">
+          <button type="button" id="gear-lookup" class="min-h-12 shrink-0 rounded-xl bg-terracotta px-3 text-sm font-semibold text-cream" data-i18n="gear_lookup">${esc(t("gear_lookup"))}</button>
+        </div>
+        ${state.gearHit ? gearCard(state.gearHit, true) : ""}
+        ${saved || `<p class="text-sm text-muted" data-i18n="gear_empty">${esc(t("gear_empty"))}</p>`}
+        <div>
+          <p class="mb-2 text-sm font-semibold" data-i18n="gear_brewers">${esc(t("gear_brewers"))}</p>
+          <div class="flex flex-wrap gap-1.5">${brewBtns}</div>
+        </div>
+      </section>`;
+    }
+
+    function journalCard(row) {
+      const date = (row.created_at || "").slice(0, 10);
+      const method = localizeBrewMethod(row.brew_method);
+      const header = [`⭐ ${Number(row.rating || 0).toFixed(1)}`];
+      if (method) header.push(`☕ ${method}`);
+      const badges = recipeMeta(row);
+      const notes = String(row.tasting_notes_user || row.notes || "").trim();
+      return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold text-muted">${esc(date)}</p>
+        <h3 class="font-display text-lg font-bold">${esc(row.bean_name || "")}</h3>
+        ${row.roaster ? `<p class="text-xs text-muted">${esc(row.roaster)}</p>` : ""}
+        <p class="mt-1 text-sm font-semibold text-espresso">${esc(header.join(" · "))}</p>
+        ${badges.length ? `<p class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-espresso/80">${badges.map((item) => `<span>${esc(item)}</span>`).join(`<span class="text-latte">|</span>`)}</p>` : ""}
+        ${notes ? `<p class="mt-1.5 text-sm leading-5 text-espresso/80">💬 "${esc(notes)}"</p>` : ""}
+      </article>`;
+    }
+
+    function journalFeed() {
+      const rows = state.journal || [];
+      return `<section class="space-y-3">
+        <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+        ${rows.length ? rows.map(journalCard).join("") : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`}
+      </section>`;
+    }
+
     function langToggle() {
       return i18nManager.renderLanguageSwitcher();
     }
@@ -1310,6 +1470,8 @@
           ${isAdmin() ? `<p class="mt-2 inline-flex rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-semibold">${esc(t("admin_badge"))}</p>` : ""}
         </div>
         ${langToggle()}
+        ${gearSetup()}
+        ${journalFeed()}
         ${supportButton()}
         <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold" data-i18n="export_csv">${t("export_csv")}</a>
         <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
@@ -1628,6 +1790,7 @@
         }
         state.tab = btn.dataset.tab;
         if (state.tab === "rate") await loadBeans();
+        if (state.tab === "profile") await loadJournal();
         render();
       }));
       document.querySelectorAll("[data-suitable]").forEach((btn) => btn.addEventListener("click", () => {
@@ -1699,6 +1862,7 @@
       });
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
+      $("#undo-scan")?.addEventListener("click", () => resetScanPreview());
       $("#toggle-edit")?.addEventListener("click", () => {
         if (!isAdmin()) return;
         state.editScan = !state.editScan;
@@ -1804,6 +1968,112 @@
         } catch (err) {
           toast(t(err.detail || "required"));
         }
+      });
+      document.querySelectorAll("[data-recipe-tab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const sheet = $("[data-modal-sheet]");
+          const top = sheet ? sheet.scrollTop : 0;
+          state.recipeTab = btn.dataset.recipeTab === "community" ? "community" : "mine";
+          render();
+          const next = $("[data-modal-sheet]");
+          if (next) next.scrollTop = top;
+        });
+      });
+      document.querySelectorAll("[data-gear-kind]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.gearKind = btn.dataset.gearKind || "espresso_machine";
+          render();
+        });
+      });
+      $("#gear-query")?.addEventListener("input", (event) => {
+        state.gearQuery = event.target.value;
+      });
+      $("#gear-query")?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          $("#gear-lookup")?.click();
+        }
+      });
+      $("#gear-lookup")?.addEventListener("click", async () => {
+        const query = (state.gearQuery || "").trim();
+        if (query.length < 2) return toast(t("gear_query_required"));
+        state.busy = true;
+        render();
+        try {
+          const result = await api("/api/gear/lookup", {
+            method: "POST",
+            body: JSON.stringify({ query, kind: state.gearKind, lang: activeLang() }),
+          });
+          state.gearHit = result.specs || null;
+          state.busy = false;
+          render();
+        } catch (err) {
+          state.busy = false;
+          state.gearHit = null;
+          toast(t(err.detail || "gear_lookup_fail"));
+          render();
+        }
+      });
+      $("#gear-add")?.addEventListener("click", async () => {
+        const hit = state.gearHit;
+        if (!hit?.name) return;
+        const gear = userGear();
+        const specs = gear.gear_specs.filter((item) => item.id !== hit.id);
+        specs.push(hit);
+        try {
+          state.gearHit = null;
+          state.gearQuery = "";
+          await persistGear({
+            espresso_machine: hit.kind === "espresso_machine" ? hit.name : gear.espresso_machine,
+            grinder: hit.kind === "grinder" ? hit.name : gear.grinder,
+            brewer_types: gear.brewer_types,
+            gear_specs: specs,
+          });
+        } catch (err) {
+          state.gearHit = hit;
+          toast(t(err.detail || "required"));
+          render();
+        }
+      });
+      document.querySelectorAll("[data-gear-remove]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.gearRemove;
+          const gear = userGear();
+          const specs = gear.gear_specs.filter((item) => item.id !== id);
+          const machine = specs.find((item) => item.kind === "espresso_machine");
+          const mill = specs.find((item) => item.kind === "grinder");
+          try {
+            await persistGear({
+              espresso_machine: machine?.name || "",
+              grinder: mill?.name || "",
+              brewer_types: gear.brewer_types,
+              gear_specs: specs,
+            });
+          } catch (err) {
+            toast(t(err.detail || "required"));
+          }
+        });
+      });
+      document.querySelectorAll("[data-brewer-toggle]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const method = btn.dataset.brewerToggle;
+          if (!method) return;
+          const gear = userGear();
+          const on = gear.brewer_types.includes(method);
+          const brewer_types = on
+            ? gear.brewer_types.filter((item) => item !== method)
+            : [...gear.brewer_types, method];
+          try {
+            await persistGear({
+              espresso_machine: gear.espresso_machine,
+              grinder: gear.grinder,
+              brewer_types,
+              gear_specs: gear.gear_specs,
+            });
+          } catch (err) {
+            toast(t(err.detail || "required"));
+          }
+        });
       });
       document.querySelectorAll("[data-setlang]").forEach((btn) => {
         btn.addEventListener("click", () => applyLanguage(btn.dataset.setlang));

@@ -2,6 +2,14 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.5.0] - 2026-08-23
+
+- snapshot: v5.5.0 - added scan undo, AI gear lookup, profile global journal, community recipes, and sticky modal UX
+- AI Detection Summary has `↩️ Fortryd / Scan igen` next to Save; it clears the preview and returns to photo capture without inserting a bean.
+- Profile stores `espresso_machine`, `grinder`, `brewer_types`, and `gear_specs`. `POST /api/gear/lookup` uses Gemini to fetch structured machine/grinder specs for the `☕ Mit Kaffe-Setup` cards.
+- `📖 Min Kaffe-Dagbog` on the Profile tab lists every tasting across beans. Bean Detail `Bryg-log` tabs switch between `Mine Opskrifter` and anonymized `👥 Fællesskabets Opskrifter`.
+- Bean Detail keeps a sticky top-right close control while scrolling, and `✍️ Rate denne bønne` sits in the top action row with Visit Roaster / Find retailer.
+
 ## [5.4.0] - 2026-08-23
 
 - snapshot: v5.4.0 - integrated web-grounded official product page lookup into Gemini OCR

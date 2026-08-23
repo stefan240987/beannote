@@ -36,11 +36,13 @@ from db import (
     insert_bean,
     insert_rating,
     list_beans,
+    list_user_journal,
     resolve_image_path,
     toggle_favorite,
     save_bean_image,
     should_auto_flush,
     update_bean,
+    update_user_gear,
     upsert_oauth_user,
 )
 from ocr import (
@@ -53,6 +55,7 @@ from ocr import (
     suitable_for_catalog,
     suitable_for_i18n_table,
     load_local_env,
+    lookup_gear_specs,
     pad_image_candidates,
     processes_for,
     roast_levels_for,
@@ -467,6 +470,19 @@ class RatingIn(BaseModel):
     water_grams: Optional[float] = None
     brew_time: str = ""
     tasting_notes_user: str = ""
+
+
+class GearLookupIn(BaseModel):
+    query: str = Field(min_length=2, max_length=120)
+    kind: str = ""
+    lang: str = ""
+
+
+class GearIn(BaseModel):
+    espresso_machine: str = ""
+    grinder: str = ""
+    brewer_types: list[str] = Field(default_factory=list)
+    gear_specs: Any = Field(default_factory=list)
 
 
 def _auth_error(code: str) -> HTTPException:
@@ -894,6 +910,53 @@ def create_rating(payload: RatingIn, user: dict[str, Any] = Depends(current_user
         brew_time=payload.brew_time,
     )
     return {"rating": rating, "profile": get_flavor_profile(payload.bean_id, user_id=user["id"])}
+
+
+@app.get("/api/journal")
+def tasting_journal(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {"entries": list_user_journal(user["id"])}
+
+
+@app.post("/api/gear/lookup")
+def gear_lookup(
+    payload: GearLookupIn,
+    request: Request,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    del user
+    chosen = (payload.lang or request.query_params.get("lang") or "da").lower().strip()
+    if chosen not in SUPPORTED_LANGUAGES:
+        chosen = "da"
+    try:
+        specs = lookup_gear_specs(payload.query, kind=payload.kind, lang=chosen)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "gear_query_required":
+            raise HTTPException(status_code=400, detail=code) from exc
+        raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
+    except RuntimeError as exc:
+        if str(exc) == "ocr_missing":
+            raise HTTPException(status_code=503, detail="ocr_missing") from exc
+        raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
+    except Exception as exc:
+        print(f"gear lookup failed: {exc}")
+        raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
+    return {"specs": specs}
+
+
+@app.put("/api/gear")
+def save_gear(payload: GearIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    try:
+        updated = update_user_gear(
+            user["id"],
+            espresso_machine=payload.espresso_machine,
+            grinder=payload.grinder,
+            brewer_types=payload.brewer_types,
+            gear_specs=payload.gear_specs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"user": updated}
 
 
 @app.get("/api/export")

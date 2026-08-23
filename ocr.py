@@ -20,6 +20,7 @@ from db import (
     find_similar_beans,
     get_localized,
     infer_intensity_scores,
+    normalize_gear_item,
     resolve_origin_geo,
     sanitize_roaster_url,
     scan_destination,
@@ -2436,3 +2437,151 @@ def _find_notes(blob: str) -> tuple[str, list[str]]:
     if not snippet and flavors:
         snippet = ", ".join(flavors)
     return snippet, flavors
+
+
+def _gear_lookup_prompt(query: str, kind: str = "", lang: str = "da") -> str:
+    language = STORY_LANG.get(normalize_lang(lang), "Danish")
+    slot = (kind or "auto").strip().lower()
+    if slot not in {"espresso_machine", "grinder", "brewer", "other", "auto"}:
+        slot = "auto"
+    return f"""You are a coffee equipment specialist. Look up this machine, grinder, or brewer and return ONLY JSON.
+
+Query: {query}
+Preferred kind: {slot}
+
+Write summary in {language}. Use well-known public specs (manufacturer pages, reviews).
+
+JSON schema:
+{{
+  "name": "canonical product name",
+  "brand": "brand",
+  "kind": "espresso_machine | grinder | brewer | other",
+  "highlights": ["up to 6 short spec chips, e.g. Dual Boiler", "PID", "Rotary Pump", "64mm Flat Burrs"],
+  "summary": "1-2 sentence equipment summary",
+  "details": {{
+    "boiler": "single / heat exchanger / dual boiler / thermoblock / n/a",
+    "pid": true,
+    "pump": "rotary / vibratory / n/a",
+    "burrs": "flat / conical / n/a",
+    "burr_size": "e.g. 64mm",
+    "group": "e.g. E61"
+  }}
+}}
+
+If the query is a grinder, prefer burr size and burr type in highlights.
+If the query is an espresso machine, prefer boiler type, PID, and pump in highlights.
+Never invent a wildly different product. If unsure, still return the closest well-known match with conservative highlights.
+"""
+
+
+def _normalize_gear_lookup(data: dict[str, Any], query: str, kind: str = "") -> dict[str, Any]:
+    payload = dict(data or {})
+    payload.setdefault("name", query.strip())
+    if kind in {"espresso_machine", "grinder", "brewer", "other"}:
+        payload["kind"] = kind
+    card = normalize_gear_item(payload) or {
+        "id": query.strip().lower(),
+        "kind": kind or "other",
+        "name": query.strip(),
+        "brand": "",
+        "highlights": [],
+        "summary": "",
+        "details": {},
+    }
+    return card
+
+
+def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> dict[str, Any]:
+    from google import genai
+    from google.genai import types
+
+    prompt = _gear_lookup_prompt(query, kind, lang)
+    client = genai.Client(api_key=key, http_options={"timeout": 28_000})
+    tools = _google_search_tools(types)
+    last_error: Exception | None = None
+    for model_name in GEMINI_MODELS:
+        use_tools = bool(tools)
+        for _attempt in range(2):
+            config_kwargs: dict[str, Any] = {"temperature": 0.1}
+            if use_tools:
+                config_kwargs["tools"] = tools
+            else:
+                config_kwargs["response_mime_type"] = "application/json"
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+                data = _parse_gemini_json(_response_text(response))
+                return _normalize_gear_lookup(data, query, kind)
+            except Exception as exc:
+                last_error = exc
+                if use_tools:
+                    use_tools = False
+                    continue
+                if "404" in str(exc) or "NOT_FOUND" in str(exc) or _transient_gemini_error(exc):
+                    break
+                break
+        else:
+            continue
+    if last_error:
+        raise last_error
+    return {}
+
+
+def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -> dict[str, Any]:
+    import google.generativeai as genai
+
+    prompt = _gear_lookup_prompt(query, kind, lang)
+    genai.configure(api_key=key)
+    tools = _legacy_google_search_tools()
+    last_error: Exception | None = None
+    for model_name in GEMINI_MODELS:
+        try:
+            kwargs: dict[str, Any] = {}
+            if tools:
+                kwargs["tools"] = tools
+            model = genai.GenerativeModel(model_name, **kwargs)
+            response = model.generate_content(prompt, generation_config={"temperature": 0.1})
+            data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
+            return _normalize_gear_lookup(data, query, kind)
+        except Exception as exc:
+            last_error = exc
+            if tools and _tools_unsupported(exc):
+                tools = None
+                continue
+            if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                continue
+            break
+    if last_error:
+        raise last_error
+    return {}
+
+
+def lookup_gear_specs(query: str, kind: str = "", lang: str = "da") -> dict[str, Any]:
+    """Grounded Gemini lookup of espresso machine / grinder / brewer specs."""
+    q = " ".join((query or "").split())
+    if len(q) < 2:
+        raise ValueError("gear_query_required")
+    slot = (kind or "").strip().lower()
+    if slot not in {"espresso_machine", "grinder", "brewer", "other"}:
+        slot = ""
+    key = get_gemini_api_key()
+    if not key:
+        raise RuntimeError("ocr_missing")
+    data: dict[str, Any] = {}
+    errors: list[str] = []
+    try:
+        data = _gear_lookup_with_genai(q, slot, key, lang)
+    except Exception as exc:
+        errors.append(f"google.genai: {exc}")
+        try:
+            data = _gear_lookup_with_generativeai(q, slot, key, lang)
+        except Exception as exc2:
+            errors.append(f"google.generativeai: {exc2}")
+    if not data or not data.get("name"):
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        raise ValueError("gear_lookup_fail")
+    return data
