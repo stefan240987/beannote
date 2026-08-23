@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.4.0"
+VERSION = "1.4.2"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -115,7 +115,7 @@ def get_images_dir() -> Path:
 def save_bean_image(image_bytes: bytes, filename: str = "") -> str:
     """Persist a snapped/uploaded bag photo next to the DB; return a relative path."""
     suffix = Path(filename or "").suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}:
         suffix = ".jpg"
     if suffix == ".jpeg":
         suffix = ".jpg"

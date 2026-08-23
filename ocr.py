@@ -334,7 +334,18 @@ def _parse_gemini_json(text: str) -> dict[str, Any]:
     return data
 
 
+def _register_heif_opener() -> None:
+    """Optional HEIC/HEIF support when pillow-heif is installed (iOS album uploads)."""
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except Exception:
+        return
+
+
 def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
+    _register_heif_opener()
     image = Image.open(BytesIO(image_bytes))
     if image.mode not in {"L", "RGB"}:
         image = image.convert("RGB")
@@ -344,6 +355,16 @@ def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
         scale = 1600 / longest
         image = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
     return image
+
+
+def encode_scan_jpeg(image_bytes: bytes) -> bytes:
+    """Normalize any camera/album upload (JPEG/PNG/WebP/HEIC) to JPEG for Gemini + storage."""
+    image = _prepare_scan_image(image_bytes)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=88)
+    return buffer.getvalue()
 
 
 def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:

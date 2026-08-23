@@ -32,6 +32,7 @@ from ocr import (
     PROCESSES,
     ROAST_LEVELS,
     compare_flavor_notes,
+    encode_scan_jpeg,
     ensure_local_env,
     extract_flavor_tags,
     load_local_env,
@@ -56,6 +57,7 @@ BREW_METHODS = [
 ROAST_FILTERS = list(ROAST_LEVELS) + [
     value for value in ("Light", "Medium-Dark", "Dark") if value not in ROAST_LEVELS
 ]
+SCAN_IMAGE_TYPES = ["jpg", "jpeg", "png", "heic", "webp"]
 RADAR_CHART_CONFIG = {
     "staticPlot": True,
     "displayModeBar": False,
@@ -337,6 +339,71 @@ def inject_css() -> None:
             min-height: 400px;
         }
         .bn-scan-slot { margin: 0 0 0.7rem; }
+        .bn-scan-card {
+            background: #fffdf9;
+            border: 1px solid #eae3d9;
+            border-bottom: 0;
+            border-radius: 16px 16px 0 0;
+            padding: 1rem 1.05rem 0.15rem;
+            margin: 0;
+            box-shadow: 0 6px 18px rgba(60, 42, 33, 0.06);
+        }
+        [data-testid="stElementContainer"]:has(.bn-scan-card) {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        [data-testid="stElementContainer"]:has(.bn-scan-card) + [data-testid="stElementContainer"] {
+            background: #fffdf9;
+            border: 1px solid #eae3d9;
+            border-top: 0;
+            border-radius: 0 0 16px 16px;
+            padding: 0 0.85rem 0.95rem;
+            margin: 0 0 0.85rem;
+            box-shadow: 0 6px 18px rgba(60, 42, 33, 0.06);
+        }
+        .bn-scan-title {
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #3c2a21;
+            letter-spacing: -0.02em;
+            margin: 0 0 0.3rem;
+        }
+        .bn-scan-sub {
+            margin: 0 0 0.85rem;
+            color: #8c7a6b;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            font-weight: 400;
+        }
+        [data-testid="stVerticalBlock"]:has(.bn-scan-card) [data-testid="stFileUploader"] section,
+        [data-testid="stFileUploaderDropzone"] {
+            min-height: 108px !important;
+            border-radius: 12px !important;
+            border: 1.5px dashed #b85c38 !important;
+            background: #faf6f0 !important;
+            box-shadow: none !important;
+            padding: 1rem 0.85rem !important;
+            touch-action: manipulation;
+        }
+        [data-testid="stFileUploader"] button,
+        [data-testid="stFileUploaderDropzone"] button {
+            background: #b85c38 !important;
+            color: #faf6f0 !important;
+            border: 0 !important;
+            border-radius: 10px !important;
+            min-height: 48px !important;
+            min-width: 160px !important;
+            padding: 0.7rem 1.25rem !important;
+            font-weight: 600 !important;
+            font-size: 15px !important;
+            touch-action: manipulation;
+        }
+        [data-testid="stFileUploader"] button:hover,
+        [data-testid="stFileUploaderDropzone"] button:hover {
+            background: #9a4b2d !important;
+            color: #fff !important;
+        }
         .bn-roaster {
             font-size: 11px;
             letter-spacing: 1px;
@@ -588,9 +655,15 @@ def inject_css() -> None:
                 font-size: 16px !important;
                 min-height: 48px;
             }
-            [data-testid="stCameraInput"] button,
-            [data-testid="stFileUploader"] section {
-                min-height: 48px;
+            [data-testid="stFileUploader"] section,
+            [data-testid="stFileUploaderDropzone"] {
+                min-height: 120px !important;
+            }
+            [data-testid="stFileUploader"] button,
+            [data-testid="stFileUploaderDropzone"] button {
+                width: 100% !important;
+                min-height: 52px !important;
+                font-size: 16px !important;
             }
         }
         </style>
@@ -837,8 +910,13 @@ def process_scan_image(image_file) -> None:
     """Gemini/OCR + fuzzy match a snapped/uploaded bag, then route to Rate or Add."""
     from ocr import scan_available, scan_label
 
-    image_bytes = image_file.getvalue()
+    raw = image_file.getvalue()
     filename = getattr(image_file, "name", "") or "scan.jpg"
+    try:
+        image_bytes = encode_scan_jpeg(raw)
+        filename = "scan.jpg"
+    except Exception:
+        image_bytes = raw
     image_url = save_bean_image(image_bytes, filename)
 
     if not scan_available():
@@ -878,28 +956,27 @@ def process_scan_image(image_file) -> None:
 
 
 def render_scan_cta(lang: str) -> None:
-    st.markdown('<div class="bn-scan-slot"></div>', unsafe_allow_html=True)
-    if st.button(t(lang, "scan_and_rate"), type="primary", use_container_width=True, key="scan_cta"):
-        st.session_state.scan_panel_open = not st.session_state.get("scan_panel_open", False)
-
-    if not st.session_state.get("scan_panel_open"):
-        return
-
-    st.caption(t(lang, "camera_help"))
-    photo = st.camera_input(t(lang, "take_photo"), key="scan_camera")
-    uploaded = st.file_uploader(
-        t(lang, "or_upload"),
-        type=["jpg", "jpeg", "png"],
-        key="scan_upload",
+    st.markdown(
+        f'<div class="bn-scan-card">'
+        f'<div class="bn-scan-title">{escape(t(lang, "scan_card_title"))}</div>'
+        f'<p class="bn-scan-sub">{escape(t(lang, "scan_card_sub"))}</p>'
+        f"</div>",
+        unsafe_allow_html=True,
     )
-    image = photo or uploaded
-    if not image:
+    uploaded = st.file_uploader(
+        t(lang, "scan_pick_image"),
+        type=SCAN_IMAGE_TYPES,
+        key="scan_upload",
+        label_visibility="collapsed",
+        accept_multiple_files=False,
+    )
+    if not uploaded:
         return
-    digest = hashlib.md5(image.getvalue()).hexdigest()
+    digest = hashlib.md5(uploaded.getvalue()).hexdigest()
     if st.session_state.get("last_scan_digest") == digest:
         return
     st.session_state.last_scan_digest = digest
-    process_scan_image(image)
+    process_scan_image(uploaded)
     st.rerun()
 
 
@@ -1150,16 +1227,24 @@ def render_add(lang: str) -> None:
 
     uploaded = st.file_uploader(
         t(lang, "upload"),
-        type=["jpg", "jpeg", "png"],
+        type=SCAN_IMAGE_TYPES,
         help=t(lang, "upload_help"),
+        accept_multiple_files=False,
     )
     if uploaded and st.button(t(lang, "scan"), type="primary", use_container_width=True):
         if not scan_available():
             st.error(t(lang, "ocr_missing"))
         else:
             try:
-                parsed = scan_label(uploaded.getvalue())
-                parsed["image_url"] = save_bean_image(uploaded.getvalue(), uploaded.name)
+                raw = uploaded.getvalue()
+                try:
+                    image_bytes = encode_scan_jpeg(raw)
+                    filename = "scan.jpg"
+                except Exception:
+                    image_bytes = raw
+                    filename = uploaded.name
+                parsed = scan_label(image_bytes)
+                parsed["image_url"] = save_bean_image(image_bytes, filename)
                 apply_ocr_form(parsed)
                 st.rerun()
             except Exception:

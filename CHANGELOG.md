@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.4.2] - 2026-08-23
+
+- Replaced the WebRTC `st.camera_input` frame with a native `st.file_uploader` (JPG, JPEG, PNG, HEIC, WebP) so Safari, Chrome, Firefox, Edge, and Samsung Internet on iOS and Android open the OS camera / photo-library picker instead of getUserMedia.
+- Scan UI is a mobile action card (`📸 Scan kaffepose`) with a dashed terracotta dropzone and 48–52px thumb targets.
+- Camera and album photos still go through the same Gemini 1.5 Vision extraction + fuzzy-match pipeline; uploads are normalized to JPEG before scan and storage.
+
 ## [1.4.0] - 2026-08-23
 
 - Gemini Vision now writes a short Danish "Kaffens Historie" from label facts plus coffee knowledge (farm, region, altitude, varietals, flavor narrative).
