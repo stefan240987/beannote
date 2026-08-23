@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from db import (
     VERSION,
     ENVIRONMENT,
+    RESET_DB_ON_START,
     authenticate_email,
     create_email_user,
     distinct_values,
@@ -57,7 +58,14 @@ from ocr import (
     scan_available,
     scan_label,
 )
-from translations import FALLBACK_LANG, STRINGS, SUPPORTED_LANGUAGES, t, ui_langs
+from translations import (
+    FALLBACK_LANG,
+    STRINGS,
+    SUPPORTED_LANGUAGES,
+    brew_method_i18n_table,
+    t,
+    ui_langs,
+)
 
 UI_LANGS = ui_langs()
 
@@ -81,6 +89,36 @@ BREW_METHODS = [
     "Moka",
     "Cold Brew",
 ]
+LOCAL_SUPPORT_MOBILEPAY = "https://mobilepay.dk"
+LOCAL_SUPPORT_BUYMEACOFFEE = "https://buymeacoffee.com"
+
+
+def _https_url(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return ""
+    return raw
+
+
+def support_config() -> dict[str, Any]:
+    """Docker/ENV-driven support links. Local/test gets dummy URLs so the modal can be QA'd."""
+    mobilepay = _https_url(os.getenv("SUPPORT_MOBILEPAY_URL") or "")
+    buymeacoffee = _https_url(os.getenv("SUPPORT_BUYMEACOFFEE_URL") or "")
+    local_test = ENVIRONMENT == "local" or RESET_DB_ON_START
+    test_mode = False
+    if local_test and not (mobilepay and buymeacoffee):
+        mobilepay = mobilepay or LOCAL_SUPPORT_MOBILEPAY
+        buymeacoffee = buymeacoffee or LOCAL_SUPPORT_BUYMEACOFFEE
+        test_mode = True
+    return {
+        "support_enabled": bool(mobilepay or buymeacoffee),
+        "mobilepay_url": mobilepay,
+        "buymeacoffee_url": buymeacoffee,
+        "support_test_mode": test_mode,
+    }
 
 
 def _secret() -> str:
@@ -369,8 +407,10 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
         "flavor_i18n": flavor_i18n_table(),
         "suitable_for": suitable_for_catalog(lang),
         "suitable_i18n": suitable_for_i18n_table(),
+        "brew_method_i18n": brew_method_i18n_table(),
         "origins": distinct_values("origin"),
         "roasts": distinct_values("roast_level"),
+        **support_config(),
     }
 
 
@@ -403,6 +443,9 @@ class BeanIn(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     region_full: str = ""
+    acidity_score: Optional[int] = None
+    body_score: Optional[int] = None
+    roast_level_score: Optional[int] = None
     skip_fuzzy: bool = False
 
 
@@ -419,6 +462,7 @@ class RatingIn(BaseModel):
     coffee_grams: Optional[float] = None
     water_grams: Optional[float] = None
     brew_time: str = ""
+    tasting_notes_user: str = ""
 
 
 def _auth_error(code: str) -> HTTPException:
@@ -699,6 +743,9 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             latitude=payload.latitude,
             longitude=payload.longitude,
             region_full=payload.region_full,
+            acidity_score=payload.acidity_score,
+            body_score=payload.body_score,
+            roast_level_score=payload.roast_level_score,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -738,6 +785,9 @@ def replace_bean(
             latitude=payload.latitude,
             longitude=payload.longitude,
             region_full=payload.region_full,
+            acidity_score=payload.acidity_score,
+            body_score=payload.body_score,
+            roast_level_score=payload.roast_level_score,
         )
     except ValueError as exc:
         raise _auth_error(str(exc)) from exc
@@ -828,7 +878,7 @@ def create_rating(payload: RatingIn, user: dict[str, Any] = Depends(current_user
         sweetness=payload.sweetness,
         body=payload.body,
         aftertaste=payload.aftertaste,
-        notes=payload.notes,
+        notes=payload.tasting_notes_user or payload.notes,
         user_id=user["id"],
         grind_setting=payload.grind_setting,
         coffee_grams=payload.coffee_grams,

@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [4.3.0] - 2026-08-23
+
+- Combined flavor intensity bars, interactive recipe log cards, and Docker-driven support modal with local test fallbacks.
+- Gemini Vision now extracts `acidity_score`, `body_score`, and `roast_level_score` (1–5). Bean Detail shows 🍋 Syre, ☕ Krop, and 🔥 Ristningsgrad bars under the suitability badges.
+- Rate-a-bean saves brew method, grind, coffee/water grams, brew time, and personal tasting notes. The detail modal lists them as recipe cards instead of an empty tasting history.
+- `GET /api/config` exposes `support_enabled`, `mobilepay_url`, and `buymeacoffee_url` from `SUPPORT_MOBILEPAY_URL` / `SUPPORT_BUYMEACOFFEE_URL`. Local or `RESET_DB_ON_START` fills dummy URLs so the ☕ Støt appen modal can be tested without production secrets.
+
 ## [3.7.0] - 2026-08-23
 
 - Bean Detail now has a prominent 🛍️ Find forhandler / Find Retailer button under the title. Tapping it opens a new tab with a Google search for `"{roaster}" "{bean}" køb buy`.

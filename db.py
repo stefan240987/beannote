@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "3.7.0"
+VERSION = "4.3.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -394,6 +394,9 @@ def init_db() -> None:
                 community_sweetness REAL DEFAULT 3.5,
                 community_body REAL DEFAULT 3.3,
                 community_aftertaste REAL DEFAULT 3.4,
+                acidity_score INTEGER,
+                body_score INTEGER,
+                roast_level_score INTEGER,
                 recommended_method TEXT DEFAULT '',
                 grind_size TEXT DEFAULT '',
                 water_temp TEXT DEFAULT '',
@@ -480,6 +483,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for column, decl in (("latitude", "REAL"), ("longitude", "REAL")):
         if column not in beans:
             conn.execute(f"ALTER TABLE beans ADD COLUMN {column} {decl}")
+    for column in ("acidity_score", "body_score", "roast_level_score"):
+        if column not in beans:
+            conn.execute(f"ALTER TABLE beans ADD COLUMN {column} INTEGER")
     users = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "is_admin" not in users:
         conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
@@ -648,6 +654,87 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def clamp_intensity_score(value: Any) -> int | None:
+    """Keep Gemini/user flavor intensity on a closed 1–5 integer scale."""
+    number = _as_float(value)
+    if number is None:
+        return None
+    return int(min(5, max(1, round(number))))
+
+
+_ROAST_SCORE_ALIASES = (
+    (("medium-mørk", "medium-dark", "medium mørk", "medium dark", "mellemmørk"), 4),
+    (("medium-lys", "medium-light", "medium lys", "medium light", "mellemlys"), 2),
+    (("mørk", "dark", "mørkristet"), 5),
+    (("lys", "light", "lysristet"), 1),
+    (("medium", "mellem", "mellemristet"), 3),
+)
+
+
+def roast_level_to_score(roast_level: str) -> int | None:
+    lowered = " ".join((roast_level or "").lower().split())
+    if not lowered:
+        return None
+    for aliases, score in _ROAST_SCORE_ALIASES:
+        if any(alias in lowered for alias in aliases):
+            return score
+    return None
+
+
+def infer_intensity_scores(
+    acidity_score: Any = None,
+    body_score: Any = None,
+    roast_level_score: Any = None,
+    roast_level: str = "",
+    origin: str = "",
+    process: str = "",
+    name: str = "",
+) -> dict[str, int | None]:
+    """Prefer explicit 1–5 scores; otherwise infer from roast, origin, and process."""
+    roast = clamp_intensity_score(roast_level_score) or roast_level_to_score(roast_level)
+    acidity = clamp_intensity_score(acidity_score)
+    body = clamp_intensity_score(body_score)
+    blob = f"{origin} {process} {name} {roast_level}".lower()
+    african = any(token in blob for token in ("ethiopia", "etiopien", "kenya", "rwanda", "burundi"))
+    washed = any(token in blob for token in ("vasket", "washed"))
+    natural = any(token in blob for token in ("natural", "anaerob", "anaerobic", "honey"))
+    espresso = any(token in blob for token in ("espresso", "mørk", "dark"))
+    if roast is None:
+        roast = 5 if espresso and not african else 3
+    if acidity is None:
+        if roast <= 2:
+            acidity = 5 if african or washed else 4
+        elif roast == 3:
+            acidity = 4 if african else 3
+        else:
+            acidity = 2
+    if body is None:
+        if roast >= 4 or espresso:
+            body = 5
+        elif roast == 3:
+            body = 4 if natural or espresso else 3
+        else:
+            body = 2 if washed and not natural else 3
+    return {
+        "acidity_score": acidity,
+        "body_score": body,
+        "roast_level_score": roast,
+    }
+
+
+def _rating_public(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    data = dict(row)
+    notes = (data.get("notes") or "").strip()
+    data["notes"] = notes
+    data["tasting_notes_user"] = notes
+    data["grind_setting"] = (data.get("grind_setting") or "").strip()
+    data["brew_time"] = (data.get("brew_time") or "").strip()
+    data["brew_method"] = (data.get("brew_method") or "").strip()
+    return data
+
+
 def resolve_origin_geo(
     origin: str = "",
     region_full: str = "",
@@ -770,6 +857,36 @@ def _apply_meta_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], meta: d
     bean.update(updates)
 
 
+def _apply_scores_if_empty(
+    conn: sqlite3.Connection,
+    bean: dict[str, Any],
+    scores: dict[str, Any],
+) -> None:
+    if not bean:
+        return
+    incoming = infer_intensity_scores(
+        scores.get("acidity_score"),
+        scores.get("body_score"),
+        scores.get("roast_level_score"),
+        scores.get("roast_level") or bean.get("roast_level") or "",
+        scores.get("origin") or bean.get("origin") or "",
+        scores.get("process") or bean.get("process") or "",
+        scores.get("name") or bean.get("name") or "",
+    )
+    updates: dict[str, Any] = {}
+    for key in ("acidity_score", "body_score", "roast_level_score"):
+        if incoming.get(key) is not None and bean.get(key) in (None, ""):
+            updates[key] = incoming[key]
+    if not updates:
+        return
+    assignments = ", ".join(f"{key} = ?" for key in updates)
+    conn.execute(
+        f"UPDATE beans SET {assignments} WHERE id = ?",
+        (*updates.values(), bean["id"]),
+    )
+    bean.update(updates)
+
+
 def _apply_suitable_if_empty(
     conn: sqlite3.Connection, bean: dict[str, Any], tags: list[str]
 ) -> None:
@@ -824,6 +941,16 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     data["latitude"] = lat
     data["longitude"] = lng
     data["region_full"] = region
+    scores = infer_intensity_scores(
+        data.get("acidity_score"),
+        data.get("body_score"),
+        data.get("roast_level_score"),
+        data.get("roast_level") or "",
+        data.get("origin") or "",
+        data.get("process") or "",
+        data.get("name") or "",
+    )
+    data.update(scores)
     favorite = data.pop("is_favorite", None)
     data["is_favorite"] = bool(is_favorite if favorite is None else favorite)
     return data
@@ -943,6 +1070,9 @@ def insert_bean(
     latitude: Any = None,
     longitude: Any = None,
     region_full: str = "",
+    acidity_score: Any = None,
+    body_score: Any = None,
+    roast_level_score: Any = None,
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
@@ -966,6 +1096,15 @@ def insert_bean(
         region_full,
         origin,
     )
+    scores = infer_intensity_scores(
+        acidity_score,
+        body_score,
+        roast_level_score,
+        roast_level,
+        origin,
+        process,
+        name,
+    )
     if not name or not roaster:
         raise ValueError("name_roaster_required")
 
@@ -982,12 +1121,13 @@ def insert_bean(
         if story_map:
             update_bean_story(bean["id"], story_map)
             bean["story"] = merge_text_map(bean.get("story"), story_map)
-        if brew.get("brew_map") or any(brew.get(key) for key in _BREW_KEYS) or any(meta.values()) or suitable_for:
+        if brew.get("brew_map") or any(brew.get(key) for key in _BREW_KEYS) or any(meta.values()) or suitable_for or any(scores.values()):
             with connect() as conn:
                 if brew.get("brew_map") or any(brew.get(key) for key in _BREW_KEYS):
                     _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
                 _apply_suitable_if_empty(conn, bean, suitable_for or [])
+                _apply_scores_if_empty(conn, bean, {**scores, "roast_level": roast_level, "origin": origin, "process": process, "name": name})
         return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
@@ -1003,8 +1143,8 @@ def insert_bean(
                 name, roaster, origin, process, roast_level, roaster_notes,
                 flavor_tags, suitable_for, story, image_url, roaster_url, recommended_method, grind_size,
                 water_temp, brew_ratio, brew_recommendation, roast_date, altitude, varietal,
-                latitude, longitude, region_full, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                latitude, longitude, region_full, acidity_score, body_score, roast_level_score, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -1029,6 +1169,9 @@ def insert_bean(
                 meta["latitude"],
                 meta["longitude"],
                 meta["region_full"],
+                scores["acidity_score"],
+                scores["body_score"],
+                scores["roast_level_score"],
                 _now(),
             ),
         )
@@ -1061,6 +1204,11 @@ def insert_bean(
                 _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
                 _apply_suitable_if_empty(conn, bean, suitable_for or [])
+                _apply_scores_if_empty(
+                    conn,
+                    bean,
+                    {**scores, "roast_level": roast_level, "origin": origin, "process": process, "name": name},
+                )
             return {"status": "exists", "bean": bean}
 
         bean = conn.execute(
@@ -1093,6 +1241,9 @@ def update_bean(
     latitude: Any = None,
     longitude: Any = None,
     region_full: str = "",
+    acidity_score: Any = None,
+    body_score: Any = None,
+    roast_level_score: Any = None,
 ) -> dict[str, Any] | None:
     """Replace bean masterdata. Callers must enforce admin authorization."""
     existing = get_bean(bean_id)
@@ -1130,6 +1281,15 @@ def update_bean(
     roaster_url = sanitize_roaster_url(roaster_url) or (existing.get("roaster_url") or "")
     story_map = coerce_text_map(story) if story else coerce_text_map(existing.get("story"))
     brew_map = brew.get("brew_map") or coerce_brew_map(existing.get("brew_recommendation"))
+    scores = infer_intensity_scores(
+        acidity_score if acidity_score is not None else existing.get("acidity_score"),
+        body_score if body_score is not None else existing.get("body_score"),
+        roast_level_score if roast_level_score is not None else existing.get("roast_level_score"),
+        roast_level or existing.get("roast_level") or "",
+        origin or existing.get("origin") or "",
+        process or existing.get("process") or "",
+        name,
+    )
     with connect() as conn:
         clash = conn.execute(
             "SELECT id FROM beans WHERE name = ? AND roaster = ? AND id != ?",
@@ -1144,7 +1304,7 @@ def update_bean(
                 roaster_notes = ?, flavor_tags = ?, suitable_for = ?, story = ?, image_url = ?,
                 roaster_url = ?, recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
                 brew_recommendation = ?, roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
-                longitude = ?, region_full = ?
+                longitude = ?, region_full = ?, acidity_score = ?, body_score = ?, roast_level_score = ?
             WHERE id = ?
             """,
             (
@@ -1170,6 +1330,9 @@ def update_bean(
                 meta["latitude"],
                 meta["longitude"],
                 meta["region_full"],
+                scores["acidity_score"],
+                scores["body_score"],
+                scores["roast_level_score"],
                 bean_id,
             ),
         )
@@ -1330,7 +1493,7 @@ def insert_rating(
         row = conn.execute(
             "SELECT * FROM ratings WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
-    return dict(row)
+    return _rating_public(row) or {}
 
 
 def list_ratings(bean_id: int | None = None) -> list[dict[str, Any]]:
@@ -1346,7 +1509,7 @@ def list_ratings(bean_id: int | None = None) -> list[dict[str, Any]]:
     sql += " ORDER BY r.created_at DESC"
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+    return [_rating_public(r) for r in rows if r is not None]
 
 
 def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, Any]:
@@ -1393,7 +1556,7 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
         "avg_rating": stats["avg_rating"] or 0,
         "rating_count": stats["rating_count"] or 0,
     }
-    user = dict(latest) if latest else None
+    user = _rating_public(latest) if latest else None
     if user:
         user["my_recipe"] = {
             "grind_setting": (user.get("grind_setting") or "").strip(),

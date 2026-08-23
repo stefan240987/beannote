@@ -18,6 +18,7 @@ from db import (
     classify_matches,
     find_similar_beans,
     get_localized,
+    infer_intensity_scores,
     resolve_origin_geo,
     sanitize_roaster_url,
     scan_destination,
@@ -754,6 +755,17 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["region_full"] = region
     out["roaster_url"] = _extract_roaster_url(parsed)
     out = refine_label_fields(out, lang=lang)
+    out.update(
+        infer_intensity_scores(
+            parsed.get("acidity_score") if out.get("acidity_score") is None else out.get("acidity_score"),
+            parsed.get("body_score") if out.get("body_score") is None else out.get("body_score"),
+            parsed.get("roast_level_score") if out.get("roast_level_score") is None else out.get("roast_level_score"),
+            out.get("roast_level") or "",
+            out.get("origin") or "",
+            out.get("process") or "",
+            out.get("name") or "",
+        )
+    )
     if not isinstance(out.get("flavor_tags"), dict):
         out["flavor_tags"] = flavor_tags_lang_map(out.get("flavor_tags"), out.get("flavor_notes"))
     out["flavor_notes"] = get_localized(out["flavor_tags"], lang) or []
@@ -1059,6 +1071,9 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
             out["roast_level"] = localize_mapped("Medium", ROAST_LOCALES, code)
         else:
             out["roast_level"] = localize_mapped(out.get("roast_level") or "", ROAST_LOCALES, code)
+        out.setdefault("acidity_score", 3)
+        out.setdefault("body_score", 4)
+        out.setdefault("roast_level_score", 3)
         required = [FLAVOR_LOCALES[tag][code] for tag in LABEL_FLAVOR_CANON]
         tags = extract_flavor_tags(
             out.get("flavor_tags"),
@@ -1081,6 +1096,9 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
         out["suitable_for"] = [localize_suitable(tag, code) for tag in LABEL_SUITABLE_BELLAROM]
         if not out.get("roast_level"):
             out["roast_level"] = localize_mapped("Mørk", ROAST_LOCALES, code)
+        out.setdefault("acidity_score", 2)
+        out.setdefault("body_score", 5)
+        out.setdefault("roast_level_score", 5)
 
     return out
 
@@ -1146,6 +1164,14 @@ def _gemini_prompt(lang: str = "da") -> str:
         '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
         f'- "process": exactly one of [{processes}] — write this in {story_lang}\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
+        '- "acidity_score": integer 1–5 for perceived acidity / brightness '
+        "(1 = muted/low, 5 = sparkling citrus or berry). Infer from origin, "
+        "process, roast, and printed tasting notes when the bag has no numbers.\n"
+        '- "body_score": integer 1–5 for body / mouthfeel '
+        "(1 = tea-like, 5 = syrupy or creamy). Infer from roast and process.\n"
+        '- "roast_level_score": integer 1–5 for roast depth '
+        "(1 = Light / Lys, 3 = Medium, 5 = Dark / Mørk). "
+        "Map Medium-Light to 2 and Medium-Dark to 4.\n"
         f'- "flavor_tags": language map keyed by {lang_keys}. Same flavors, same order, '
         "translated per key. Schema:\n"
         f"{flavor_lines}\n"

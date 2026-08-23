@@ -81,6 +81,9 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("prompt asks for flavor map", '"flavor_tags": language map' in prompt)
         _assert_true("prompt asks for brew map", '"brew_recommendation": language map' in prompt)
         _assert_true("prompt asks for roaster_url", '"roaster_url"' in prompt)
+        _assert_true("prompt asks for acidity_score", '"acidity_score"' in prompt)
+        _assert_true("prompt asks for body_score", '"body_score"' in prompt)
+        _assert_true("prompt asks for roast_level_score", '"roast_level_score"' in prompt)
         _assert_true("prompt includes da key", '"da"' in prompt)
         _assert_true("prompt includes en key", '"en"' in prompt)
         _assert_true("da flavors in map prompt", "Mørk chokolade" in prompt)
@@ -89,7 +92,7 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("en brew in map prompt", "18g coffee to 36g espresso" in prompt)
     _assert_true("da suitable_for", "Mælkedrikke" in da)
     _assert_true("en suitable_for", "Milk drinks" in en)
-    print("OK  Gemini prompt locks bean name and asks for JSON language maps")
+    print("OK  Gemini prompt locks bean name, intensity scores, and JSON language maps")
 
 
 def test_get_localized_fallback() -> None:
@@ -393,6 +396,52 @@ def test_bellarom_label_extraction() -> None:
     print("OK  IMG_9354 Bellarom extracted with suitability tags and studio image fallback")
 
 
+def test_intensity_scores_and_support() -> None:
+    from db import infer_intensity_scores, roast_level_to_score
+    from main import LOCAL_SUPPORT_BUYMEACOFFEE, LOCAL_SUPPORT_MOBILEPAY, support_config
+    from ocr import normalize_scan_fields
+    from translations import brew_method_label, t
+
+    _assert_eq("lys roast score", roast_level_to_score("Lys"), 1)
+    _assert_eq("medium roast score", roast_level_to_score("Medium"), 3)
+    _assert_eq("dark roast score", roast_level_to_score("Mørk"), 5)
+    light = infer_intensity_scores(roast_level="Lys", origin="Ethiopia", process="Vasket")
+    _assert_eq("light african acidity", light["acidity_score"], 5)
+    _assert_eq("light roast score", light["roast_level_score"], 1)
+    dark = infer_intensity_scores(roast_level="Mørk", name="Espresso Blend")
+    _assert_eq("dark body", dark["body_score"], 5)
+    _assert_eq("clamped high", infer_intensity_scores(acidity_score=9)["acidity_score"], 5)
+    _assert_eq("clamped low", infer_intensity_scores(body_score=0)["body_score"], 1)
+    scanned = normalize_scan_fields(
+        {
+            "bean_name": "Kenya AA",
+            "roaster": "La Cabra",
+            "origin": "Kenya",
+            "process": "Washed",
+            "roast_level": "Lys",
+            "acidity_score": 5,
+            "body_score": 2,
+            "roast_level_score": 1,
+        },
+        lang="da",
+    )
+    _assert_eq("scan acidity_score", scanned.get("acidity_score"), 5)
+    _assert_eq("scan body_score", scanned.get("body_score"), 2)
+    _assert_eq("scan roast_level_score", scanned.get("roast_level_score"), 1)
+    _assert_eq("da acidity bar", t("da", "intensity_acidity"), "🍋 Syre")
+    _assert_eq("en acidity bar", t("en", "intensity_acidity"), "🍋 Acidity")
+    _assert_eq("da support", t("da", "support_app"), "☕ Støt appen")
+    _assert_eq("en french press", brew_method_label("French Press", "en"), "French Press")
+    _assert_eq("da french press", brew_method_label("French Press", "da"), "Stempelkande")
+    cfg = support_config()
+    _assert_true("support keys", "support_enabled" in cfg and "mobilepay_url" in cfg and "buymeacoffee_url" in cfg)
+    if cfg.get("support_test_mode"):
+        _assert_eq("local mobilepay", cfg["mobilepay_url"], LOCAL_SUPPORT_MOBILEPAY)
+        _assert_eq("local buymeacoffee", cfg["buymeacoffee_url"], LOCAL_SUPPORT_BUYMEACOFFEE)
+        _assert_true("local support on", cfg["support_enabled"])
+    print("OK  intensity scores, recipe i18n, and local support fallbacks")
+
+
 def main() -> int:
     try:
         test_parse_gemini_json()
@@ -403,6 +452,7 @@ def main() -> int:
         test_roaster_url_and_retailer_i18n()
         test_refine_and_flavor_i18n()
         test_bellarom_suitability_and_packshot()
+        test_intensity_scores_and_support()
         test_label_extraction("da")
         test_label_extraction("en")
         test_bellarom_label_extraction()

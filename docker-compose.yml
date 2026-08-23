@@ -21,6 +21,8 @@ services:
       APPLE_KEY_ID: ${APPLE_KEY_ID:-}
       APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
       RESET_DB_ON_START: "false"
+      SUPPORT_MOBILEPAY_URL: ${SUPPORT_MOBILEPAY_URL:-}
+      SUPPORT_BUYMEACOFFEE_URL: ${SUPPORT_BUYMEACOFFEE_URL:-}
     volumes:
       - /mnt/user/appdata/beannote/data:/app/data
     labels:

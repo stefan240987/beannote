@@ -93,6 +93,24 @@
       box-shadow: 0 0 0 2px rgba(184, 92, 56, 0.45);
       transform: translateY(-1px);
     }
+    .flavor-track {
+      height: 0.42rem;
+      border-radius: 999px;
+      background: #e8d8c8;
+      overflow: hidden;
+    }
+    .flavor-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #b85c38, #3c2a21);
+    }
+    .flavor-dot {
+      width: 0.62rem;
+      height: 0.62rem;
+      border-radius: 999px;
+      background: #e8d8c8;
+    }
+    .flavor-dot.on { background: #b85c38; }
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
@@ -255,6 +273,7 @@
       exploreMode: "cards",
       suitabilityFilter: "",
       savedPrompt: null,
+      supportOpen: false,
       rate: {
         brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
         notes: "", grind_setting: "", coffee_grams: "", water_grams: "", brew_time: "",
@@ -649,6 +668,94 @@
       return `<p class="text-sm font-medium text-espresso">${esc(t("suitable_for"))}: ${esc(labels.join(" · "))}</p>`;
     }
 
+    function localizeBrewMethod(method) {
+      const raw = String(method || "").trim();
+      if (!raw) return "";
+      const table = state.config?.brew_method_i18n || {};
+      const hit = table[raw] || table[raw.toLowerCase()];
+      return (hit && (hit[activeLang()] || hit.en || hit.da)) || raw;
+    }
+
+    function intensityScore(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      return Math.max(1, Math.min(5, Math.round(n)));
+    }
+
+    function intensityRow(iconKey, score, scale) {
+      const value = intensityScore(score);
+      if (!value) return "";
+      const pct = (value / 5) * 100;
+      const dots = [1, 2, 3, 4, 5].map((n) =>
+        `<span class="flavor-dot${n <= value ? " on" : ""}" aria-hidden="true"></span>`
+      ).join("");
+      const hint = scale
+        ? `<div class="mt-1 flex justify-between text-[10px] uppercase tracking-wide text-muted">
+            <span>${esc(t("roast_scale_light"))}</span>
+            <span>${esc(t("roast_scale_medium"))}</span>
+            <span>${esc(t("roast_scale_dark"))}</span>
+          </div>`
+        : "";
+      return `<div>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <p class="text-sm font-semibold" data-i18n="${iconKey}">${esc(t(iconKey))}</p>
+          <p class="text-xs font-semibold text-terracotta">${value}/5</p>
+        </div>
+        <div class="flavor-track" role="meter" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${value}" aria-label="${esc(t(iconKey))}">
+          <div class="flavor-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="mt-1.5 flex items-center gap-1.5">${dots}</div>
+        ${hint}
+      </div>`;
+    }
+
+    function intensityBars(bean) {
+      const acidity = intensityRow("intensity_acidity", bean?.acidity_score);
+      const body = intensityRow("intensity_body", bean?.body_score);
+      const roast = intensityRow("intensity_roast", bean?.roast_level_score, true);
+      if (!acidity && !body && !roast) return "";
+      return `<section class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted" data-i18n="intensity_title">${esc(t("intensity_title"))}</p>
+        ${acidity}${body}${roast}
+      </section>`;
+    }
+
+    function supportEnabled() {
+      return !!(state.config?.support_enabled && (state.config.mobilepay_url || state.config.buymeacoffee_url));
+    }
+
+    function supportButton(extra = "") {
+      if (!supportEnabled()) return "";
+      return `<button type="button" data-open-support class="flex min-h-12 w-full items-center justify-center rounded-xl bg-white font-semibold text-espresso ring-1 ring-latte ${extra}" data-i18n="support_app">${esc(t("support_app"))}</button>`;
+    }
+
+    function supportModal() {
+      if (!state.supportOpen || !supportEnabled()) return "";
+      const testNote = state.config?.support_test_mode
+        ? `<p class="mt-3 text-center text-xs font-semibold text-terracotta" data-i18n="support_test_mode">${esc(t("support_test_mode"))}</p>`
+        : "";
+      const mobile = state.config.mobilepay_url
+        ? `<a href="${esc(state.config.mobilepay_url)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="support_mobilepay">${esc(t("support_mobilepay"))}</a>`
+        : "";
+      const coffee = state.config.buymeacoffee_url
+        ? `<a href="${esc(state.config.buymeacoffee_url)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-espresso font-semibold text-cream" data-i18n="support_buymeacoffee">${esc(t("support_buymeacoffee"))}</a>`
+        : "";
+      return `<div id="support-modal" data-close-support class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+        <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-support-sheet>
+          <div class="coffee-pattern px-5 py-6 text-cream">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-cream/70">BeanNote</p>
+            <h2 class="font-display mt-1 text-2xl font-bold" data-i18n="support_title">${esc(t("support_title"))}</h2>
+          </div>
+          <div class="space-y-3 p-5">
+            <p class="text-sm leading-6 text-espresso/80" data-i18n="support_sub">${esc(t("support_sub"))}</p>
+            <div class="grid gap-2">${mobile}${coffee}</div>
+            ${testNote}
+            <button type="button" data-close-support class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
+          </div>
+        </article>
+      </div>`;
+    }
+
     function exploreView() {
       const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
       const mapMode = state.exploreMode === "map";
@@ -678,6 +785,7 @@
         return `<section class="flex min-h-0 flex-1 flex-col px-4 pb-[4.75rem] pt-[max(0.75rem,env(safe-area-inset-top))]">
           ${toolbar}
           <div id="world-map" class="mt-3 min-h-[20rem] w-full flex-1 overflow-hidden rounded-xl ring-1 ring-latte"></div>
+          ${supportEnabled() ? `<div class="mt-3 shrink-0">${supportButton()}</div>` : ""}
           ${state.profile?.bean ? beanModal(state.profile) : ""}
         </section>`;
       }
@@ -685,29 +793,50 @@
         <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
         <div class="mt-3">${toolbar}</div>
         <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
+        ${supportEnabled() ? `<div class="mt-5">${supportButton()}</div>` : ""}
         ${state.profile?.bean ? beanModal(state.profile) : ""}
       </section>`;
+    }
+
+    function recipeMeta(row) {
+      const bits = [];
+      if (row.grind_setting) bits.push(`⚙️ ${esc(row.grind_setting)}`);
+      const coffee = row.coffee_grams;
+      const water = row.water_grams;
+      if (coffee != null && coffee !== "" && water != null && water !== "") {
+        bits.push(`⚖️ ${esc(t("recipe_ratio", { coffee, water }))}`);
+      } else {
+        if (coffee != null && coffee !== "") bits.push(`☕ ${esc(coffee)}g`);
+        if (water != null && water !== "") bits.push(`💧 ${esc(water)}g`);
+      }
+      if (row.brew_time) bits.push(`⏱ ${esc(row.brew_time)}`);
+      return bits;
     }
 
     function tastingHistory(history) {
       const rows = history || [];
       if (!rows.length) {
         return `<section>
-          <p class="text-sm font-semibold" data-i18n="tasting_history">${t("tasting_history")}</p>
+          <p class="text-sm font-semibold" data-i18n="recipe_log">${t("recipe_log")}</p>
           <p class="mt-2 text-sm text-muted" data-i18n="no_ratings">${t("no_ratings")}</p>
         </section>`;
       }
       return `<section class="space-y-2">
-        <p class="text-sm font-semibold" data-i18n="tasting_history">${t("tasting_history")}</p>
-        ${rows.map((row) => `
-          <div class="rounded-xl bg-foam px-3 py-2">
+        <p class="text-sm font-semibold" data-i18n="recipe_log">${t("recipe_log")}</p>
+        ${rows.map((row) => {
+          const method = localizeBrewMethod(row.brew_method);
+          const notes = row.tasting_notes_user || row.notes || "";
+          const meta = recipeMeta(row);
+          return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
             <div class="flex items-center justify-between gap-2">
               <p class="text-sm font-semibold text-amber-600">★ ${Number(row.rating || 0).toFixed(1)}</p>
-              <p class="text-xs text-muted">${esc((row.created_at || "").slice(0, 10))}${row.brew_method ? ` · ${esc(row.brew_method)}` : ""}</p>
+              <p class="text-xs text-muted">${esc((row.created_at || "").slice(0, 10))}</p>
             </div>
-            ${row.notes ? `<p class="mt-1 text-sm text-espresso/80">${esc(row.notes)}</p>` : ""}
-          </div>
-        `).join("")}
+            ${method ? `<p class="mt-1 text-sm font-semibold">${esc(method)}</p>` : ""}
+            ${meta.length ? `<ul class="mt-2 space-y-1 text-xs text-espresso/80">${meta.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
+            ${notes ? `<p class="mt-2 rounded-xl bg-foam px-2.5 py-2 text-sm leading-6 text-espresso/80">💬 ${esc(notes)}</p>` : ""}
+          </article>`;
+        }).join("")}
       </section>`;
     }
 
@@ -762,6 +891,7 @@
               ${retailerActions(bean)}
               <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
               ${suitabilityLine(bean.suitable_for)}
+              ${intensityBars(bean)}
               ${metaBadges(bean)}
               ${storyBlock(bean.story)}
             </section>
@@ -909,15 +1039,14 @@
       const beans = state.beans.map((bean) =>
         `<option value="${bean.id}" ${String(bean.id) === String(state.selectedId) ? "selected" : ""}>${esc(bean.name)} — ${esc(bean.roaster)}</option>`
       ).join("");
-      const brew = (state.config?.brew_methods || []).map((m) =>
-        `<option ${m === state.rate.brew_method ? "selected" : ""}>${esc(m)}</option>`
-      ).join("");
       return `<section class="space-y-4 px-4 pb-28 pt-4">
         <label class="block text-sm font-medium"><span data-i18n="select_bean">${t("select_bean")}</span>
           <select id="rate-bean" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${beans}</select>
         </label>
         <label class="block text-sm font-medium"><span data-i18n="brew_method">${t("brew_method")}</span>
-          <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${brew}</select>
+          <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${(state.config?.brew_methods || []).map((m) =>
+            `<option value="${esc(m)}" ${m === state.rate.brew_method ? "selected" : ""}>${esc(localizeBrewMethod(m))}</option>`
+          ).join("")}</select>
         </label>
         <fieldset class="space-y-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
           <legend class="px-1 text-sm font-semibold" data-i18n="my_recipe">${t("my_recipe")}</legend>
@@ -942,7 +1071,9 @@
         ${slider("sweetness", t("sweetness"), t("help_sweetness"), state.rate.sweetness)}
         ${slider("body", t("body"), t("help_body"), state.rate.body)}
         ${slider("aftertaste", t("aftertaste"), t("help_aftertaste"), state.rate.aftertaste)}
-        <textarea id="notes" class="min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("notes_ph"))}">${esc(state.rate.notes)}</textarea>
+        <label class="block text-sm font-medium"><span data-i18n="tasting_notes_user">${t("tasting_notes_user")}</span>
+          <textarea id="notes" class="mt-1 min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("tasting_notes_user_ph"))}">${esc(state.rate.notes)}</textarea>
+        </label>
         <div class="relative mx-auto h-64 w-full">
           <canvas id="radar"></canvas>
         </div>
@@ -963,6 +1094,7 @@
           ${isAdmin() ? `<p class="mt-2 inline-flex rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-semibold">${esc(t("admin_badge"))}</p>` : ""}
         </div>
         ${langToggle()}
+        ${supportButton()}
         <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold" data-i18n="export_csv">${t("export_csv")}</a>
         <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
       </section>`;
@@ -1199,6 +1331,9 @@
         latitude: source.latitude,
         longitude: source.longitude,
         region_full: source.region_full || "",
+        acidity_score: source.acidity_score ?? null,
+        body_score: source.body_score ?? null,
+        roast_level_score: source.roast_level_score ?? null,
         skip_fuzzy: false,
       };
     }
@@ -1215,7 +1350,7 @@
         return;
       }
       document.documentElement.lang = state.config.lang || "da";
-      document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt)));
+      document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen)));
       if (!state.user) {
         root.innerHTML = authView();
         bindAuth();
@@ -1223,7 +1358,7 @@
       }
       const body = { explore: exploreView, scan: scanView, rate: rateView, profile: profileView }[state.tab]();
       const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
+      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
       drawRadar();
       drawMaps();
@@ -1383,6 +1518,21 @@
           if (event.currentTarget === event.target) closeBean();
         });
       });
+      document.querySelectorAll("[data-open-support]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.supportOpen = true;
+          render();
+        });
+      });
+      $("[data-support-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+      document.querySelectorAll("[data-close-support]").forEach((el) => {
+        el.addEventListener("click", (event) => {
+          if (event.currentTarget === event.target || el.tagName === "BUTTON") {
+            state.supportOpen = false;
+            render();
+          }
+        });
+      });
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#toggle-edit")?.addEventListener("click", () => {
@@ -1470,6 +1620,7 @@
             body: JSON.stringify({
               bean_id: Number(state.selectedId),
               ...state.rate,
+              tasting_notes_user: state.rate.notes,
               coffee_grams: grams(state.rate.coffee_grams),
               water_grams: grams(state.rate.water_grams),
             }),
@@ -1493,8 +1644,14 @@
       });
     }
 
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && state.profile?.bean && state.tab === "explore") closeBean();
+      document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (state.supportOpen) {
+        state.supportOpen = false;
+        render();
+        return;
+      }
+      if (state.profile?.bean && state.tab === "explore") closeBean();
     });
 
     boot();
