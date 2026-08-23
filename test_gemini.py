@@ -255,18 +255,19 @@ def test_bellarom_suitability_and_packshot() -> None:
         "FOR MACHINES", "FOR FILTER", "IDEAL FOR LATTE MACCHIATO", lang="da"
     )
     _assert_eq("icon suitable_for", extracted, ["Espresso", "Filter", "Mælkedrikke"])
-    _assert_eq("no curated packshot", curated_packshot_url(raw["bean_name"], "Bellarom"), "")
+    _assert_true("catalog packshot", curated_packshot_url(raw["bean_name"], "Bellarom").startswith("https://"))
     attached = attach_official_bag_image({
         "name": raw["bean_name"],
         "roaster": "Bellarom",
+        "product_image_urls": [],
     })
     attached_urls = attached.get("image_candidates") or []
-    _assert_true("at most 3 candidates", len(attached_urls) <= 3)
+    _assert_true("1-3 catalog candidates", 1 <= len(attached_urls) <= 3)
     _assert_true(
         "candidates https when present",
         all(str(item).startswith("https://") for item in attached_urls),
     )
-    print("OK  generic suitability extraction and no brand packshot backfill")
+    print("OK  generic suitability extraction with catalog studio packshots")
 
 
 def _profile(parsed: dict, lang: str = "da") -> dict:

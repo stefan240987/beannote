@@ -829,17 +829,16 @@ async def scan(
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     snapshot_url = save_bean_image(jpeg, filename="scan.jpg")
     raw_candidates = [str(item).strip() for item in (parsed.get("image_candidates") or []) if str(item or "").strip()]
-    if len(raw_candidates) < 3:
-        extra = find_product_images(
-            parsed.get("name") or parsed.get("bean_name") or "",
-            parsed.get("roaster") or "",
-            parsed.get("product_image_urls") or parsed.get("product_image_url") or raw_candidates,
-        )
-        for url in extra:
-            if url and url not in raw_candidates:
-                raw_candidates.append(url)
-            if len(raw_candidates) >= 3:
-                break
+    extra = find_product_images(
+        parsed.get("name") or parsed.get("bean_name") or "",
+        parsed.get("roaster") or "",
+        parsed.get("product_image_urls") or parsed.get("product_image_url") or raw_candidates,
+    )
+    for url in extra:
+        if url and url not in raw_candidates:
+            raw_candidates.append(url)
+        if len(raw_candidates) >= 3:
+            break
     if not raw_candidates:
         fallback = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
         raw_candidates = [fallback] if fallback else []

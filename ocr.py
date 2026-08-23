@@ -1482,7 +1482,7 @@ def find_official_bag_images(
 ) -> list[str]:
     """Return up to 3 official high-res product URLs for the scanned bag."""
     collected = find_product_images(name, roaster, hint_urls)
-    if len(collected) >= MAX_IMAGE_CANDIDATES:
+    if collected:
         return collected[:MAX_IMAGE_CANDIDATES]
     if not (name or "").strip() and not (roaster or "").strip():
         return collected
@@ -1516,7 +1516,7 @@ def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
     official = candidates[0] if candidates else ""
     out["official_image_url"] = official
     out["product_image_url"] = official
-    out["image_candidates"] = candidates
+    out["image_candidates"] = candidates[:MAX_IMAGE_CANDIDATES]
     return out
 
 

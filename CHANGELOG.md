@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.0.2] - 2026-08-23
+
+- snapshot: v5.0.2 - restored stable catalog-backed image candidate pipeline
+- `find_product_images` prefers Gemini `product_image_urls` hints, then `ROASTER_PACKSHOT_CATALOG` keyword matches (Copenhagen Roaster, Bellarom, Dinluksus/Dinluxus, …), and only then live DuckDuckGo/Bing search. Scan always attaches up to 3 studio URLs so the 1-click carousel can show `📸 Dit Billede` plus `✨ Studio Billede` thumbs. Gemini OCR prompts stay brand-agnostic.
+
 ## [5.0.1] - 2026-08-23
 
 - snapshot: v5.0.1 - restored dynamic multi-image candidate search
