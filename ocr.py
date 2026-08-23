@@ -20,7 +20,7 @@ from db import (
     find_similar_beans,
     get_localized,
     infer_intensity_scores,
-    normalize_gear_item,
+    normalize_gear_catalog,
     resolve_origin_geo,
     sanitize_roaster_url,
     scan_destination,
@@ -89,7 +89,6 @@ GEMINI_MODELS = (
     "gemini-3.7-flash",
     "gemini-3.5-flash",
     "gemini-flash-latest",
-    "gemini-1.5-flash",
 )
 ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
 
@@ -1505,9 +1504,16 @@ def _gemini_image_part(image: Image.Image):
     return types.Part.from_bytes(data=_image_jpeg_bytes(image), mime_type="image/jpeg")
 
 
-def _transient_gemini_error(exc: Exception) -> bool:
+def _quota_gemini_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return any(token in text for token in ("503", "unavailable", "high demand", "429", "resource_exhausted"))
+    return any(token in text for token in ("429", "resource_exhausted", "exceeded your current quota"))
+
+
+def _transient_gemini_error(exc: Exception) -> bool:
+    if _quota_gemini_error(exc):
+        return False
+    text = str(exc).lower()
+    return any(token in text for token in ("503", "unavailable", "high demand"))
 
 
 def _tools_unsupported(exc: Exception) -> bool:
@@ -1657,6 +1663,7 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
         temperature=0.0,
     )
     last_error: Exception | None = None
+    quota_hit = False
     for model_name in GEMINI_MODELS:
         for attempt in range(3):
             try:
@@ -1669,12 +1676,17 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
                 return _with_grounded_images(data, response)
             except Exception as exc:
                 last_error = exc
+                if _quota_gemini_error(exc):
+                    quota_hit = True
+                    break
                 if "404" in str(exc) or "NOT_FOUND" in str(exc):
                     break
                 if _transient_gemini_error(exc) and attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 break
+    if quota_hit:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
     if last_error:
         raise last_error
     return None
@@ -2052,14 +2064,25 @@ def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
 
 
 def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
+    parsed: dict[str, Any] | None = None
+    gemini_error: Exception | None = None
     if gemini_available():
-        parsed = scan_label_gemini(image_bytes, lang=lang)
-        if parsed is None:
-            raise RuntimeError("Gemini Vision scan failed")
-    else:
+        try:
+            parsed = scan_label_gemini(image_bytes, lang=lang)
+        except Exception as exc:
+            gemini_error = exc
+            print(f"gemini scan failed, falling back to tesseract: {exc}")
+            parsed = None
+        if parsed is None and gemini_error is None:
+            gemini_error = RuntimeError("Gemini Vision scan failed")
+    if parsed is None:
         raw = extract_text(image_bytes)
         parsed = normalize_scan_fields(parse_label(raw), lang=lang)
         parsed["scan_source"] = "tesseract"
+        if gemini_error is not None:
+            parsed["scan_fallback"] = (
+                "gemini_quota" if _quota_gemini_error(gemini_error) else "gemini_fail"
+            )
     parsed = attach_official_bag_image(parsed)
     similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
     parsed["similar"] = similar
@@ -2442,56 +2465,73 @@ def _find_notes(blob: str) -> tuple[str, list[str]]:
 def _gear_lookup_prompt(query: str, kind: str = "", lang: str = "da") -> str:
     language = STORY_LANG.get(normalize_lang(lang), "Danish")
     slot = (kind or "auto").strip().lower()
-    if slot not in {"espresso_machine", "grinder", "brewer", "other", "auto"}:
+    if slot in {"espresso_machine", "machine"}:
+        slot = "machine"
+    elif slot not in {"grinder", "brewer", "other", "auto"}:
         slot = "auto"
-    return f"""You are a coffee equipment specialist. Look up this machine, grinder, or brewer and return ONLY JSON.
+    return f"""You are a coffee equipment catalog specialist. Use Google Search to find current official models and studio product photos.
 
 Query: {query}
-Preferred kind: {slot}
+Preferred gear_type: {slot}
 
-Write summary in {language}. Use well-known public specs (manufacturer pages, reviews).
+If the query is a brand or partial brand (e.g. "Profitec", "Mahlkönig", "DF"), return up to 4 popular current models from that brand.
+If the query is a specific model, return that model first, plus up to 3 closely related models from the same brand.
 
-JSON schema:
+For each model, find an official manufacturer studio product photo — a direct https image URL (jpg/png/webp). Prefer official brand sites, authorized dealers, Shopify, Cloudinary, or manufacturer CDNs.
+
+Write summary in {language}. Return ONLY JSON:
+
 {{
-  "name": "canonical product name",
-  "brand": "brand",
-  "kind": "espresso_machine | grinder | brewer | other",
-  "highlights": ["up to 6 short spec chips, e.g. Dual Boiler", "PID", "Rotary Pump", "64mm Flat Burrs"],
-  "summary": "1-2 sentence equipment summary",
-  "details": {{
-    "boiler": "single / heat exchanger / dual boiler / thermoblock / n/a",
-    "pid": true,
-    "pump": "rotary / vibratory / n/a",
-    "burrs": "flat / conical / n/a",
-    "burr_size": "e.g. 64mm",
-    "group": "e.g. E61"
-  }}
+  "gear_candidates": [
+    {{
+      "model_name": "canonical product name",
+      "brand": "brand",
+      "gear_type": "machine | grinder | brewer",
+      "image_url": "https://official-studio-photo.jpg",
+      "specs": {{
+        "boiler": "Dual Boiler / Heat Exchanger / Thermoblock / n/a",
+        "pid": true,
+        "pump": "Rotary / Vibratory / n/a",
+        "burrs": "Flat / Conical / n/a",
+        "burr_size": "e.g. 64mm",
+        "group": "e.g. E61"
+      }},
+      "highlights": ["Dual Boiler", "PID", "Rotary Pump"],
+      "summary": "1-2 sentence equipment summary"
+    }}
+  ]
 }}
 
-If the query is a grinder, prefer burr size and burr type in highlights.
-If the query is an espresso machine, prefer boiler type, PID, and pump in highlights.
-Never invent a wildly different product. If unsure, still return the closest well-known match with conservative highlights.
+gear_type must be exactly "machine", "grinder", or "brewer".
+Never invent model names the brand does not make.
+Never invent image URLs. If no official photo is found, use "".
+If the query is a grinder brand, prefer burr size and burr type in highlights.
+If the query is an espresso-machine brand, prefer boiler type, PID, and pump in highlights.
 """
 
 
-def _normalize_gear_lookup(data: dict[str, Any], query: str, kind: str = "") -> dict[str, Any]:
-    payload = dict(data or {})
-    payload.setdefault("name", query.strip())
-    if kind in {"espresso_machine", "grinder", "brewer", "other"}:
-        payload["kind"] = kind
-    card = normalize_gear_item(payload) or {
-        "id": query.strip().lower(),
-        "kind": kind or "other",
-        "name": query.strip(),
-        "brand": "",
-        "highlights": [],
-        "summary": "",
-        "details": {},
-    }
-    return card
+def _attach_grounded_gear_images(candidates: list[dict[str, Any]], response: Any | None) -> list[dict[str, Any]]:
+    extras = _extract_grounding_urls(response) if response is not None else []
+    used = {str(card.get("image_url") or "") for card in candidates if card.get("image_url")}
+    leftover = [url for url in extras if url not in used]
+    idx = 0
+    for card in candidates:
+        if card.get("image_url"):
+            continue
+        if idx >= len(leftover):
+            break
+        card["image_url"] = leftover[idx]
+        idx += 1
+    return candidates
 
 
-def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> dict[str, Any]:
+def _normalize_gear_lookup_list(data: Any, query: str, kind: str = "", response: Any | None = None) -> list[dict[str, Any]]:
+    payload = data if isinstance(data, (dict, list)) else {}
+    cards = normalize_gear_catalog(payload, query=query, kind=kind)
+    return _attach_grounded_gear_images(cards, response)
+
+
+def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> list[dict[str, Any]]:
     from google import genai
     from google.genai import types
 
@@ -2514,7 +2554,7 @@ def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> dict[
                     config=types.GenerateContentConfig(**config_kwargs),
                 )
                 data = _parse_gemini_json(_response_text(response))
-                return _normalize_gear_lookup(data, query, kind)
+                return _normalize_gear_lookup_list(data, query, kind, response)
             except Exception as exc:
                 last_error = exc
                 if use_tools:
@@ -2527,10 +2567,10 @@ def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> dict[
             continue
     if last_error:
         raise last_error
-    return {}
+    return []
 
 
-def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -> dict[str, Any]:
+def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -> list[dict[str, Any]]:
     import google.generativeai as genai
 
     prompt = _gear_lookup_prompt(query, kind, lang)
@@ -2545,7 +2585,7 @@ def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -
             model = genai.GenerativeModel(model_name, **kwargs)
             response = model.generate_content(prompt, generation_config={"temperature": 0.1})
             data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
-            return _normalize_gear_lookup(data, query, kind)
+            return _normalize_gear_lookup_list(data, query, kind, response)
         except Exception as exc:
             last_error = exc
             if tools and _tools_unsupported(exc):
@@ -2556,32 +2596,51 @@ def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -
             break
     if last_error:
         raise last_error
-    return {}
+    return []
 
 
-def lookup_gear_specs(query: str, kind: str = "", lang: str = "da") -> dict[str, Any]:
-    """Grounded Gemini lookup of espresso machine / grinder / brewer specs."""
+def lookup_gear_catalog(query: str, kind: str = "", lang: str = "da") -> list[dict[str, Any]]:
+    """Grounded Gemini catalog: up to 4 brand/model candidates with studio images."""
     q = " ".join((query or "").split())
     if len(q) < 2:
         raise ValueError("gear_query_required")
     slot = (kind or "").strip().lower()
+    if slot in {"machine", "espresso"}:
+        slot = "espresso_machine"
     if slot not in {"espresso_machine", "grinder", "brewer", "other"}:
         slot = ""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
     key = get_gemini_api_key()
     if not key:
         raise RuntimeError("ocr_missing")
-    data: dict[str, Any] = {}
+    data: list[dict[str, Any]] = []
     errors: list[str] = []
-    try:
-        data = _gear_lookup_with_genai(q, slot, key, lang)
-    except Exception as exc:
-        errors.append(f"google.genai: {exc}")
+
+    def _run() -> list[dict[str, Any]]:
         try:
-            data = _gear_lookup_with_generativeai(q, slot, key, lang)
-        except Exception as exc2:
-            errors.append(f"google.generativeai: {exc2}")
-    if not data or not data.get("name"):
+            return _gear_lookup_with_genai(q, slot, key, lang)
+        except Exception as exc:
+            errors.append(f"google.genai: {exc}")
+            return _gear_lookup_with_generativeai(q, slot, key, lang)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            data = pool.submit(_run).result(timeout=40)
+    except FuturesTimeout as exc:
+        raise ValueError("gear_lookup_fail") from exc
+    except Exception as exc:
+        errors.append(str(exc))
+    if not data:
         if errors:
             raise RuntimeError("; ".join(errors))
         raise ValueError("gear_lookup_fail")
-    return data
+    return data[:4]
+
+
+def lookup_gear_specs(query: str, kind: str = "", lang: str = "da") -> dict[str, Any]:
+    """First catalog hit — kept for callers that still expect a single card."""
+    hits = lookup_gear_catalog(query, kind=kind, lang=lang)
+    if not hits:
+        raise ValueError("gear_lookup_fail")
+    return hits[0]

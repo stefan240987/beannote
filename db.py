@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "5.5.0"
+VERSION = "5.6.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -126,6 +126,52 @@ def _maybe_json(raw: Any) -> Any:
 
 
 GEAR_KINDS = ("espresso_machine", "grinder", "brewer", "other")
+GEAR_TYPES = ("machine", "grinder", "brewer")
+_GEAR_KIND_ALIASES = {
+    "machine": "espresso_machine",
+    "espresso": "espresso_machine",
+    "espresso_machine": "espresso_machine",
+    "espresso-machine": "espresso_machine",
+    "grinder": "grinder",
+    "mill": "grinder",
+    "brewer": "brewer",
+    "brew": "brewer",
+    "filter": "brewer",
+    "other": "other",
+}
+
+
+def canonical_gear_kind(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    return _GEAR_KIND_ALIASES.get(raw, "other")
+
+
+def gear_type_of(kind: str) -> str:
+    mapping = {
+        "espresso_machine": "machine",
+        "grinder": "grinder",
+        "brewer": "brewer",
+    }
+    return mapping.get(canonical_gear_kind(kind), "other")
+
+
+def sanitize_gear_image_url(url: str) -> str:
+    raw = str(url or "").strip().strip("'").strip('"')
+    if not raw or raw.lower() in {"none", "null", "undefined"}:
+        return ""
+    if raw.startswith("data:image/"):
+        return ""
+    if raw.startswith("images/") and ".." not in raw and "/" not in raw[7:]:
+        return raw
+    if raw.startswith("/media/"):
+        name = Path(raw).name
+        return f"images/{name}" if name else ""
+    try:
+        from image_search import sanitize_image_url
+
+        return sanitize_image_url(raw)
+    except Exception:
+        return raw if raw.startswith("https://") else ""
 
 
 def _json_list(raw: Any) -> list[Any]:
@@ -142,15 +188,59 @@ def _gear_slug(name: str) -> str:
     return slug[:48]
 
 
+def _normalize_gear_specs_map(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        out: dict[str, Any] = {}
+        for key, val in raw.items():
+            label = str(key or "").strip()[:40]
+            if not label:
+                continue
+            if isinstance(val, bool):
+                out[label] = val
+            elif isinstance(val, (int, float)) and not isinstance(val, bool):
+                out[label] = val
+            else:
+                text = str(val or "").strip()[:80]
+                if text:
+                    out[label] = text
+            if len(out) >= 12:
+                break
+        return out
+    if isinstance(raw, list):
+        out = {}
+        for idx, val in enumerate(raw[:8]):
+            text = str(val or "").strip()[:80]
+            if text:
+                out[str(idx)] = text
+        return out
+    return {}
+
+
+def _highlights_from_specs(specs: dict[str, Any]) -> list[str]:
+    chips: list[str] = []
+    for key, val in (specs or {}).items():
+        label = str(key or "").strip()
+        if val is True:
+            chips.append("PID" if label.lower() == "pid" else (label.replace("_", " ").strip().title()[:40]))
+        elif val is False or val is None or val == "":
+            continue
+        else:
+            text = str(val).strip()
+            if text.lower() in {"n/a", "na", "none", "unknown"}:
+                continue
+            chips.append(text[:40])
+        if len(chips) >= 8:
+            break
+    return chips
+
+
 def normalize_gear_item(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
-    name = str(item.get("name") or "").strip()
+    name = str(item.get("model_name") or item.get("name") or "").strip()
     if not name:
         return None
-    kind = str(item.get("kind") or "other").strip().lower()
-    if kind not in GEAR_KINDS:
-        kind = "other"
+    kind = canonical_gear_kind(item.get("kind") or item.get("gear_type") or "other")
     raw_highlights = item.get("highlights") or []
     if isinstance(raw_highlights, str):
         highlights = [part.strip() for part in raw_highlights.split(",") if part.strip()]
@@ -159,15 +249,58 @@ def normalize_gear_item(item: Any) -> dict[str, Any] | None:
     else:
         highlights = []
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    specs = _normalize_gear_specs_map(item.get("specs") or details)
+    if not highlights:
+        highlights = _highlights_from_specs(specs)
+    gear_type = gear_type_of(kind)
+    if gear_type == "other" and str(item.get("gear_type") or "").strip().lower() in GEAR_TYPES:
+        gear_type = str(item.get("gear_type")).strip().lower()
+        kind = canonical_gear_kind(gear_type)
     return {
         "id": str(item.get("id") or _gear_slug(name) or name),
         "kind": kind,
+        "gear_type": gear_type,
         "name": name,
+        "model_name": name,
         "brand": str(item.get("brand") or "").strip(),
+        "image_url": sanitize_gear_image_url(item.get("image_url") or item.get("product_image_url") or ""),
         "highlights": highlights[:8],
+        "specs": specs,
         "summary": str(item.get("summary") or "").strip()[:400],
-        "details": details,
+        "details": details or specs,
     }
+
+
+def normalize_gear_catalog(raw: Any, query: str = "", kind: str = "") -> list[dict[str, Any]]:
+    items: list[Any] = []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        nested = raw.get("gear_candidates") or raw.get("candidates") or raw.get("models")
+        if isinstance(nested, list) and nested:
+            items = nested
+        elif raw.get("model_name") or raw.get("name"):
+            items = [raw]
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    slot = canonical_gear_kind(kind) if kind else ""
+    for item in items[:8]:
+        payload = dict(item) if isinstance(item, dict) else {}
+        if query and not (payload.get("model_name") or payload.get("name")):
+            payload["name"] = query.strip()
+        if slot and not (payload.get("kind") or payload.get("gear_type")):
+            payload["kind"] = slot
+        card = normalize_gear_item(payload)
+        if not card:
+            continue
+        key = card["id"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(card)
+        if len(out) >= 4:
+            break
+    return out
 
 
 def normalize_gear_specs(raw: Any) -> list[dict[str, Any]]:

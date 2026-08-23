@@ -55,7 +55,7 @@ from ocr import (
     suitable_for_catalog,
     suitable_for_i18n_table,
     load_local_env,
-    lookup_gear_specs,
+    lookup_gear_catalog,
     pad_image_candidates,
     processes_for,
     roast_levels_for,
@@ -928,7 +928,7 @@ def gear_lookup(
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
     try:
-        specs = lookup_gear_specs(payload.query, kind=payload.kind, lang=chosen)
+        candidates = lookup_gear_catalog(payload.query, kind=payload.kind, lang=chosen)
     except ValueError as exc:
         code = str(exc)
         if code == "gear_query_required":
@@ -941,7 +941,23 @@ def gear_lookup(
     except Exception as exc:
         print(f"gear lookup failed: {exc}")
         raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
-    return {"specs": specs}
+    return {"gear_candidates": candidates, "specs": candidates[0] if candidates else None}
+
+
+@app.post("/api/gear/photo")
+async def gear_photo(
+    file: UploadFile = File(...),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    del user
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty_image")
+    try:
+        jpeg = encode_scan_jpeg(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="gear_photo_required") from exc
+    return {"image_url": save_bean_image(jpeg, filename="gear.jpg")}
 
 
 @app.put("/api/gear")
@@ -1007,6 +1023,7 @@ def index() -> FileResponse:
     if ENVIRONMENT != "production":
         headers["Cache-Control"] = "no-store, max-age=0"
     return FileResponse(STATIC / "index.html", headers=headers)
+
 
 
 if __name__ == "__main__":

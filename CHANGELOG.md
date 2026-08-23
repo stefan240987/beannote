@@ -2,6 +2,19 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.6.0] - 2026-08-23
+
+- snapshot: v5.6.0 - added visual gear catalog search with product images and model selection
+- `POST /api/gear/lookup` now returns `gear_candidates` (up to 4 brand/model hits) with `model_name`, `brand`, `gear_type`, official `image_url`, and structured `specs` via Gemini Search Grounding.
+- Profile `☕ Mit Kaffe-Setup` opens a visual picker grid; tapping a card adds that model. Custom/modified setups can upload a photo through `POST /api/gear/photo`.
+- Saved gear cards show the product thumbnail, brand, spec tags, and edit/delete. Search placeholders and picker copy translate via `i18nManager`.
+
+## [5.5.1] - 2026-08-23
+
+- snapshot: v5.5.1 - fixed bag-photo scan picker doing nothing on tap
+- Scan uses real buttons that open the camera/album picker instead of `display:none` file inputs inside labels, which silently failed on some phones.
+- When Gemini is rate-limited (429), scan falls back to Tesseract instead of failing after a long wait. Explore search updates while you type.
+
 ## [5.5.0] - 2026-08-23
 
 - snapshot: v5.5.0 - added scan undo, AI gear lookup, profile global journal, community recipes, and sticky modal UX

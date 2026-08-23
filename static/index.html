@@ -185,6 +185,33 @@
       pointer-events: auto;
       margin: 0.75rem 0.75rem 0 0;
     }
+    .gear-picker-photo,
+    .gear-saved-photo {
+      background: var(--bg-card-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .gear-picker-photo {
+      height: 7.5rem;
+      border-radius: 0.75rem;
+      padding: 6px;
+    }
+    .gear-saved-photo {
+      width: 4.75rem;
+      height: 4.75rem;
+      border-radius: 0.85rem;
+      padding: 5px;
+      flex-shrink: 0;
+    }
+    .gear-picker-photo img,
+    .gear-saved-photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: center;
+    }
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
@@ -347,6 +374,14 @@
       gearQuery: "",
       gearKind: "espresso_machine",
       gearHit: null,
+      gearCandidates: [],
+      gearPickerOpen: false,
+      gearCustomOpen: false,
+      gearEditId: null,
+      gearCustomName: "",
+      gearCustomBrand: "",
+      gearCustomImage: "",
+      searchTimer: null,
       rate: {
         brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
         notes: "", grind_setting: "", coffee_grams: "", water_grams: "",         brew_time: "",
@@ -504,6 +539,24 @@
       if (result.user) state.user = result.user;
       toast(t("gear_saved"));
       render();
+    }
+
+    async function addGearItem(raw) {
+      const hit = normalizeClientGear(raw);
+      if (!hit.name) return;
+      const gear = userGear();
+      const specs = gear.gear_specs.filter((item) => item.id !== hit.id);
+      specs.push(hit);
+      const kind = gearKindOf(hit);
+      state.gearHit = null;
+      state.gearQuery = "";
+      state.gearCandidates = [];
+      await persistGear({
+        espresso_machine: kind === "espresso_machine" ? hit.name : gear.espresso_machine,
+        grinder: kind === "grinder" ? hit.name : gear.grinder,
+        brewer_types: gear.brewer_types,
+        gear_specs: specs,
+      });
     }
 
     function resetScanPreview() {
@@ -1202,14 +1255,10 @@
           <div class="rounded-2xl border-2 border-dashed border-terracotta/50 bg-white p-6 text-center">
             <h2 class="font-display text-xl font-bold" data-i18n="scan_card_title">${t("scan_card_title")}</h2>
             <p class="mt-1 text-sm text-muted" data-i18n="scan_card_sub">${t("scan_card_sub")}</p>
-            <label class="mt-5 flex min-h-12 cursor-pointer items-center justify-center rounded-xl bg-terracotta font-semibold text-cream">
-              ${t("scan_pick_image")}
-              <input id="camera-input" type="file" accept="image/*" capture="environment" class="hidden">
-            </label>
-            <label class="mt-3 flex min-h-12 cursor-pointer items-center justify-center rounded-xl bg-foam text-sm font-semibold">
-              ${t("scan_album")}
-              <input id="album-input" type="file" accept="image/*" class="hidden">
-            </label>
+            <button type="button" id="pick-camera" class="mt-5 flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="scan_pick_image">${t("scan_pick_image")}</button>
+            <button type="button" id="pick-album" class="mt-3 flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold" data-i18n="scan_album">${t("scan_album")}</button>
+            <input id="camera-input" type="file" accept="image/*" capture="environment" class="sr-only">
+            <input id="album-input" type="file" accept="image/*" class="sr-only">
           </div>
         </section>`;
       }
@@ -1375,26 +1424,143 @@
       };
     }
 
+    function gearKindOf(item) {
+      const raw = String(item?.kind || item?.gear_type || "other").toLowerCase();
+      if (raw === "machine" || raw === "espresso") return "espresso_machine";
+      return raw;
+    }
+
+    function gearNameOf(item) {
+      return String(item?.model_name || item?.name || "").trim();
+    }
+
     function gearKindLabel(kind) {
-      const key = { espresso_machine: "gear_machine", grinder: "gear_grinder", other: "gear_other" }[kind] || "gear_other";
+      const key = {
+        espresso_machine: "gear_machine",
+        machine: "gear_machine",
+        grinder: "gear_grinder",
+        brewer: "gear_brewer",
+        other: "gear_other",
+      }[kind] || "gear_other";
       return t(key);
     }
 
-    function gearCard(item, pending = false) {
-      if (!item?.name) return "";
-      const chips = (item.highlights || []).map((chip) =>
+    function gearSpecChips(item) {
+      const chips = Array.isArray(item?.highlights) ? item.highlights.filter(Boolean) : [];
+      if (chips.length) return chips.slice(0, 6);
+      const specs = item?.specs && typeof item.specs === "object" ? item.specs : {};
+      return Object.entries(specs).flatMap(([key, val]) => {
+        if (val === true) return [key.toLowerCase() === "pid" ? "PID" : key];
+        if (!val || val === false) return [];
+        const text = String(val).trim();
+        return text && !/^n\/?a$/i.test(text) ? [text] : [];
+      }).slice(0, 6);
+    }
+
+    function gearThumb(item) {
+      const img = photoImg(item?.image_url, "", "h-full w-full object-contain");
+      if (img) return img;
+      return `<span class="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</span>`;
+    }
+
+    function normalizeClientGear(item) {
+      const name = gearNameOf(item);
+      const kind = gearKindOf(item);
+      const chips = gearSpecChips(item);
+      return {
+        id: item.id || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || name,
+        kind,
+        gear_type: { espresso_machine: "machine", grinder: "grinder", brewer: "brewer" }[kind] || "other",
+        name,
+        model_name: name,
+        brand: String(item.brand || "").trim(),
+        image_url: item.image_url || "",
+        highlights: chips,
+        specs: item.specs && typeof item.specs === "object" ? item.specs : {},
+        summary: item.summary || "",
+        details: item.details || item.specs || {},
+      };
+    }
+
+    function gearCard(item) {
+      const name = gearNameOf(item);
+      if (!name) return "";
+      const chips = gearSpecChips(item).map((chip) =>
         `<span class="rounded-full bg-foam px-2 py-0.5 text-[11px] font-semibold">${esc(chip)}</span>`
       ).join("");
-      const action = pending
-        ? `<button type="button" id="gear-add" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-sm font-semibold text-cream" data-i18n="gear_add">${esc(t("gear_add"))}</button>`
-        : `<button type="button" data-gear-remove="${esc(item.id)}" class="mt-2 text-xs font-semibold text-muted" data-i18n="gear_remove">${esc(t("gear_remove"))}</button>`;
-      return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(item.kind))}</p>
-        <h3 class="font-display text-lg font-bold">${esc(item.name)}</h3>
-        ${item.summary ? `<p class="mt-1 text-sm leading-5 text-muted">${esc(item.summary)}</p>` : ""}
-        ${chips ? `<div class="mt-2 flex flex-wrap gap-1">${chips}</div>` : ""}
-        ${action}
+      const custom = item.specs?.custom
+        ? `<span class="rounded-full bg-foam px-2 py-0.5 text-[11px] font-semibold" data-i18n="gear_custom_badge">${esc(t("gear_custom_badge"))}</span>`
+        : "";
+      return `<article class="flex gap-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <div class="gear-saved-photo">${gearThumb(item)}</div>
+        <div class="min-w-0 flex-1">
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(gearKindOf(item)))}</p>
+          <h3 class="font-display text-lg font-bold leading-tight">${esc(name)}</h3>
+          ${item.brand ? `<p class="text-xs text-muted">${esc(item.brand)}</p>` : ""}
+          ${chips || custom ? `<div class="mt-2 flex flex-wrap gap-1">${chips}${custom}</div>` : ""}
+          <div class="mt-2 flex gap-3">
+            <button type="button" data-gear-edit="${esc(item.id)}" class="text-xs font-semibold text-terracotta" data-i18n="gear_edit">${esc(t("gear_edit"))}</button>
+            <button type="button" data-gear-remove="${esc(item.id)}" class="text-xs font-semibold text-muted" data-i18n="gear_remove">${esc(t("gear_remove"))}</button>
+          </div>
+        </div>
       </article>`;
+    }
+
+    function gearPickerCard(item) {
+      const name = gearNameOf(item);
+      if (!name) return "";
+      const chips = gearSpecChips(item).slice(0, 4).map((chip) =>
+        `<span class="rounded-full bg-foam px-1.5 py-0.5 text-[10px] font-semibold">${esc(chip)}</span>`
+      ).join("");
+      return `<button type="button" data-gear-pick="${esc(item.id)}" class="rounded-2xl bg-white p-2.5 text-left shadow-sm ring-1 ring-latte">
+        <div class="gear-picker-photo">${gearThumb(item)}</div>
+        <p class="mt-2 text-[10px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(gearKindOf(item)))}</p>
+        <h3 class="font-display text-sm font-bold leading-tight">${esc(name)}</h3>
+        ${item.brand ? `<p class="text-[11px] text-muted">${esc(item.brand)}</p>` : ""}
+        ${chips ? `<div class="mt-1.5 flex flex-wrap gap-1">${chips}</div>` : ""}
+        <span class="mt-2 block text-xs font-semibold text-terracotta" data-i18n="gear_select">${esc(t("gear_select"))}</span>
+      </button>`;
+    }
+
+    function gearPickerModal() {
+      if (!state.gearPickerOpen) return "";
+      const cards = (state.gearCandidates || []).map(gearPickerCard).join("");
+      return `<div id="gear-picker" data-close-gear-picker class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
+        <article class="relative mb-0 max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:mb-0 sm:rounded-3xl" data-gear-picker-sheet>
+          <div class="modal-close-bar">
+            <button type="button" data-close-gear-picker class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
+          </div>
+          <div class="space-y-3 p-4 pb-8 pt-12">
+            <div>
+              <h2 class="font-display text-xl font-bold" data-i18n="gear_picker_title">${esc(t("gear_picker_title"))}</h2>
+              <p class="mt-1 text-sm text-muted" data-i18n="gear_picker_sub">${esc(t("gear_picker_sub"))}</p>
+            </div>
+            <div class="grid grid-cols-2 gap-2">${cards}</div>
+            <button type="button" data-open-gear-custom class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
+          </div>
+        </article>
+      </div>`;
+    }
+
+    function gearCustomModal() {
+      if (!state.gearCustomOpen) return "";
+      const preview = state.gearCustomImage
+        ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearCustomImage, "", "h-full w-full object-contain")}</div>`
+        : `<p class="text-center text-sm text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</p>`;
+      return `<div id="gear-custom" data-close-gear-custom class="fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+        <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-custom-sheet>
+          <div class="space-y-3 p-5">
+            <h2 class="font-display text-xl font-bold" data-i18n="gear_custom_title">${esc(t("gear_custom_title"))}</h2>
+            ${preview}
+            <input id="gear-custom-name" value="${esc(state.gearCustomName)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="gear_custom_name_ph" placeholder="${esc(t("gear_custom_name_ph"))}">
+            <input id="gear-custom-brand" value="${esc(state.gearCustomBrand)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="gear_custom_brand_ph" placeholder="${esc(t("gear_custom_brand_ph"))}">
+            <input id="gear-photo-input" type="file" accept="image/*" class="sr-only">
+            <button type="button" id="gear-photo-pick" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
+            <button type="button" id="gear-custom-save" class="min-h-12 w-full rounded-xl bg-terracotta text-sm font-semibold text-cream" data-i18n="gear_custom_save">${esc(t("gear_custom_save"))}</button>
+            <button type="button" data-close-gear-custom class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
+          </div>
+        </article>
+      </div>`;
     }
 
     function gearSetup() {
@@ -1402,7 +1568,7 @@
       const kinds = [
         ["espresso_machine", "gear_machine"],
         ["grinder", "gear_grinder"],
-        ["other", "gear_other"],
+        ["brewer", "gear_brewer"],
       ];
       const kindBtns = kinds.map(([id, key]) => {
         const on = state.gearKind === id;
@@ -1423,7 +1589,7 @@
           <input id="gear-query" value="${esc(state.gearQuery)}" class="min-h-12 flex-1 rounded-xl border border-latte bg-cream px-3 text-sm" data-i18n-placeholder="gear_search_ph" placeholder="${esc(t("gear_search_ph"))}">
           <button type="button" id="gear-lookup" class="min-h-12 shrink-0 rounded-xl bg-terracotta px-3 text-sm font-semibold text-cream" data-i18n="gear_lookup">${esc(t("gear_lookup"))}</button>
         </div>
-        ${state.gearHit ? gearCard(state.gearHit, true) : ""}
+        <button type="button" data-open-gear-custom class="flex min-h-11 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
         ${saved || `<p class="text-sm text-muted" data-i18n="gear_empty">${esc(t("gear_empty"))}</p>`}
         <div>
           <p class="mb-2 text-sm font-semibold" data-i18n="gear_brewers">${esc(t("gear_brewers"))}</p>
@@ -1672,7 +1838,7 @@
         return;
       }
       document.documentElement.lang = state.config.lang || "da";
-      document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen)));
+      document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen)));
       if (!state.user) {
         root.innerHTML = authView();
         bindAuth();
@@ -1680,7 +1846,7 @@
       }
       const body = { explore: exploreView, scan: scanView, rate: rateView, profile: profileView }[state.tab]();
       const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
+      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-[70] grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
       drawMaps();
     }
@@ -1753,8 +1919,19 @@
       };
     }
 
+    function triggerScanPicker(which) {
+      const input = document.getElementById(which === "album" ? "album-input" : "camera-input");
+      if (!input) return;
+      input.value = "";
+      input.click();
+    }
+
     async function uploadScan(file) {
-      if (!file) return;
+      if (!file) {
+        toast(t("scan_no_file"));
+        return;
+      }
+      state.tab = "scan";
       state.busy = true;
       render();
       try {
@@ -1764,6 +1941,7 @@
         body.append("lang", lang);
         state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
         state.busy = false;
+        if (state.scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
         if (state.scan.scan_action === "rate" && state.scan.scan_match?.id) {
           toast(t("bean_found"));
           await openBean(state.scan.scan_match.id, "rate");
@@ -1773,7 +1951,10 @@
         render();
       } catch (err) {
         state.busy = false;
-        toast(t(err.detail || "ocr_fail"));
+        const detail = err.detail || "";
+        const offline = !detail && /failed to fetch|networkerror|load failed|err_connection/i.test(String(err.message || err));
+        toast(t(offline ? "scan_offline" : (detail || "ocr_fail")));
+        render();
       } finally {
         if (state.busy) {
           state.busy = false;
@@ -1806,10 +1987,31 @@
       $("#saved-explore")?.addEventListener("click", async () => {
         await resetExplore();
       });
+      const runSearch = async () => {
+        await loadBeans();
+        const box = $("#search");
+        const pos = box ? box.selectionStart : null;
+        const value = box ? box.value : state.search;
+        state.search = value;
+        render();
+        const next = $("#search");
+        if (next && document.activeElement === document.body) {
+          next.focus();
+          if (pos != null) next.setSelectionRange(pos, pos);
+        } else if (next && pos != null) {
+          next.focus();
+          next.setSelectionRange(pos, pos);
+        }
+      };
+      $("#search")?.addEventListener("input", (event) => {
+        state.search = event.target.value;
+        clearTimeout(state.searchTimer);
+        state.searchTimer = setTimeout(runSearch, 280);
+      });
       $("#search")?.addEventListener("change", async (event) => {
         state.search = event.target.value;
-        await loadBeans();
-        render();
+        clearTimeout(state.searchTimer);
+        await runSearch();
       });
       document.querySelectorAll("[data-filter]").forEach((btn) => btn.addEventListener("click", async () => {
         state.beanFilter = btn.dataset.filter;
@@ -1860,6 +2062,8 @@
           }
         });
       });
+      $("#pick-camera")?.addEventListener("click", () => triggerScanPicker("camera"));
+      $("#pick-album")?.addEventListener("click", () => triggerScanPicker("album"));
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#undo-scan")?.addEventListener("click", () => resetScanPreview());
@@ -2004,36 +2208,136 @@
             method: "POST",
             body: JSON.stringify({ query, kind: state.gearKind, lang: activeLang() }),
           });
-          state.gearHit = result.specs || null;
+          const hits = Array.isArray(result.gear_candidates) && result.gear_candidates.length
+            ? result.gear_candidates
+            : (result.specs ? [result.specs] : []);
+          state.gearCandidates = hits;
+          state.gearHit = hits[0] || null;
+          state.gearPickerOpen = hits.length > 0;
           state.busy = false;
+          if (!hits.length) toast(t("gear_lookup_fail"));
           render();
         } catch (err) {
           state.busy = false;
           state.gearHit = null;
+          state.gearCandidates = [];
+          state.gearPickerOpen = false;
           toast(t(err.detail || "gear_lookup_fail"));
           render();
         }
       });
-      $("#gear-add")?.addEventListener("click", async () => {
-        const hit = state.gearHit;
-        if (!hit?.name) return;
-        const gear = userGear();
-        const specs = gear.gear_specs.filter((item) => item.id !== hit.id);
-        specs.push(hit);
+      const closeGearPicker = () => {
+        state.gearPickerOpen = false;
+        render();
+      };
+      const openGearCustom = (item = null) => {
+        state.gearCustomOpen = true;
+        state.gearEditId = item?.id || null;
+        state.gearCustomName = item ? gearNameOf(item) : state.gearQuery;
+        state.gearCustomBrand = item?.brand || "";
+        state.gearCustomImage = item?.image_url || "";
+        render();
+      };
+      document.querySelectorAll("[data-close-gear-picker]").forEach((el) => {
+        el.addEventListener("click", (event) => {
+          if (el.hasAttribute("data-gear-picker-sheet")) return;
+          if (event.target === el || el.matches("button")) closeGearPicker();
+        });
+      });
+      $("[data-gear-picker-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+      document.querySelectorAll("[data-open-gear-custom]").forEach((btn) => {
+        btn.addEventListener("click", () => openGearCustom());
+      });
+      document.querySelectorAll("[data-close-gear-custom]").forEach((el) => {
+        el.addEventListener("click", (event) => {
+          if (el.hasAttribute("data-gear-custom-sheet")) return;
+          if (event.target === el || el.matches("button")) {
+            state.gearCustomOpen = false;
+            state.gearEditId = null;
+            render();
+          }
+        });
+      });
+      $("[data-gear-custom-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+      $("#gear-custom-name")?.addEventListener("input", (event) => {
+        state.gearCustomName = event.target.value;
+      });
+      $("#gear-custom-brand")?.addEventListener("input", (event) => {
+        state.gearCustomBrand = event.target.value;
+      });
+      $("#gear-photo-pick")?.addEventListener("click", () => {
+        const input = $("#gear-photo-input");
+        if (!input) return;
+        input.value = "";
+        input.click();
+      });
+      $("#gear-photo-input")?.addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return toast(t("gear_photo_required"));
+        state.busy = true;
+        render();
         try {
-          state.gearHit = null;
-          state.gearQuery = "";
-          await persistGear({
-            espresso_machine: hit.kind === "espresso_machine" ? hit.name : gear.espresso_machine,
-            grinder: hit.kind === "grinder" ? hit.name : gear.grinder,
-            brewer_types: gear.brewer_types,
-            gear_specs: specs,
-          });
+          const body = new FormData();
+          body.append("file", file);
+          const result = await api("/api/gear/photo", { method: "POST", body });
+          state.gearCustomImage = result.image_url || "";
+          state.gearCustomOpen = true;
+          state.busy = false;
+          render();
         } catch (err) {
-          state.gearHit = hit;
+          state.busy = false;
+          toast(t(err.detail || "gear_photo_required"));
+          render();
+        }
+      });
+      $("#gear-custom-save")?.addEventListener("click", async () => {
+        const name = (state.gearCustomName || "").trim();
+        if (!name) return toast(t("gear_name_required"));
+        const hit = normalizeClientGear({
+          id: state.gearEditId || undefined,
+          name,
+          model_name: name,
+          brand: state.gearCustomBrand,
+          kind: state.gearKind,
+          image_url: state.gearCustomImage,
+          highlights: [],
+          specs: { custom: true },
+        });
+        state.gearCustomOpen = false;
+        state.gearPickerOpen = false;
+        try {
+          await addGearItem(hit);
+          state.gearEditId = null;
+          state.gearCustomName = "";
+          state.gearCustomBrand = "";
+          state.gearCustomImage = "";
+        } catch (err) {
+          state.gearCustomOpen = true;
           toast(t(err.detail || "required"));
           render();
         }
+      });
+      document.querySelectorAll("[data-gear-pick]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.gearPick;
+          const hit = (state.gearCandidates || []).find((item) => item.id === id);
+          if (!hit) return;
+          state.gearPickerOpen = false;
+          try {
+            await addGearItem(hit);
+          } catch (err) {
+            state.gearPickerOpen = true;
+            toast(t(err.detail || "required"));
+            render();
+          }
+        });
+      });
+      document.querySelectorAll("[data-gear-edit]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.gearEdit;
+          const item = userGear().gear_specs.find((row) => row.id === id);
+          if (item) openGearCustom(item);
+        });
       });
       document.querySelectorAll("[data-gear-remove]").forEach((btn) => {
         btn.addEventListener("click", async () => {
@@ -2091,6 +2395,17 @@
       if (event.key !== "Escape") return;
       if (state.supportOpen) {
         state.supportOpen = false;
+        render();
+        return;
+      }
+      if (state.gearCustomOpen) {
+        state.gearCustomOpen = false;
+        state.gearEditId = null;
+        render();
+        return;
+      }
+      if (state.gearPickerOpen) {
+        state.gearPickerOpen = false;
         render();
         return;
       }
