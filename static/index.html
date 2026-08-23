@@ -110,6 +110,7 @@
       return text;
     };
     const normalizeLang = (lang) => (String(lang || "da").toLowerCase() === "en" ? "en" : "da");
+    const activeLang = () => normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
 
     function applyLanguage(lang) {
       const next = normalizeLang(lang);
@@ -952,8 +953,9 @@
       render();
       try {
         const body = new FormData();
+        const lang = activeLang();
         body.append("file", file);
-        const lang = localStorage.getItem(LANG_KEY) || "da";
+        body.append("lang", lang);
         state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
         if (state.scan.scan_action === "rate" && state.scan.scan_match?.id) {
           toast(t("bean_found"));

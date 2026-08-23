@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.9.0] - 2026-08-23
+
+- Gemini Vision now reads the exact primary bag title. The Copenhagen Roaster Slow Roast bag is stored as `Slow Roast Espresso` (never `Slow Roast Crema`).
+- `POST /api/scan` takes the active UI language from the multipart payload (`lang=da` / `lang=en`) as well as the query string. Flavor tags, story, process, and brew-ratio copy are generated in that language.
+- `test_gemini.py` checks both language codes against `Screenshot 2026-08-23 at 11.07.28.jpg`.
+
 ## [2.8.0] - 2026-08-23
 
 - Profile language control is a single Dansk / English toggle. Preference is stored in `localStorage` and applied instantly via `applyLanguage()` (nav, map labels, profile, popups, and modals) with no page reload.

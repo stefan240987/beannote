@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,13 +41,13 @@ from db import (
     upsert_oauth_user,
 )
 from ocr import (
-    FLAVOR_NOTES,
-    PROCESSES,
-    ROAST_LEVELS,
     compare_flavor_notes,
     encode_scan_jpeg,
     ensure_local_env,
+    flavor_notes_for,
     load_local_env,
+    processes_for,
+    roast_levels_for,
     scan_available,
     scan_label,
 )
@@ -349,9 +349,9 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
             "apple": local or _oauth_configured("apple"),
         },
         "brew_methods": BREW_METHODS,
-        "processes": PROCESSES,
-        "roast_levels": ROAST_LEVELS,
-        "flavor_notes": FLAVOR_NOTES,
+        "processes": processes_for(lang),
+        "roast_levels": roast_levels_for(lang),
+        "flavor_notes": flavor_notes_for(lang),
         "origins": distinct_values("origin"),
         "roasts": distinct_values("roast_level"),
     }
@@ -691,8 +691,9 @@ def favorite_bean(bean_id: int, user: dict[str, Any] = Depends(current_user)) ->
 
 @app.post("/api/scan")
 async def scan(
+    request: Request,
     file: UploadFile = File(...),
-    lang: str = Query("da"),
+    lang: str = Form(""),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     del user
@@ -701,11 +702,12 @@ async def scan(
         raise HTTPException(status_code=400, detail="empty_image")
     if not scan_available():
         raise HTTPException(status_code=503, detail="ocr_missing")
-    if lang not in LANGS:
-        lang = "da"
+    chosen = (lang or request.query_params.get("lang") or "da").lower().strip()
+    if chosen not in LANGS:
+        chosen = "da"
     try:
         jpeg = encode_scan_jpeg(raw)
-        parsed = scan_label(jpeg, lang=lang)
+        parsed = scan_label(jpeg, lang=chosen)
     except HTTPException:
         raise
     except Exception as exc:

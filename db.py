@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
