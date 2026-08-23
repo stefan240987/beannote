@@ -44,14 +44,13 @@ def test_url_guardrails() -> None:
     print("OK  URL guardrails reject private/http and de-dupe candidates")
 
 
-def test_curated_bellarom() -> None:
-    from image_search import BELLAROM_BIO_PACKSHOT, curated_packshot_urls
+def test_no_brand_packshot_backfill() -> None:
+    from image_search import curated_packshot_url, curated_packshot_urls
 
     found = curated_packshot_urls(NAME, ROASTER)
-    _assert_true("curated 1-3", 1 <= len(found) <= 3)
-    _assert_eq("bio packshot first", found[0], BELLAROM_BIO_PACKSHOT)
-    _assert_true("all https", all(item.startswith("https://") for item in found))
-    print("OK  curated Bellarom studio packshots available as backfill")
+    _assert_eq("no curated URLs", found, [])
+    _assert_eq("no curated single", curated_packshot_url(NAME, ROASTER), "")
+    print("OK  no brand-specific studio backfill")
 
 
 def test_duckduckgo_bellarom() -> None:
@@ -94,7 +93,7 @@ def test_find_product_images() -> None:
 def main() -> int:
     try:
         test_url_guardrails()
-        test_curated_bellarom()
+        test_no_brand_packshot_backfill()
         test_duckduckgo_bellarom()
         test_find_product_images()
     except Exception as exc:

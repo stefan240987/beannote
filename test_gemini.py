@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration test: Gemini Vision extraction + i18n for the Copenhagen Roaster bag."""
+"""Integration test: Gemini Vision extraction + i18n (brand-agnostic)."""
 
 from __future__ import annotations
 
@@ -11,14 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 LABEL_IMAGE = ROOT / "Screenshot 2026-08-23 at 11.07.28.jpg"
 BELLAROM_IMAGE = ROOT / "IMG_9354.jpg"
-BELLAROM_NAME = "Bio Organic Coffee Beans Full-Bodied Aroma"
-
-EXPECTED_CORE = {
-    "roaster": "Copenhagen Roaster",
-    "name": "Slow Roast Espresso",
-    "altitude": "800 - 2100 M.",
-    "varietal": "Catuai & Heirloom",
-}
 
 EXPECTED_BY_LANG = {
     "da": {
@@ -75,8 +67,10 @@ def test_prompt_locks_name_and_lang() -> None:
     da = _gemini_prompt("da")
     en = _gemini_prompt("en")
     for prompt in (da, en):
-        _assert_true("prompt names Slow Roast Espresso", "Slow Roast Espresso" in prompt)
-        _assert_true("prompt forbids Slow Roast Crema", "Never return \"Slow Roast Crema\"" in prompt)
+        _assert_true("prompt is brand-agnostic", "Bellarom" not in prompt)
+        _assert_true("prompt has no Copenhagen lock", "Copenhagen Roaster" not in prompt)
+        _assert_true("prompt has no Slow Roast SKU lock", "Slow Roast Espresso" not in prompt)
+        _assert_true("prompt has no Schwarz CDN", "Schwarz" not in prompt and "Lidl" not in prompt)
         _assert_true("prompt asks for story map", '"story": language map' in prompt)
         _assert_true("prompt asks for flavor map", '"flavor_tags": language map' in prompt)
         _assert_true("prompt asks for brew map", '"brew_recommendation": language map' in prompt)
@@ -92,7 +86,7 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("en brew in map prompt", "18g coffee to 36g espresso" in prompt)
     _assert_true("da suitable_for", "Mælkedrikke" in da)
     _assert_true("en suitable_for", "Milk drinks" in en)
-    print("OK  Gemini prompt locks bean name, intensity scores, and JSON language maps")
+    print("OK  Gemini prompt is brand-agnostic and asks for JSON language maps")
 
 
 def test_get_localized_fallback() -> None:
@@ -150,8 +144,10 @@ def test_normalize_builds_language_maps() -> None:
     _assert_true("brew is map", isinstance(out.get("brew_recommendation"), dict))
     _assert_true("story has da", bool(out["story"].get("da")))
     _assert_true("story has en", bool(out["story"].get("en")))
-    _assert_eq("da flavors from map", get_localized(out["flavor_tags"], "da"), EXPECTED_BY_LANG["da"]["flavor_tags"])
-    _assert_eq("en flavors from map", get_localized(out["flavor_tags"], "en"), EXPECTED_BY_LANG["en"]["flavor_tags"])
+    _assert_true("da chocolate", "Mørk chokolade" in (get_localized(out["flavor_tags"], "da") or []))
+    _assert_true("da caramel", "Karamel" in (get_localized(out["flavor_tags"], "da") or []))
+    _assert_true("en chocolate", "Dark chocolate" in (get_localized(out["flavor_tags"], "en") or []))
+    _assert_true("en caramel", "Caramel" in (get_localized(out["flavor_tags"], "en") or []))
     wrapped = normalize_scan_fields(
         {
             "bean_name": "Test Bean",
@@ -227,12 +223,8 @@ def test_refine_and_flavor_i18n() -> None:
     }
     da = refine_label_fields(dict(raw), lang="da")
     en = refine_label_fields(dict(raw), lang="en")
-    _assert_eq("da name", da.get("name"), "Slow Roast Espresso")
-    _assert_eq("en name", en.get("name"), "Slow Roast Espresso")
-    _assert_true("never Crema da", "Crema" not in (da.get("name") or ""))
-    _assert_true("never Crema en", "Crema" not in (en.get("name") or ""))
-    _assert_eq("da flavors", da.get("flavor_tags"), EXPECTED_BY_LANG["da"]["flavor_tags"])
-    _assert_eq("en flavors", en.get("flavor_tags"), EXPECTED_BY_LANG["en"]["flavor_tags"])
+    _assert_eq("da name kept as printed", da.get("name"), "Slow Roast Crema")
+    _assert_eq("en name kept as printed", en.get("name"), "Slow Roast Crema")
     _assert_eq("da origin", da.get("origin"), "Brasilien & Etiopien")
     _assert_eq("en origin", en.get("origin"), "Brazil & Ethiopia")
     _assert_eq(
@@ -240,19 +232,12 @@ def test_refine_and_flavor_i18n() -> None:
         extract_flavor_tags(["Dark chocolate", "Caramel", "Blueberry"], lang="en"),
         ["Dark chocolate", "Caramel", "Blueberry"],
     )
-    print("OK  refine_label_fields + flavor tags localize and rename Crema → Espresso")
+    print("OK  refine_label_fields localizes origin without rewriting brand SKUs")
 
 
 def test_bellarom_suitability_and_packshot() -> None:
-    from ocr import (
-        BELLAROM_BIO_PACKSHOT,
-        attach_official_bag_image,
-        curated_packshot_url,
-        extract_suitable_for,
-        find_official_bag_image,
-        find_official_bag_images,
-        refine_label_fields,
-    )
+    from image_search import curated_packshot_url
+    from ocr import attach_official_bag_image, extract_suitable_for, refine_label_fields
 
     raw = {
         "roaster": "Bellarom",
@@ -262,31 +247,26 @@ def test_bellarom_suitability_and_packshot() -> None:
     }
     da = refine_label_fields(dict(raw), lang="da")
     en = refine_label_fields(dict(raw), lang="en")
-    _assert_eq("bellarom roaster", da.get("roaster"), "Bellarom")
-    _assert_eq("bellarom name", da.get("name"), BELLAROM_NAME)
-    _assert_eq("da suitable_for", da.get("suitable_for"), ["Filter", "Espresso", "Mælkedrikke"])
-    _assert_eq("en suitable_for", en.get("suitable_for"), ["Filter", "Espresso", "Milk drinks"])
+    _assert_eq("printed roaster kept", da.get("roaster"), "Bellarom")
+    _assert_eq("printed name kept", da.get("name"), "BIO Organic COFFEE BEANS FULL-BODIED AROMA")
+    _assert_eq("da suitable_for", da.get("suitable_for"), ["Espresso", "Filter", "Mælkedrikke"])
+    _assert_eq("en suitable_for", en.get("suitable_for"), ["Espresso", "Filter", "Milk drinks"])
     extracted = extract_suitable_for(
         "FOR MACHINES", "FOR FILTER", "IDEAL FOR LATTE MACCHIATO", lang="da"
     )
     _assert_eq("icon suitable_for", extracted, ["Espresso", "Filter", "Mælkedrikke"])
-    curated = curated_packshot_url(BELLAROM_NAME, "Bellarom")
-    _assert_eq("curated studio packshot", curated, BELLAROM_BIO_PACKSHOT)
-    url = find_official_bag_image(BELLAROM_NAME, "Bellarom")
-    _assert_true("https packshot", str(url).startswith("https://"))
-    _assert_true("not camera snapshot", not str(url).startswith("images/"))
-    candidates = find_official_bag_images("Bellarom Bio Organic", "Bellarom")
-    _assert_true("up to 3 candidates", 1 <= len(candidates) <= 3)
-    _assert_true("all candidates https", all(item.startswith("https://") for item in candidates))
+    _assert_eq("no curated packshot", curated_packshot_url(raw["bean_name"], "Bellarom"), "")
     attached = attach_official_bag_image({
-        "name": BELLAROM_NAME,
+        "name": raw["bean_name"],
         "roaster": "Bellarom",
     })
     attached_urls = attached.get("image_candidates") or []
-    _assert_true("attached 1-3", 1 <= len(attached_urls) <= 3)
-    _assert_true("attached https", all(item.startswith("https://") for item in attached_urls))
-    _assert_eq("attached official first", attached_urls[0], BELLAROM_BIO_PACKSHOT)
-    print("OK  Bellarom suitability tags and studio packshot fallback")
+    _assert_true("at most 3 candidates", len(attached_urls) <= 3)
+    _assert_true(
+        "candidates https when present",
+        all(str(item).startswith("https://") for item in attached_urls),
+    )
+    print("OK  generic suitability extraction and no brand packshot backfill")
 
 
 def _profile(parsed: dict, lang: str = "da") -> dict:
@@ -336,12 +316,11 @@ def test_label_extraction(lang: str) -> None:
     print("story_map keys:", sorted(profile["story_map"]))
     print("flavor_map keys:", sorted(profile["flavor_map"]))
 
-    for key, expected in EXPECTED_CORE.items():
-        _assert_eq(f"{lang} {key}", profile[key], expected)
-    _assert_true(f"{lang} not Crema", profile["name"] != "Slow Roast Crema")
+    _assert_true(f"{lang} name present", bool(str(profile["name"] or "").strip()))
+    _assert_true(f"{lang} roaster present", bool(str(profile["roaster"] or "").strip()))
     _assert_eq(f"{lang} origin", profile["origin"], expect["origin"])
     _assert_eq(f"{lang} process", profile["process"], expect["process"])
-    _assert_eq(f"{lang} flavor_tags", profile["flavor_tags"], expect["flavor_tags"])
+    _assert_true(f"{lang} flavor tags", isinstance(profile["flavor_tags"], list) and bool(profile["flavor_tags"]))
     _assert_true(f"{lang} story map da", bool(str(profile["story_map"].get("da") or "").strip()))
     _assert_true(f"{lang} story map en", bool(str(profile["story_map"].get("en") or "").strip()))
     _assert_true(f"{lang} flavor map da", bool(profile["flavor_map"].get("da")))
@@ -359,12 +338,11 @@ def test_label_extraction(lang: str) -> None:
         f"{lang} brew_ratio localized ({profile['brew_ratio']!r})",
         any(needle in ratio for needle in expect["ratio_needles"]),
     )
-    print(f"OK  lang={lang} Slow Roast Espresso extracted with localized tags and story")
+    print(f"OK  lang={lang} label extracted with localized tags and story")
 
 
 def test_bellarom_label_extraction() -> None:
-    from ocr import encode_scan_jpeg, find_official_bag_image, get_gemini_api_key, scan_label_gemini
-    from ocr import BELLAROM_BIO_PACKSHOT
+    from ocr import encode_scan_jpeg, get_gemini_api_key, scan_label_gemini
 
     if not BELLAROM_IMAGE.is_file():
         raise FileNotFoundError(f"Missing label image: {BELLAROM_IMAGE.name}")
@@ -374,26 +352,16 @@ def test_bellarom_label_extraction() -> None:
     jpeg = encode_scan_jpeg(BELLAROM_IMAGE.read_bytes())
     parsed = scan_label_gemini(jpeg, lang="da")
     if not parsed:
-        raise RuntimeError("Gemini Vision returned no profile for Bellarom")
-    _assert_eq("bellarom roaster", parsed.get("roaster"), "Bellarom")
-    _assert_eq("bellarom name", parsed.get("name"), BELLAROM_NAME)
-    _assert_eq(
-        "bellarom suitable_for",
-        parsed.get("suitable_for"),
-        ["Filter", "Espresso", "Mælkedrikke"],
-    )
-    url = parsed.get("official_image_url") or find_official_bag_image(
-        parsed.get("name") or "", parsed.get("roaster") or ""
-    )
-    if not url:
-        url = find_official_bag_image(BELLAROM_NAME, "Bellarom")
-    _assert_true("packshot https", str(url).startswith("https://"))
-    _assert_true("packshot not snapshot", not str(url).startswith("images/"))
-    _assert_true(
-        "packshot studio",
-        url == BELLAROM_BIO_PACKSHOT or "assets.schwarz" in str(url) or "cdn" in str(url),
-    )
-    print("OK  IMG_9354 Bellarom extracted with suitability tags and studio image fallback")
+        raise RuntimeError("Gemini Vision returned no profile for fixture bag")
+    _assert_true("roaster present", bool(str(parsed.get("roaster") or "").strip()))
+    _assert_true("name present", bool(str(parsed.get("name") or parsed.get("bean_name") or "").strip()))
+    suitable = parsed.get("suitable_for") or []
+    _assert_true("suitable_for from icons", isinstance(suitable, list) and len(suitable) >= 1)
+    url = parsed.get("official_image_url") or ""
+    if url:
+        _assert_true("packshot https", str(url).startswith("https://"))
+        _assert_true("packshot not snapshot", not str(url).startswith("images/"))
+    print("OK  fixture bag extracted with suitability tags and no curated CDN lock")
 
 
 def test_intensity_scores_and_support() -> None:

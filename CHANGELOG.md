@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.0.0] - 2026-08-23
+
+- snapshot: v5.0.0 - generic OCR refactor and coffee bag image framing polish
+- Gemini Vision and Tesseract no longer hard-lock Bellarom or Copenhagen Roaster Slow Roast. Prompts, `refine_label_fields`, and image search are brand-agnostic; studio photos come only from live search plus the user's own snapshot.
+- Explore cards and the bean-detail cover use `object-fit: contain` on a cream `#F7F3EE` stage with 8px inset, so vertical bags sit fully in frame. The modal bag has a light drop-shadow; close and favorite stay overlayed.
+
 ## [4.3.0] - 2026-08-23
 
 - Combined flavor intensity bars, interactive recipe log cards, and Docker-driven support modal with local test fallbacks.

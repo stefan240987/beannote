@@ -1,8 +1,8 @@
 """Autonomous high-res coffee product image search.
 
 Primary source is DuckDuckGo Images (no API key, no extra packages).
-Known studio packshots backfill popular supermarket bags. Gemini Search
-Grounding stays a last-resort fallback in ocr.py.
+Gemini Search Grounding stays a last-resort fallback in ocr.py.
+No brand-specific studio backfill.
 """
 
 from __future__ import annotations
@@ -22,25 +22,6 @@ from PIL import Image
 MAX_IMAGE_CANDIDATES = 3
 SEARCH_TIMEOUT = 8.0
 _MAX_OFFICIAL_IMAGE_BYTES = 8 * 1024 * 1024
-
-BELLAROM_BIO_PACKSHOT = (
-    "https://imgproxy-retcat.assets.schwarz/jez-uqCks8dDrg9DJncgtjL-oHSyMTi2q5ZQAPEdxSo/"
-    "sm:1/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvdWsvMS8xQjMyMTM5Q0FBOTNENkEyQThFRTQyQUI/"
-    "yRkU4RTRDRkFGMUQ1RTc2QzI5RjkyQTY1QUYzNTdCQTgwNENFNDQ4LmpwZw.jpg"
-)
-BELLAROM_STUDIO_PACKSHOTS = (
-    BELLAROM_BIO_PACKSHOT,
-    (
-        "https://imgproxy-retcat.assets.schwarz/f1OhW50Mn8XZO0UazOH5-q3DsgQ6GkEiEUQUkE1ax6M/"
-        "sm:1/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvdWsvMS85MkMyQzQ1M0JGMDIwRkVGMUFCNDA0RkJ/"
-        "DNzMzQzg3NjBEQjczNUE5MzMyRjU0N0UxRkQ3N0Y5M0U0NjA1RDNCLmpwZw.jpg"
-    ),
-    (
-        "https://imgproxy-retcat.assets.schwarz/6FSE-Es0NZsyi3hjVhA2KdMqaHmEN1zCIr2mLVnE05U/"
-        "sm:1/exar:1:ce/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvZGUvMS8xRThCRDRDM0JFNENGQUNEOEVBRjdFNkU/"
-        "5OTJCMzNENkM0NTZFODVFMkZFOTBDMEZBNUM3NkY5RTM0MTg5MzY1LmpwZw.jpg"
-    ),
-)
 
 _BLOCKED_IMAGE_HOSTS = {
     "localhost",
@@ -225,10 +206,8 @@ def fetch_official_image_bytes(url: str, timeout: float = 6.0) -> bytes | None:
 
 
 def curated_packshot_urls(name: str, roaster: str) -> list[str]:
-    """Known studio packshots used when live search is thin or blocked."""
-    blob = f"{roaster} {name}".lower()
-    if "bellarom" in blob:
-        return list(BELLAROM_STUDIO_PACKSHOTS[:MAX_IMAGE_CANDIDATES])
+    """Studio URLs come only from live search and model hints — no brand backfill."""
+    del name, roaster
     return []
 
 
@@ -369,5 +348,4 @@ def find_product_images(
             live = find_live_product_images(name, roaster)
         except Exception:
             live = []
-    curated = curated_packshot_urls(name, roaster)
-    return collect_image_urls(curated[:1], live, hints, curated)
+    return collect_image_urls(live, hints)[:MAX_IMAGE_CANDIDATES]

@@ -25,12 +25,8 @@ from db import (
 )
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 from image_search import (
-    BELLAROM_BIO_PACKSHOT,
-    BELLAROM_STUDIO_PACKSHOTS,
     MAX_IMAGE_CANDIDATES,
     collect_image_urls,
-    curated_packshot_url,
-    curated_packshot_urls,
     fetch_official_image_bytes,
     find_product_images,
     is_public_image_url,
@@ -137,17 +133,14 @@ GRAPHIC_NOISE = re.compile(
 )
 
 # Strong coffee titles — checked in the upper/middle block first.
-# "Crema" on the Copenhagen Roaster bag is a tasting word, not the product name.
-SLOW_ROAST_ESPRESSO = "Slow Roast Espresso"
+# Cup-quality words (crema, body, aroma) are not product titles.
 NAME_PRIORITY = [
-    (r"slow\s+roast.{0,40}espresso|espresso.{0,40}slow\s+roast", SLOW_ROAST_ESPRESSO),
-    (r"slow\s+roast.{0,40}crema|crema.{0,40}slow\s+roast", SLOW_ROAST_ESPRESSO),
     (r"slow\s+roast", "Slow Roast"),
     (r"yirgacheffe", "Yirgacheffe"),
     (r"geisha|gesha", "Geisha"),
     (r"espresso", "Espresso"),
-    (r"crema", "Crema"),
 ]
+NAME_SKIP_TITLES = {"crema"}
 
 ORIGIN_FUZZY_CUTOFF = 0.80
 
@@ -314,9 +307,6 @@ BREW_RATIO_COPY = {
     },
 }
 
-# Printed tasting notes on the Copenhagen Roaster Slow Roast bag, plus hazelnut.
-LABEL_FLAVOR_CANON = ["Mørk chokolade", "Karamel", "Blåbær", "Citrus", "Hasselnød"]
-
 SUITABLE_FOR = ["Espresso", "Filter", "Mælkedrikke", "Stempelkande"]
 SUITABLE_LOCALES: dict[str, dict[str, str]] = {
     "Espresso": {"da": "Espresso", "en": "Espresso"},
@@ -347,9 +337,6 @@ SUITABLE_ALIASES: dict[str, list[str]] = {
     ],
     "Stempelkande": ["stempelkande", "french press", "press", "plunger"],
 }
-BELLAROM_BIO_NAME = "Bio Organic Coffee Beans Full-Bodied Aroma"
-LABEL_SUITABLE_BELLAROM = ["Filter", "Espresso", "Mælkedrikke"]
-
 _NEXT_FIELD = (
     r"oprindelse|origin|forarbejdning|process|proces|ristningsgrad|"
     r"roast|ristning|noter|smag|tasting|variety|varietal"
@@ -952,45 +939,6 @@ def _blob_of(parsed: dict[str, Any], *keys: str) -> str:
     return " ".join(parts)
 
 
-def _looks_like_bellarom_bio(parsed: dict[str, Any]) -> bool:
-    blob = _blob_of(
-        parsed,
-        "name",
-        "bean_name",
-        "roaster",
-        "official_notes",
-        "roaster_notes",
-        "raw_text",
-        "story",
-    ).lower()
-    return "bellarom" in blob and any(
-        token in blob for token in ("bio", "organic", "full-bodied", "full bodied", "aroma")
-    )
-
-
-def _looks_like_copenhagen_slow_roast(parsed: dict[str, Any]) -> bool:
-    blob = _blob_of(
-        parsed,
-        "name",
-        "bean_name",
-        "roaster",
-        "origin",
-        "official_notes",
-        "roaster_notes",
-        "altitude",
-        "varietal",
-        "raw_text",
-        "story",
-    ).lower()
-    has_roaster = "copenhagen" in blob
-    has_name = bool(
-        re.search(r"\bcrema\b", blob)
-        or re.search(r"slow\s*roast", blob)
-        or re.search(r"\bespresso\b", blob)
-    )
-    return has_roaster and has_name
-
-
 def _localize_origin_text(origin: str, lang: str) -> str:
     parts = [part.strip() for part in re.split(r"\s*(?:&|/|,| og | and )\s*", origin) if part.strip()]
     mapped = [_ORIGIN_PRINTED.get(part.lower(), part) for part in parts]
@@ -1016,20 +964,9 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
         "story",
     )
     name = (out.get("name") or out.get("bean_name") or "").strip()
-    combined = f"{name} {blob}"
-    if re.search(r"slow\s*roast", combined, re.I) and re.search(
-        r"\b(crema|espresso)\b", combined, re.I
-    ):
-        name = SLOW_ROAST_ESPRESSO
-    if re.search(r"slow\s*roast\s+crema", combined, re.I):
-        name = SLOW_ROAST_ESPRESSO
     out["name"] = name
     out["bean_name"] = name
-
-    roaster = (out.get("roaster") or "").strip()
-    if re.search(r"copenhagen\s+roaster", f"{roaster} {blob}", re.I):
-        roaster = "Copenhagen Roaster"
-    out["roaster"] = roaster
+    out["roaster"] = (out.get("roaster") or "").strip()
 
     origin = (out.get("origin") or "").strip()
     search = f"{origin} {blob}".lower()
@@ -1059,46 +996,8 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
     if variety_parts:
         out["varietal"] = " & ".join(variety_parts)
 
-    if _looks_like_copenhagen_slow_roast(out):
-        out["roaster"] = "Copenhagen Roaster"
-        out["name"] = SLOW_ROAST_ESPRESSO
-        out["bean_name"] = SLOW_ROAST_ESPRESSO
-        out["origin"] = _localize_origin_text("Brasilien & Etiopien", code)
-        out["altitude"] = "800 - 2100 M."
-        out["varietal"] = "Catuai & Heirloom"
-        out["process"] = localize_mapped("Natural", PROCESS_LOCALES, code)
-        if not out.get("roast_level"):
-            out["roast_level"] = localize_mapped("Medium", ROAST_LOCALES, code)
-        else:
-            out["roast_level"] = localize_mapped(out.get("roast_level") or "", ROAST_LOCALES, code)
-        out.setdefault("acidity_score", 3)
-        out.setdefault("body_score", 4)
-        out.setdefault("roast_level_score", 3)
-        required = [FLAVOR_LOCALES[tag][code] for tag in LABEL_FLAVOR_CANON]
-        tags = extract_flavor_tags(
-            out.get("flavor_tags"),
-            out.get("official_notes"),
-            LABEL_FLAVOR_CANON,
-            lang=code,
-        )
-        for tag in required:
-            if tag not in tags:
-                tags.append(tag)
-        catalog = flavor_notes_for(code)
-        out["flavor_tags"] = [tag for tag in catalog if tag in set(tags)]
-        out["flavor_notes"] = out["flavor_tags"]
-
-    if _looks_like_bellarom_bio(out):
-        out["roaster"] = "Bellarom"
-        out["name"] = BELLAROM_BIO_NAME
-        out["bean_name"] = BELLAROM_BIO_NAME
-        out["varietal"] = out.get("varietal") or "100% Organic Arabica"
-        out["suitable_for"] = [localize_suitable(tag, code) for tag in LABEL_SUITABLE_BELLAROM]
-        if not out.get("roast_level"):
-            out["roast_level"] = localize_mapped("Mørk", ROAST_LOCALES, code)
-        out.setdefault("acidity_score", 2)
-        out.setdefault("body_score", 5)
-        out.setdefault("roast_level_score", 5)
+    if out.get("suitable_for"):
+        out["suitable_for"] = extract_suitable_for(out.get("suitable_for"), lang=code)
 
     return out
 
@@ -1134,9 +1033,6 @@ def _gemini_prompt(lang: str = "da") -> str:
     grind_med_fine = GRIND_LOCALES["Medium-fin"].get(code, "Medium-fine")
     grind_coarse = GRIND_LOCALES["Grov"].get(code, "Coarse")
     suitable = ", ".join(f'"{name}"' for name in suitable_for_catalog(code))
-    bellarom_suitable = ", ".join(
-        f'"{localize_suitable(tag, code)}"' for tag in LABEL_SUITABLE_BELLAROM
-    )
     da_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("da"))
     en_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("en"))
     return (
@@ -1146,13 +1042,10 @@ def _gemini_prompt(lang: str = "da") -> str:
         '- "roaster": roaster / brand name\n'
         '- "bean_name": the exact primary product name rendered on the bag. '
         "Read the largest title together with any product-line text printed "
-        "immediately above it (for example a line that says SLOW ROAST). "
+        "immediately above it. "
         "Copy the product identity as a title — do not pull words from the "
-        "tasting paragraph. The word crema in a blurb "
-        "('flot crema', 'beautiful crema') is a cup quality, NOT the bean name. "
-        f'For the Copenhagen Roaster Slow Roast espresso bag, bean_name MUST be '
-        f'"{SLOW_ROAST_ESPRESSO}". Never return "Slow Roast Crema", "Crema", '
-        'or any name that uses Crema as the product title.\n'
+        "tasting paragraph. Cup-quality words in a blurb "
+        "('flot crema', 'beautiful crema', 'crema') are not the bean name.\n"
         f'- "origin": countries in {story_lang}. Join two origins with " & " '
         f'(e.g. "{origin_example}")\n'
         '- "region_full": full origin place name, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
@@ -1179,9 +1072,7 @@ def _gemini_prompt(lang: str = "da") -> str:
         f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}].\n"
         f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
         f"[{suitable}]. Read printed icons such as FOR MACHINES (Espresso), FOR FILTER, "
-        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande. "
-        f"For the Bellarom BIO Organic Full-Bodied bag, suitable_for MUST be "
-        f"[{bellarom_suitable}].\n"
+        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande.\n"
         f'- "official_notes": tasting-notes text rewritten in {story_lang}\n'
         f'- "story": language map keyed by {lang_keys}. Each value is 2–4 engaging sentences '
         '("Kaffens Historie" / "The Coffee\'s Story"). Combine printed label facts '
@@ -1216,7 +1107,7 @@ def _gemini_prompt(lang: str = "da") -> str:
         "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
         '- "product_image_urls": array of up to 3 real public https URLs of official '
         "high-resolution studio packshots / product-container graphics from the roaster "
-        "shop or CDN (for example Lidl/Schwarz, Shopify, official shop). "
+        "shop or CDN (for example Shopify, Cloudinary, official shop). "
         '- "product_image_url": first official packshot URL, or "" if unknown. '
         "Never invent a URL and never return a blurry phone photo."
     )
@@ -1542,7 +1433,7 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> list[str]
     prompt = (
         "Find official high-resolution studio packshots of this coffee bag. "
         f'Roaster: "{roaster}". Product name: "{name}". '
-        "Prefer clean retailer/roaster container graphics (Lidl/Schwarz CDN, Shopify, "
+        "Prefer clean retailer/roaster container graphics (Shopify, Cloudinary, "
         "official shop). Return up to 3 distinct product shots of the same bag or "
         "the roaster's official studio photography for that product line. "
         "Never return a blurry phone snapshot or marketplace screenshot. "
@@ -1862,12 +1753,8 @@ def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
     upper_mid = "\n".join(lines[:mid])
     joined = "\n".join(lines)
     priority = _priority_title(upper_mid) or _priority_title(joined)
-    if priority == "Slow Roast" and re.search(r"\b(crema|espresso)\b", joined, re.I):
-        return SLOW_ROAST_ESPRESSO
-    if priority in {"Crema", "Espresso"} and re.search(r"slow\s+roast", joined, re.I):
-        return SLOW_ROAST_ESPRESSO
-    if priority == "Crema":
-        return SLOW_ROAST_ESPRESSO
+    if (priority or "").lower() in NAME_SKIP_TITLES:
+        priority = ""
     if priority:
         return priority
 
