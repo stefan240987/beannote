@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.1.0] - 2026-08-23
+
+- Local/test startup now performs an absolute wipe of `beans`, `ratings`, and `users` (plus bag photos) when `ENVIRONMENT=local` or `RESET_DB_ON_START=true`. Demo beans are no longer seeded, so every test run starts empty.
+- Gemini Vision extracts a `brew_recommendation` (`recommended_method`, `grind_size`, `water_temp`, `brew_ratio`) and BeanNote infers one from roast/origin/process when the bag is silent. Fields persist on `beans` and render as `💡 Bryganbefalinger` next to `📖 Historie`.
+- Local Google/Apple buttons instant-sign-in with test profiles (`google_test_user@beannote.local`, `apple_test_user@beannote.local`). Production still uses OAuth client-ID hooks.
+
 ## [2.0.0] - 2026-08-23
 
 - Replaced Streamlit with a FastAPI backend (`main.py`) and a Tailwind CSS PWA (`static/index.html`) served by Uvicorn on port 8501.

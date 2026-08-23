@@ -159,6 +159,7 @@ def optional_user(request: Request) -> Optional[dict[str, Any]]:
 
 
 def _oauth_configured(provider: str) -> bool:
+    """Production OAuth is ready when real client IDs/secrets are present."""
     if provider == "google":
         return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
     if provider == "apple":
@@ -169,6 +170,41 @@ def _oauth_configured(provider: str) -> bool:
             and (os.getenv("APPLE_PRIVATE_KEY") or os.getenv("APPLE_PRIVATE_KEY_PATH"))
         )
     return False
+
+
+def _local_test_profile(provider: str) -> dict[str, str]:
+    if provider == "google":
+        return {
+            "email": "google_test_user@beannote.local",
+            "username": "Google Test",
+            "oauth_id": "google-local-test",
+        }
+    if provider == "apple":
+        return {
+            "email": "apple_test_user@beannote.local",
+            "username": "Apple Test",
+            "oauth_id": "apple-local-test",
+        }
+    raise HTTPException(status_code=400, detail="invalid_oauth")
+
+
+def _local_oauth_user(provider: str) -> dict[str, Any]:
+    if ENVIRONMENT != "local":
+        raise _auth_error("oauth_unavailable")
+    profile = _local_test_profile(provider)
+    return upsert_oauth_user(
+        email=profile["email"],
+        username=profile["username"],
+        provider=provider,
+        oauth_id=profile["oauth_id"],
+    )
+
+
+def _local_oauth_redirect(provider: str) -> RedirectResponse:
+    user = _local_oauth_user(provider)
+    dest = RedirectResponse("/")
+    _set_session(dest, user)
+    return dest
 
 
 def _sign_oauth_state(provider: str) -> str:
@@ -248,13 +284,19 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
     lang = (request.query_params.get("lang") or "da").lower()
     if lang not in LANGS:
         lang = "da"
+    local = ENVIRONMENT == "local"
     return {
         "version": VERSION,
         "lang": lang,
         "langs": LANGS,
         "strings": STRINGS.get(lang) or STRINGS["en"],
         "user": user,
-        "providers": {"google": _oauth_configured("google"), "apple": _oauth_configured("apple")},
+        "environment": ENVIRONMENT,
+        "local_dev": local,
+        "providers": {
+            "google": local or _oauth_configured("google"),
+            "apple": local or _oauth_configured("apple"),
+        },
         "brew_methods": BREW_METHODS,
         "processes": PROCESSES,
         "roast_levels": ROAST_LEVELS,
@@ -280,6 +322,11 @@ class BeanIn(BaseModel):
     flavor_tags: list[str] = Field(default_factory=list)
     story: str = ""
     image_url: str = ""
+    recommended_method: str = ""
+    grind_size: str = ""
+    water_temp: str = ""
+    brew_ratio: str = ""
+    brew_recommendation: dict[str, Any] = Field(default_factory=dict)
     skip_fuzzy: bool = False
 
 
@@ -335,8 +382,18 @@ def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     return {"user": user}
 
 
+@app.post("/api/auth/{provider}/dev")
+def oauth_dev(provider: str, response: Response) -> dict[str, Any]:
+    """Instant local test sign-in. Production always uses real OAuth client IDs."""
+    user = _local_oauth_user(provider)
+    token = _set_session(response, user)
+    return {"user": user, "token": token}
+
+
 @app.get("/api/auth/google")
 def google_start(request: Request) -> RedirectResponse:
+    if ENVIRONMENT == "local":
+        return _local_oauth_redirect("google")
     if not _oauth_configured("google"):
         raise _auth_error("oauth_unavailable")
     state = _sign_oauth_state("google")
@@ -411,6 +468,8 @@ def google_callback(request: Request) -> RedirectResponse:
 
 @app.get("/api/auth/apple")
 def apple_start(request: Request) -> RedirectResponse:
+    if ENVIRONMENT == "local":
+        return _local_oauth_redirect("apple")
     if not _oauth_configured("apple"):
         raise _auth_error("oauth_unavailable")
     state = _sign_oauth_state("apple")
@@ -537,6 +596,11 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             skip_fuzzy=payload.skip_fuzzy,
             image_url=payload.image_url,
             story=payload.story,
+            recommended_method=payload.recommended_method,
+            grind_size=payload.grind_size,
+            water_temp=payload.water_temp,
+            brew_ratio=payload.brew_ratio,
+            brew_recommendation=payload.brew_recommendation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

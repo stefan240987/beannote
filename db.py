@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -67,10 +67,31 @@ def should_auto_flush() -> bool:
 
 
 def _flush_local_db() -> None:
+    """Delete the SQLite file, WAL sidecars, and stored bag photos."""
     path = get_db_path()
     for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
-        if candidate.exists():
-            candidate.unlink()
+        try:
+            if candidate.exists():
+                candidate.unlink()
+        except OSError:
+            pass
+    images = path.parent / "images"
+    if images.is_dir():
+        for child in images.iterdir():
+            if child.is_file():
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+
+
+def _wipe_all_tables(conn: sqlite3.Connection) -> None:
+    """Empty beans, ratings, and users even if the file delete was skipped."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM ratings")
+    conn.execute("DELETE FROM beans")
+    conn.execute("DELETE FROM users")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def init_db() -> None:
@@ -104,6 +125,10 @@ def init_db() -> None:
                 community_sweetness REAL DEFAULT 3.5,
                 community_body REAL DEFAULT 3.3,
                 community_aftertaste REAL DEFAULT 3.4,
+                recommended_method TEXT DEFAULT '',
+                grind_size TEXT DEFAULT '',
+                water_temp TEXT DEFAULT '',
+                brew_ratio TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 UNIQUE (name, roaster) ON CONFLICT IGNORE
             );
@@ -132,8 +157,9 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn)
+        if should_auto_flush():
+            _wipe_all_tables(conn)
     get_images_dir()
-    _seed_if_empty()
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -142,6 +168,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
     if "story" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
+    for column in ("recommended_method", "grind_size", "water_temp", "brew_ratio"):
+        if column not in beans:
+            conn.execute(f"ALTER TABLE beans ADD COLUMN {column} TEXT DEFAULT ''")
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
@@ -192,116 +221,43 @@ def update_bean_story(bean_id: int, story: str) -> None:
         )
 
 
-def _seed_if_empty() -> None:
-    with connect() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM beans").fetchone()[0]
-        if count:
-            return
+def _normalize_brew_fields(
+    recommended_method: str = "",
+    grind_size: str = "",
+    water_temp: str = "",
+    brew_ratio: str = "",
+    brew_recommendation: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    rec = brew_recommendation if isinstance(brew_recommendation, dict) else {}
+    return {
+        "recommended_method": _normalize(recommended_method or rec.get("recommended_method") or ""),
+        "grind_size": _normalize(grind_size or rec.get("grind_size") or ""),
+        "water_temp": (water_temp or rec.get("water_temp") or "").strip(),
+        "brew_ratio": (brew_ratio or rec.get("brew_ratio") or "").strip(),
+    }
 
-        seeds = [
-            {
-                "name": "Worka Sakaro",
-                "roaster": "Prolog Coffee",
-                "origin": "Ethiopia",
-                "process": "Natural",
-                "roast_level": "Light",
-                "roaster_notes": "Jasmine, peach, bergamot, tropical florals",
-                "flavor_tags": ["jasmine", "peach", "bergamot", "floral"],
-                "community_acidity": 4.4,
-                "community_sweetness": 4.2,
-                "community_body": 3.1,
-                "community_aftertaste": 4.0,
-            },
-            {
-                "name": "Las Flores",
-                "roaster": "La Cabra",
-                "origin": "Colombia",
-                "process": "Washed",
-                "roast_level": "Light",
-                "roaster_notes": "Red apple, caramel, cocoa, cane sugar",
-                "flavor_tags": ["apple", "caramel", "cocoa"],
-                "community_acidity": 3.8,
-                "community_sweetness": 4.1,
-                "community_body": 3.6,
-                "community_aftertaste": 3.7,
-            },
-            {
-                "name": "Kii",
-                "roaster": "The Coffee Collective",
-                "origin": "Kenya",
-                "process": "Washed",
-                "roast_level": "Light",
-                "roaster_notes": "Blackcurrant, grapefruit, floral, sparkling acidity",
-                "flavor_tags": ["blackcurrant", "grapefruit", "floral"],
-                "community_acidity": 4.6,
-                "community_sweetness": 3.7,
-                "community_body": 3.2,
-                "community_aftertaste": 4.1,
-            },
-            {
-                "name": "Sítio Serra do Cigano",
-                "roaster": "April Coffee",
-                "origin": "Brazil",
-                "process": "Natural",
-                "roast_level": "Medium",
-                "roaster_notes": "Milk chocolate, hazelnut, dried fruit",
-                "flavor_tags": ["chocolate", "hazelnut", "dried fruit"],
-                "community_acidity": 2.6,
-                "community_sweetness": 4.3,
-                "community_body": 4.2,
-                "community_aftertaste": 3.8,
-            },
-            {
-                "name": "Elida Estate Geisha",
-                "roaster": "The Barn",
-                "origin": "Panama",
-                "process": "Washed",
-                "roast_level": "Light",
-                "roaster_notes": "Bergamot, jasmine, tropical fruit, tea-like",
-                "flavor_tags": ["bergamot", "jasmine", "tropical", "tea"],
-                "community_acidity": 4.3,
-                "community_sweetness": 4.0,
-                "community_body": 2.8,
-                "community_aftertaste": 4.4,
-            },
-            {
-                "name": "Guji Hambela",
-                "roaster": "La Cabra",
-                "origin": "Ethiopia",
-                "process": "Anaerobic",
-                "roast_level": "Light",
-                "roaster_notes": "Blueberry, wine, floral, ripe stone fruit",
-                "flavor_tags": ["blueberry", "wine", "floral", "stone fruit"],
-                "community_acidity": 4.1,
-                "community_sweetness": 4.4,
-                "community_body": 3.5,
-                "community_aftertaste": 4.0,
-            },
-        ]
-        for bean in seeds:
-            conn.execute(
-                """
-                INSERT INTO beans (
-                    name, roaster, origin, process, roast_level, roaster_notes,
-                    flavor_tags, community_acidity, community_sweetness,
-                    community_body, community_aftertaste, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    bean["name"],
-                    bean["roaster"],
-                    bean["origin"],
-                    bean["process"],
-                    bean["roast_level"],
-                    bean["roaster_notes"],
-                    json.dumps(bean["flavor_tags"]),
-                    bean["community_acidity"],
-                    bean["community_sweetness"],
-                    bean["community_body"],
-                    bean["community_aftertaste"],
-                    _now(),
-                ),
-            )
+
+def _apply_brew_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], brew: dict[str, str]) -> None:
+    if not bean or not any(brew.values()):
+        return
+    if any((bean.get(key) or "").strip() for key in brew):
+        return
+    conn.execute(
+        """
+        UPDATE beans
+        SET recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?
+        WHERE id = ?
+        """,
+        (
+            brew["recommended_method"],
+            brew["grind_size"],
+            brew["water_temp"],
+            brew["brew_ratio"],
+            bean["id"],
+        ),
+    )
+    bean.update(brew)
+    bean["brew_recommendation"] = dict(brew)
 
 
 def _row_to_bean(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -314,6 +270,14 @@ def _row_to_bean(row: sqlite3.Row | None) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         data["flavor_tags"] = [t.strip() for t in str(tags).split(",") if t.strip()]
     data["story"] = (data.get("story") or "").strip()
+    brew = {
+        "recommended_method": (data.get("recommended_method") or "").strip(),
+        "grind_size": (data.get("grind_size") or "").strip(),
+        "water_temp": (data.get("water_temp") or "").strip(),
+        "brew_ratio": (data.get("brew_ratio") or "").strip(),
+    }
+    data.update(brew)
+    data["brew_recommendation"] = brew
     return data
 
 
@@ -403,11 +367,23 @@ def insert_bean(
     skip_fuzzy: bool = False,
     image_url: str = "",
     story: str = "",
+    recommended_method: str = "",
+    grind_size: str = "",
+    water_temp: str = "",
+    brew_ratio: str = "",
+    brew_recommendation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
     image_url = (image_url or "").strip()
     story = (story or "").strip()
+    brew = _normalize_brew_fields(
+        recommended_method,
+        grind_size,
+        water_temp,
+        brew_ratio,
+        brew_recommendation,
+    )
     if not name or not roaster:
         raise ValueError("name_roaster_required")
 
@@ -421,6 +397,9 @@ def insert_bean(
         if story and not (bean.get("story") or "").strip():
             update_bean_story(bean["id"], story)
             bean["story"] = story
+        if any(brew.values()):
+            with connect() as conn:
+                _apply_brew_if_empty(conn, bean, brew)
         return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
@@ -431,8 +410,9 @@ def insert_bean(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
-                flavor_tags, story, image_url, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                flavor_tags, story, image_url, recommended_method, grind_size,
+                water_temp, brew_ratio, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -444,6 +424,10 @@ def insert_bean(
                 tags,
                 story,
                 image_url,
+                brew["recommended_method"],
+                brew["grind_size"],
+                brew["water_temp"],
+                brew["brew_ratio"],
                 _now(),
             ),
         )
@@ -465,6 +449,8 @@ def insert_bean(
                     (story, bean["id"]),
                 )
                 bean["story"] = story
+            if bean:
+                _apply_brew_if_empty(conn, bean, brew)
             return {"status": "exists", "bean": bean}
 
         bean = conn.execute(

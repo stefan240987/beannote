@@ -171,6 +171,41 @@
       ).join("");
     }
 
+    function brewSource(source) {
+      const rec = source?.brew_recommendation || {};
+      return {
+        method: rec.recommended_method || source?.recommended_method || "",
+        grind: rec.grind_size || source?.grind_size || "",
+        temp: rec.water_temp || source?.water_temp || "",
+        ratio: rec.brew_ratio || source?.brew_ratio || "",
+      };
+    }
+
+    function brewBadge(source) {
+      const rec = brewSource(source);
+      const compact = [rec.method, rec.grind, rec.temp].filter(Boolean);
+      if (!compact.length) return "";
+      return `<div class="rounded-xl bg-[#f4ebd9] px-3 py-2">
+        <p class="text-sm font-semibold">${t("brew_recs")}: ${esc(compact.join(" | "))}</p>
+        ${rec.ratio ? `<p class="mt-0.5 text-xs text-muted">${esc(rec.ratio)}</p>` : ""}
+      </div>`;
+    }
+
+    function storyBlock(story) {
+      if (!story) return "";
+      return `<details class="rounded-xl bg-foam px-3 py-2">
+        <summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary>
+        <p class="mt-2 text-sm leading-6 text-espresso/80">${esc(story)}</p>
+      </details>`;
+    }
+
+    function journalBits(source) {
+      const brew = brewBadge(source);
+      const story = storyBlock(source?.story);
+      if (!brew && !story) return "";
+      return `<div class="grid gap-2 ${brew && story ? "sm:grid-cols-2" : ""}">${brew}${story}</div>`;
+    }
+
     function slider(id, label, help, value) {
       return `<label class="block">
         <div class="mb-1 flex items-center justify-between text-sm font-medium">
@@ -192,14 +227,14 @@
             <p class="mt-1 text-sm text-cream/80">${t("auth_tagline")}</p>
           </div>
           <div class="mt-6 space-y-3">
-            <a href="${providers.google ? "/api/auth/google" : "#"}" data-oauth="google" class="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-espresso shadow-sm ring-1 ring-latte ${providers.google ? "" : "opacity-80"}">
+            <button type="button" data-oauth="google" class="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-espresso shadow-sm ring-1 ring-latte ${providers.google ? "" : "opacity-80"}">
               <svg viewBox="0 0 24 24" class="h-5 w-5" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09Z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23Z"/><path fill="#FBBC05" d="M5.84 14.09A6.97 6.97 0 0 1 5.5 12c0-.72.12-1.42.34-2.09V7.07H2.18A11 11 0 0 0 1 12c0 1.78.43 3.46 1.18 4.93l3.66-2.84Z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53Z"/></svg>
               ${t("continue_google")}
-            </a>
-            <a href="${providers.apple ? "/api/auth/apple" : "#"}" data-oauth="apple" class="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-espresso px-4 text-sm font-semibold text-cream ${providers.apple ? "" : "opacity-80"}">
+            </button>
+            <button type="button" data-oauth="apple" class="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-espresso px-4 text-sm font-semibold text-cream ${providers.apple ? "" : "opacity-80"}">
               <svg viewBox="0 0 24 24" class="h-5 w-5 fill-current" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.3 2.9 2.3 1.1 0 1.6-.7 3-.7s1.8.7 3 .7 2-.1 2.9-2.2c.7-1 1-2 1-2.1-.1 0-2.3-.9-2.3-3.4ZM14.7 6.2c.6-.8 1.1-1.8.9-2.9-1 .1-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.8 1.1.1 2.2-.5 2.9-1.4Z"/></svg>
               ${t("continue_apple")}
-            </a>
+            </button>
           </div>
           <div class="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted">
             <span class="h-px flex-1 bg-latte"></span>${t("or_divider")}<span class="h-px flex-1 bg-latte"></span>
@@ -257,7 +292,7 @@
           <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
           <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin)} · ${esc(bean.process)}</p>
           <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
-          ${bean.story ? `<details><summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary><p class="mt-2 text-sm leading-6 text-espresso/80">${esc(bean.story)}</p></details>` : ""}
+          ${journalBits(bean)}
           <canvas id="radar" height="280"></canvas>
           <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
         </div>
@@ -293,7 +328,7 @@
             <h2 class="font-display text-2xl font-bold">${esc(scan.name || t("add_name"))}</h2>
             <p class="text-sm text-muted">${esc(scan.roaster)} · ${esc(scan.origin)} · ${esc(scan.process)}</p>
             <div class="flex flex-wrap gap-1">${pills(scan.flavor_tags)}</div>
-            ${scan.story ? `<details><summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary><p class="mt-2 text-sm leading-6">${esc(scan.story)}</p></details>` : ""}
+            ${journalBits(scan)}
             ${similar ? `<div class="rounded-xl bg-foam p-3 text-sm">
               <p class="font-semibold">${t("duplicate_warning")}</p>
               <p class="mt-1 text-muted">${esc(similar.name)} · ${esc(similar.roaster)} (${Math.round((similar.confidence || 0) * 100)}% ${t("confidence")})</p>
@@ -450,13 +485,26 @@
     }
 
     function bindAuth() {
-      document.querySelectorAll("[data-oauth]").forEach((link) => {
-        link.addEventListener("click", (event) => {
-          const provider = link.dataset.oauth;
-          if (!state.config?.providers?.[provider]) {
-            event.preventDefault();
-            toast(t("oauth_unavailable"));
+      document.querySelectorAll("[data-oauth]").forEach((btn) => {
+        btn.addEventListener("click", async (event) => {
+          event.preventDefault();
+          const provider = btn.dataset.oauth;
+          if (state.config?.environment === "local" || state.config?.local_dev) {
+            try {
+              const result = await api(`/api/auth/${provider}/dev`, { method: "POST", body: "{}" });
+              setAuth(result);
+              await loadBeans();
+              render();
+            } catch (err) {
+              toast(t(err.detail || "oauth_unavailable"));
+            }
+            return;
           }
+          if (state.config?.providers?.[provider]) {
+            window.location.href = `/api/auth/${provider}`;
+            return;
+          }
+          toast(t("oauth_unavailable"));
         });
       });
       $("#toggle-auth")?.addEventListener("click", () => {
@@ -552,6 +600,11 @@
               flavor_tags: scan.flavor_tags || [],
               story: scan.story,
               image_url: scan.image_url,
+              recommended_method: scan.recommended_method || scan.brew_recommendation?.recommended_method || "",
+              grind_size: scan.grind_size || scan.brew_recommendation?.grind_size || "",
+              water_temp: scan.water_temp || scan.brew_recommendation?.water_temp || "",
+              brew_ratio: scan.brew_ratio || scan.brew_recommendation?.brew_ratio || "",
+              brew_recommendation: scan.brew_recommendation || {},
               skip_fuzzy: false,
             }),
           });

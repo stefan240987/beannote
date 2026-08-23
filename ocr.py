@@ -118,6 +118,29 @@ NOTES_LEAD = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+BREW_METHODS_REC = [
+    "Espresso",
+    "V60 / Pour-over",
+    "Stempelkande (French Press)",
+    "Filter",
+]
+
+GRIND_SIZES = ["Fin", "Medium-fin", "Medium", "Grov"]
+
+METHOD_ALIASES = {
+    "Espresso": ["espresso", "ristretto"],
+    "V60 / Pour-over": ["v60", "pour-over", "pour over", "pourover", "kalita", "chemex"],
+    "Stempelkande (French Press)": ["french press", "stempelkande", "plunger"],
+    "Filter": ["filter", "batch brew", "drip", "dryp"],
+}
+
+GRIND_ALIASES = {
+    "Medium-fin": ["medium-fin", "medium fine", "medium-fine", "mellemfin"],
+    "Fin": ["fin", "fine"],
+    "Medium": ["medium", "mellem"],
+    "Grov": ["grov", "coarse", "groft"],
+}
+
 FLAVOR_NOTES = [
     "Mørk chokolade",
     "Chokolade",
@@ -332,7 +355,91 @@ def normalize_scan_fields(parsed: dict[str, Any]) -> dict[str, Any]:
     out["flavor_notes"] = flavors
     out["flavor_tags"] = flavors
     out["story"] = (parsed.get("story") or "").strip()
+    brew = infer_brew_recommendation(out)
+    out["brew_recommendation"] = brew
+    out.update(brew)
     return out
+
+
+def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]]) -> str:
+    raw = re.sub(r"\s+", " ", (value or "").strip())
+    if not raw:
+        return ""
+    for option in options:
+        if option.lower() == raw.lower():
+            return option
+    lowered = raw.lower()
+    for option, names in aliases.items():
+        if any(name in lowered for name in names):
+            return option
+    return raw
+
+
+def infer_brew_recommendation(parsed: dict[str, Any]) -> dict[str, str]:
+    """Use Gemini's brew object when present; otherwise infer from roast/origin/process."""
+    raw = parsed.get("brew_recommendation")
+    if not isinstance(raw, dict):
+        raw = {
+            "recommended_method": parsed.get("recommended_method") or "",
+            "grind_size": parsed.get("grind_size") or "",
+            "water_temp": parsed.get("water_temp") or "",
+            "brew_ratio": parsed.get("brew_ratio") or "",
+        }
+    method = _canon_listed(str(raw.get("recommended_method") or ""), BREW_METHODS_REC, METHOD_ALIASES)
+    grind = _canon_listed(str(raw.get("grind_size") or ""), GRIND_SIZES, GRIND_ALIASES)
+    temp = re.sub(r"\s+", " ", str(raw.get("water_temp") or "").strip())
+    ratio = re.sub(r"\s+", " ", str(raw.get("brew_ratio") or "").strip())
+    if method and grind and temp and ratio:
+        return {
+            "recommended_method": method,
+            "grind_size": grind,
+            "water_temp": temp,
+            "brew_ratio": ratio,
+        }
+
+    roast = (parsed.get("roast_level") or "").lower()
+    process = (parsed.get("process") or "").lower()
+    origin = (parsed.get("origin") or "").lower()
+    notes = (parsed.get("roaster_notes") or parsed.get("official_notes") or "").lower()
+    espresso_hint = any(token in f"{roast} {notes}" for token in ("espresso", "mørk", "dark", "medium-mørk"))
+    african = any(token in origin for token in ("ethiopia", "etiopien", "kenya", "rwanda", "burundi"))
+    light = any(token in roast for token in ("lys", "light"))
+    natural = any(token in process for token in ("natural", "anaerob"))
+
+    if espresso_hint and not light:
+        inferred = {
+            "recommended_method": "Espresso",
+            "grind_size": "Fin",
+            "water_temp": "92-94°C",
+            "brew_ratio": "1:2 (18g kaffe pr. 36g espresso)",
+        }
+    elif light or african:
+        inferred = {
+            "recommended_method": "V60 / Pour-over",
+            "grind_size": "Medium-fin",
+            "water_temp": "92-94°C",
+            "brew_ratio": "1:16 (60g kaffe pr. 1 liter vand)",
+        }
+    elif natural:
+        inferred = {
+            "recommended_method": "Stempelkande (French Press)",
+            "grind_size": "Grov",
+            "water_temp": "92-94°C",
+            "brew_ratio": "1:15 (67g kaffe pr. 1 liter vand)",
+        }
+    else:
+        inferred = {
+            "recommended_method": "Filter",
+            "grind_size": "Medium",
+            "water_temp": "92-94°C",
+            "brew_ratio": "1:16 (60g kaffe pr. 1 liter vand)",
+        }
+    return {
+        "recommended_method": method or inferred["recommended_method"],
+        "grind_size": grind or inferred["grind_size"],
+        "water_temp": temp or inferred["water_temp"],
+        "brew_ratio": ratio or inferred["brew_ratio"],
+    }
 
 
 def _gemini_prompt() -> str:
@@ -359,6 +466,18 @@ def _gemini_prompt() -> str:
         'der selektivt håndplukker de mest modne bær..." '
         "Do not invent a specific farm or producer name unless the label shows it; "
         "you may use well-known regional context.\n"
+        '- "brew_recommendation": object with:\n'
+        '  - "recommended_method": one of "Espresso", "V60 / Pour-over", '
+        '"Stempelkande (French Press)", "Filter"\n'
+        '  - "grind_size": one of "Fin", "Medium-fin", "Medium", "Grov"\n'
+        '  - "water_temp": e.g. "92-94°C"\n'
+        '  - "brew_ratio": e.g. "1:16 (60g kaffe pr. 1 liter vand)"\n'
+        "Infer brew_recommendation from roast, origin, process and typical "
+        "specialty practice when the bag does not print brew advice. "
+        "Light washed African lots usually suit V60 / Pour-over, medium-fine, "
+        "92-94°C, 1:16. Darker or espresso-oriented roasts suit Espresso and a "
+        "fine grind. Full-bodied naturals can use Stempelkande (French Press) "
+        "with a coarse grind.\n"
         "Read printed text first. If a field is missing on the label, "
         "use your coffee knowledge (origin, process, typical roast and flavors "
         "for that lot or origin) to fill it. Prefer Danish process/roast labels. "

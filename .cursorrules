@@ -10,7 +10,7 @@ You are working on BeanNote, a FastAPI + Tailwind PWA coffee journal. Keep chang
 - `static/index.html`: Tailwind PWA. Do not add extra frameworks or a second database.
 
 ## Environment
-- `ENVIRONMENT=local` → `./data/beannote.db` (auto-flush + re-seed on startup).
+- `ENVIRONMENT=local` → `./data/beannote.db` (absolute wipe of beans/ratings/users on startup, no demo seed).
 - `ENVIRONMENT=production` → `/app/data/beannote.db` (never auto-flush).
 - `RESET_DB_ON_START=true` flushes only when not production.
 - Unraid: PUID=99, PGID=100, TZ=Europe/Copenhagen, volume `/mnt/user/appdata/beannote/data`.
