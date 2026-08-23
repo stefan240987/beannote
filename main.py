@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -775,21 +776,32 @@ async def scan(
     if not raw_candidates:
         fallback = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
         raw_candidates = [fallback] if fallback else []
-    resolved: list[str] = []
-    seen: set[str] = set()
+    unique: list[str] = []
+    seen_raw: set[str] = set()
     for raw in raw_candidates:
         url = str(raw or "").strip()
-        if not url or url in seen:
+        if not url or url in seen_raw:
             continue
+        seen_raw.add(url)
+        unique.append(url)
+        if len(unique) >= 3:
+            break
+
+    def _store_candidate(url: str) -> str:
         official_bytes = fetch_official_image_bytes(url)
-        stored = save_bean_image(official_bytes, filename="official.jpg") if official_bytes else url
-        if stored in seen:
+        return save_bean_image(official_bytes, filename="official.jpg") if official_bytes else url
+
+    stored_urls = list(unique)
+    if unique:
+        with ThreadPoolExecutor(max_workers=min(3, len(unique))) as pool:
+            stored_urls = list(pool.map(_store_candidate, unique))
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for stored in stored_urls:
+        if not stored or stored in seen:
             continue
-        seen.add(url)
         seen.add(stored)
         resolved.append(stored)
-        if len(resolved) >= 3:
-            break
     parsed["image_candidates"] = resolved
     parsed["official_image_url"] = resolved[0] if resolved else ""
     parsed["product_image_url"] = parsed["official_image_url"]

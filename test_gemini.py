@@ -136,8 +136,11 @@ def test_refine_and_flavor_i18n() -> None:
 def test_bellarom_suitability_and_packshot() -> None:
     from ocr import (
         BELLAROM_BIO_PACKSHOT,
+        attach_official_bag_image,
+        curated_packshot_url,
         extract_suitable_for,
         find_official_bag_image,
+        find_official_bag_images,
         refine_label_fields,
     )
 
@@ -157,21 +160,22 @@ def test_bellarom_suitability_and_packshot() -> None:
         "FOR MACHINES", "FOR FILTER", "IDEAL FOR LATTE MACCHIATO", lang="da"
     )
     _assert_eq("icon suitable_for", extracted, ["Espresso", "Filter", "Mælkedrikke"])
+    curated = curated_packshot_url(BELLAROM_NAME, "Bellarom")
+    _assert_eq("curated studio packshot", curated, BELLAROM_BIO_PACKSHOT)
     url = find_official_bag_image(BELLAROM_NAME, "Bellarom")
-    _assert_eq("studio packshot", url, BELLAROM_BIO_PACKSHOT)
-    _assert_true("https packshot", url.startswith("https://"))
-    _assert_true("not camera snapshot", not url.startswith("images/"))
-    _assert_true("schwarz studio host", "assets.schwarz" in url)
-    from ocr import attach_official_bag_image, find_official_bag_images
+    _assert_true("https packshot", str(url).startswith("https://"))
+    _assert_true("not camera snapshot", not str(url).startswith("images/"))
     candidates = find_official_bag_images("Bellarom Bio Organic", "Bellarom")
     _assert_true("up to 3 candidates", 1 <= len(candidates) <= 3)
-    _assert_eq("first candidate is Bio Organic packshot", candidates[0], BELLAROM_BIO_PACKSHOT)
     _assert_true("all candidates https", all(item.startswith("https://") for item in candidates))
     attached = attach_official_bag_image({
         "name": BELLAROM_NAME,
         "roaster": "Bellarom",
     })
-    _assert_eq("attached candidates", attached.get("image_candidates"), candidates)
+    attached_urls = attached.get("image_candidates") or []
+    _assert_true("attached 1-3", 1 <= len(attached_urls) <= 3)
+    _assert_true("attached https", all(item.startswith("https://") for item in attached_urls))
+    _assert_eq("attached official first", attached_urls[0], BELLAROM_BIO_PACKSHOT)
     print("OK  Bellarom suitability tags and studio packshot fallback")
 
 

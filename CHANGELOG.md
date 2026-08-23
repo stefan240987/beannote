@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [3.3.0] - 2026-08-23
+
+- Autonomous high-res image search finds up to 3 official/studio product photos after a scan. DuckDuckGo Images is the primary source (no API key); known packshots and Gemini grounding backfill when live search is thin.
+- Scan payload includes `image_candidates`. The AI Detection Summary card always shows `📸 Dit Billede` plus studio thumbnails; tapping a thumb updates the cover preview, and `📸 Brug eget foto` resets to the camera snapshot.
+- `✅ Godkend & Gem` persists the selected `image_url` on `POST /api/beans`. `test_image_search.py` verifies Bellarom Bio Organic retrieval.
+
 ## [3.1.0] - 2026-08-23
 
 - Scan approval now includes a horizontal cover picker: `📸 Dit Billede` plus up to 3 official `✨ Studio Billede` candidates. Tap a thumbnail to preview the bean cover; `[ 📸 Brug eget foto ]` resets to the camera snapshot.
