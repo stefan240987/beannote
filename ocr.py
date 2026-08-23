@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from db import classify_matches, find_similar_beans, scan_destination
 
@@ -411,11 +411,22 @@ def _register_heif_opener() -> None:
         return
 
 
-def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
+def open_oriented_image(image_bytes: bytes) -> Image.Image:
+    """Open any camera/album upload and apply EXIF orientation so it is upright."""
     _register_heif_opener()
     image = Image.open(BytesIO(image_bytes))
+    image.load()
+    try:
+        image = ImageOps.exif_transpose(image) or image
+    except Exception:
+        pass
     if image.mode not in {"L", "RGB"}:
         image = image.convert("RGB")
+    return image
+
+
+def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
+    image = open_oriented_image(image_bytes)
     width, height = image.size
     longest = max(width, height)
     if longest > 1600:
@@ -557,9 +568,7 @@ def extract_text(image_bytes: bytes) -> str:
     import pytesseract
 
     configure_tesseract()
-    image = Image.open(BytesIO(image_bytes))
-    if image.mode not in {"L", "RGB"}:
-        image = image.convert("RGB")
+    image = open_oriented_image(image_bytes)
     width, height = image.size
     shortest = min(width, height)
     if shortest and shortest < 900:

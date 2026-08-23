@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.5.0] - 2026-08-23
+
+- Camera and album uploads are auto-rotated with `PIL.ImageOps.exif_transpose` before Gemini/Tesseract and before any preview, so portrait phone photos stay upright.
+- After an AI scan, Add Bean shows a compact Detection Summary card (photo, name, roaster, origin, flavor pills, expandable story) and one primary action: "✅ Godkend & Gem til BeanNote".
+- The long stacked editor stays behind "✏️ Ret oplysninger"; the scan dropzone is hidden during approval so the card and button fit on a phone screen.
+
 ## [1.4.4] - 2026-08-23
 
 - Autonomous env verification: `.env` is created or repaired, `GEMINI_API_KEY` is loaded into `os.environ` and mirrored to `.streamlit/secrets.toml`, and Gemini 1.5 Flash is pinged before any Tesseract fallback.

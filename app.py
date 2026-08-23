@@ -6,6 +6,7 @@ import base64
 import hashlib
 import os
 from html import escape
+from io import BytesIO
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -37,6 +38,7 @@ from ocr import (
     extract_flavor_tags,
     load_local_env,
     normalize_scan_fields,
+    open_oriented_image,
 )
 from translations import LANGS, t
 
@@ -331,6 +333,85 @@ def inject_css() -> None:
             object-fit: cover !important;
             border-radius: 10px;
         }
+        .bn-detect-card {
+            background: #fffdf9;
+            border: 1px solid #eae3d9;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 6px 16px rgba(60, 42, 33, 0.06);
+            margin: 0 0 0.55rem;
+        }
+        .bn-detect-img {
+            height: 180px !important;
+            width: 100% !important;
+            object-fit: cover !important;
+            border-radius: 12px 12px 0 0;
+            display: block;
+        }
+        .bn-detect-body { padding: 0.7rem 0.9rem 0.8rem; }
+        .bn-detect-kicker {
+            font-family: "Outfit", sans-serif;
+            font-size: 11px;
+            letter-spacing: 1.3px;
+            text-transform: uppercase;
+            font-weight: 600;
+            color: #8c7a6b;
+            margin: 0 0 0.4rem;
+        }
+        .bn-detect-row {
+            display: flex;
+            flex-direction: column;
+            gap: 0.08rem;
+            margin: 0.28rem 0 0;
+        }
+        .bn-detect-label {
+            font-size: 11px;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+            font-weight: 600;
+            color: #8c7a6b;
+        }
+        .bn-detect-value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #2c221e;
+            line-height: 1.35;
+        }
+        .bn-detect-story {
+            margin-top: 0.55rem;
+            border-top: 1px solid #eae3d9;
+            padding-top: 0.45rem;
+        }
+        .bn-detect-story summary {
+            cursor: pointer;
+            list-style: none;
+            font-size: 13px;
+            font-weight: 600;
+            color: #8c7a6b;
+        }
+        .bn-detect-story summary::-webkit-details-marker { display: none; }
+        .bn-detect-story p {
+            margin: 0.4rem 0 0;
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 14px;
+            line-height: 1.55;
+            color: #4a3328;
+        }
+        [data-testid="stVerticalBlock"]:has(.bn-detect-card) {
+            gap: 0.35rem;
+        }
+        [data-testid="stElementContainer"]:has(.bn-detect-card) {
+            margin-bottom: 0.15rem !important;
+        }
+        [data-testid="stAppViewContainer"]:has(.bn-detect-card) .bn-hero {
+            padding: 0.6rem 0.95rem 0.5rem;
+            margin-bottom: 0.4rem;
+        }
+        [data-testid="stAppViewContainer"]:has(.bn-detect-card) .bn-hero p { display: none; }
+        .bn-detect-card .bn-card-fallback {
+            height: 180px;
+            border-radius: 12px 12px 0 0;
+        }
         [data-testid="stPlotlyChart"],
         [data-testid="stPlotlyChart"] > div,
         .js-plotly-plot,
@@ -610,6 +691,7 @@ def inject_css() -> None:
             .bn-card-fallback,
             .bn-bag-img,
             .bn-card.has-photo img.bn-bag-img { height: 180px !important; }
+            .bn-detect-img { height: 180px !important; }
             div[data-testid="stDialog"] > div,
             div[data-testid="stDialog"] div[role="dialog"],
             [data-testid="stModal"] > div,
@@ -795,17 +877,26 @@ def note_chips(tags: list[str], overlap: list[str]) -> str:
     return flavor_badges_html(tags, overlap=overlap)
 
 
+def oriented_image_uri(photo: Path) -> tuple[str, str]:
+    """Return (mime, base64) for a bag photo after EXIF auto-rotation."""
+    image = open_oriented_image(photo.read_bytes())
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=88)
+    return "image/jpeg", base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def bag_image_markup(photo: Path, kind: str = "card") -> str:
-    raw = photo.read_bytes()
-    suffix = photo.suffix.lower()
-    mime = "image/png" if suffix == ".png" else "image/jpeg"
-    encoded = base64.b64encode(raw).decode("ascii")
+    mime, encoded = oriented_image_uri(photo)
     if kind == "modal":
         return (
             f'<div class="bn-modal-hero">'
             f'<img class="bn-modal-img" src="data:{mime};base64,{encoded}" alt="" />'
             f"</div>"
         )
+    if kind == "detect":
+        return f'<img class="bn-detect-img" src="data:{mime};base64,{encoded}" alt="" />'
     return f'<img class="bn-bag-img" src="data:{mime};base64,{encoded}" alt="" />'
 
 
@@ -871,6 +962,7 @@ def apply_pending_ui() -> None:
     st.session_state.ocr_form = {}
     st.session_state.pending_similar = None
     st.session_state.pending_image_url = ""
+    st.session_state.edit_scan_fields = False
     st.session_state.add_name = ""
     st.session_state.add_roaster = ""
     st.session_state.add_origin = ""
@@ -904,6 +996,7 @@ def apply_ocr_form(parsed: dict) -> None:
     if parsed.get("image_url"):
         st.session_state.pending_image_url = parsed["image_url"]
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
+    st.session_state.edit_scan_fields = not filled
     st.session_state.ocr_flash = "scanned" if filled else "ocr_empty"
 
 
@@ -911,6 +1004,7 @@ def clear_ocr_form() -> None:
     st.session_state.ocr_form = {}
     st.session_state.pending_similar = None
     st.session_state.pending_image_url = ""
+    st.session_state.edit_scan_fields = False
     st.session_state.reset_add_form = True
 
 
@@ -968,6 +1062,8 @@ def process_scan_image(image_file) -> None:
 
 
 def render_scan_cta(lang: str) -> None:
+    if st.session_state.get("ocr_form") and st.session_state.get("active_tab") == "add":
+        return
     st.markdown(
         f'<div class="bn-scan-card">'
         f'<div class="bn-scan-title">{escape(t(lang, "scan_card_title"))}</div>'
@@ -1192,7 +1288,7 @@ def render_review(lang: str) -> None:
 
     photo = resolve_image_path(bean.get("image_url") or "")
     if photo:
-        st.image(str(photo), width=220)
+        st.image(open_oriented_image(photo.read_bytes()), width=220)
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
     brew = st.selectbox(t(lang, "brew_method"), BREW_METHODS)
     rating = st.slider(t(lang, "rating"), min_value=1.0, max_value=5.0, value=4.0, step=0.5, help=t(lang, "help_rating"))
@@ -1234,10 +1330,132 @@ def render_review(lang: str) -> None:
         st.success(t(lang, "saved_toast"))
 
 
+def add_form_values() -> dict:
+    flavors = st.session_state.get("add_flavors") or []
+    return {
+        "name": (st.session_state.get("add_name") or "").strip(),
+        "roaster": (st.session_state.get("add_roaster") or "").strip(),
+        "origin": (st.session_state.get("add_origin") or "").strip(),
+        "process": st.session_state.get("add_process") or "",
+        "roast": st.session_state.get("add_roast") or "",
+        "flavors": flavors,
+        "notes": (st.session_state.get("add_notes") or "").strip(),
+        "story": (st.session_state.get("add_story") or "").strip(),
+    }
+
+
+def render_add_fields(lang: str) -> None:
+    st.text_input(t(lang, "add_name"), key="add_name")
+    st.text_input(t(lang, "add_roaster"), key="add_roaster")
+    c1, c2, c3 = st.columns(3)
+    c1.text_input(t(lang, "origin"), key="add_origin")
+    c2.selectbox(
+        t(lang, "add_process"),
+        PROCESSES,
+        index=None,
+        placeholder=t(lang, "choose_process"),
+        key="add_process",
+    )
+    c3.selectbox(
+        t(lang, "add_roast"),
+        ROAST_LEVELS,
+        index=None,
+        placeholder=t(lang, "choose_roast"),
+        key="add_roast",
+    )
+    st.multiselect(
+        t(lang, "add_flavor_notes"),
+        FLAVOR_NOTES,
+        placeholder=t(lang, "choose_flavors"),
+        key="add_flavors",
+    )
+    st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
+    st.markdown(
+        f'<div class="bn-story-head">📖 {escape(t(lang, "bean_story"))}</div>',
+        unsafe_allow_html=True,
+    )
+    st.text_area(
+        t(lang, "bean_story"),
+        key="add_story",
+        height=110,
+        help=t(lang, "bean_story_help"),
+        placeholder=t(lang, "bean_story_ph"),
+        label_visibility="collapsed",
+    )
+
+
+def persist_add_bean(lang: str, force: bool = False) -> None:
+    fields = add_form_values()
+    form = st.session_state.get("ocr_form") or {}
+    if not fields["name"] or not fields["roaster"]:
+        st.error(t(lang, "required"))
+        return
+    result = insert_bean(
+        name=fields["name"],
+        roaster=fields["roaster"],
+        origin=fields["origin"],
+        process=fields["process"] or "",
+        roast_level=fields["roast"] or "",
+        roaster_notes=fields["notes"] or ", ".join(fields["flavors"]),
+        flavor_tags=extract_flavor_tags(fields["flavors"]) or None,
+        skip_fuzzy=force,
+        image_url=pending_image_url() or (form.get("image_url") or ""),
+        story=fields["story"],
+    )
+    if result["status"] in {"fuzzy", "exact"}:
+        st.session_state.pending_similar = result["similar"]
+        st.rerun()
+    if result["status"] == "exists":
+        st.warning(t(lang, "exists"))
+        go_review(result["bean"]["id"], notes=tasting_notes_from_form())
+        st.rerun()
+    if result["status"] == "created":
+        clear_ocr_form()
+        st.toast(t(lang, "created"), icon="☕")
+        go_review(result["bean"]["id"], notes=tasting_notes_from_form())
+        st.rerun()
+
+
+def render_detection_card(lang: str, photo: Path | None) -> None:
+    fields = add_form_values()
+    name = fields["name"] or "—"
+    roaster = fields["roaster"] or "—"
+    origin = fields["origin"] or "—"
+    pills = flavor_badges_html(fields["flavors"], extra=fields["notes"])
+    story = fields["story"]
+    media = bag_image_markup(photo, kind="detect") if photo else BAG_PLACEHOLDER.replace(
+        "bn-card-fallback", "bn-card-fallback bn-detect-img"
+    )
+    story_html = ""
+    if story:
+        story_html = (
+            f'<details class="bn-detect-story">'
+            f"<summary>{escape(t(lang, 'story_expand'))}</summary>"
+            f"<p>{escape(story)}</p>"
+            f"</details>"
+        )
+    st.markdown(
+        f'<div class="bn-detect-card">'
+        f"{media}"
+        f'<div class="bn-detect-body">'
+        f'<div class="bn-detect-kicker">{escape(t(lang, "ai_summary_title"))}</div>'
+        f'<div class="bn-detect-row"><div class="bn-detect-label">{escape(t(lang, "add_name"))}</div>'
+        f'<div class="bn-detect-value">{escape(name)}</div></div>'
+        f'<div class="bn-detect-row"><div class="bn-detect-label">{escape(t(lang, "add_roaster"))}</div>'
+        f'<div class="bn-detect-value">{escape(roaster)}</div></div>'
+        f'<div class="bn-detect-row"><div class="bn-detect-label">{escape(t(lang, "origin"))}</div>'
+        f'<div class="bn-detect-value">{escape(origin)}</div></div>'
+        f"{pills}"
+        f"{story_html}"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_add(lang: str) -> None:
     flash = st.session_state.pop("ocr_flash", None)
     if flash == "scanned":
-        st.success(t(lang, "scanned"))
+        st.toast(t(lang, "scanned"), icon="✨")
     elif flash == "ocr_empty":
         st.warning(t(lang, "ocr_empty"))
     elif flash == "ocr_missing":
@@ -1245,52 +1463,25 @@ def render_add(lang: str) -> None:
     elif flash == "ocr_fail":
         st.error(t(lang, "ocr_fail"))
 
+    scanned = bool(st.session_state.get("ocr_form"))
     attached = resolve_image_path(pending_image_url())
-    if attached:
+    editing = bool(st.session_state.get("edit_scan_fields"))
+
+    if scanned:
+        render_detection_card(lang, attached)
+    elif attached:
         st.caption(t(lang, "attached_label"))
         st.markdown('<div class="bn-upload-preview-flag"></div>', unsafe_allow_html=True)
-        st.image(str(attached), use_container_width=True)
+        st.image(open_oriented_image(attached.read_bytes()), use_container_width=True)
 
-    form = st.session_state.get("ocr_form") or {}
-    name = st.text_input(t(lang, "add_name"), key="add_name")
-    roaster = st.text_input(t(lang, "add_roaster"), key="add_roaster")
-    c1, c2, c3 = st.columns(3)
-    origin = c1.text_input(t(lang, "origin"), key="add_origin")
-    process = c2.selectbox(
-        t(lang, "add_process"),
-        PROCESSES,
-        index=None,
-        placeholder=t(lang, "choose_process"),
-        key="add_process",
-    )
-    roast = c3.selectbox(
-        t(lang, "add_roast"),
-        ROAST_LEVELS,
-        index=None,
-        placeholder=t(lang, "choose_roast"),
-        key="add_roast",
-    )
-    flavors = st.multiselect(
-        t(lang, "add_flavor_notes"),
-        FLAVOR_NOTES,
-        placeholder=t(lang, "choose_flavors"),
-        key="add_flavors",
-    )
-    roaster_notes = st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
-    st.markdown(
-        f'<div class="bn-story-head">📖 {escape(t(lang, "bean_story"))}</div>',
-        unsafe_allow_html=True,
-    )
-    story = st.text_area(
-        t(lang, "bean_story"),
-        key="add_story",
-        height=130,
-        help=t(lang, "bean_story_help"),
-        placeholder=t(lang, "bean_story_ph"),
-        label_visibility="collapsed",
-    )
-    if name.strip():
-        similar = find_similar_beans(name, roaster)
+    if scanned and not editing:
+        pass
+    else:
+        render_add_fields(lang)
+
+    fields = add_form_values()
+    if fields["name"]:
+        similar = find_similar_beans(fields["name"], fields["roaster"])
     else:
         similar = st.session_state.get("pending_similar") or []
     st.session_state.pending_similar = similar
@@ -1302,41 +1493,26 @@ def render_add(lang: str) -> None:
     if tier == "near":
         render_duplicate_warning(lang, similar)
 
+    if scanned and not editing:
+        if st.button(t(lang, "approve_save"), type="primary", use_container_width=True):
+            persist_add_bean(lang, force=tier == "near")
+        if st.button(t(lang, "edit_details"), type="secondary", use_container_width=True):
+            st.session_state.edit_scan_fields = True
+            st.rerun()
+        return
+
     save_new = False
     force = False
+    if scanned:
+        if st.button(t(lang, "approve_save"), type="primary", use_container_width=True):
+            persist_add_bean(lang, force=tier == "near")
+        return
     if tier == "near":
         force = st.button(t(lang, "save_as_new"), use_container_width=True)
     else:
         save_new = st.button(t(lang, "save_bean"), type="primary", use_container_width=True)
-
     if save_new or force:
-        if not name.strip() or not roaster.strip():
-            st.error(t(lang, "required"))
-            return
-        result = insert_bean(
-            name=name,
-            roaster=roaster,
-            origin=origin,
-            process=process or "",
-            roast_level=roast or "",
-            roaster_notes=roaster_notes or ", ".join(flavors),
-            flavor_tags=extract_flavor_tags(flavors) or None,
-            skip_fuzzy=force,
-            image_url=pending_image_url() or (form.get("image_url") or ""),
-            story=story,
-        )
-        if result["status"] in {"fuzzy", "exact"}:
-            st.session_state.pending_similar = result["similar"]
-            st.rerun()
-        if result["status"] == "exists":
-            st.warning(t(lang, "exists"))
-            go_review(result["bean"]["id"], notes=tasting_notes_from_form())
-            st.rerun()
-        if result["status"] == "created":
-            clear_ocr_form()
-            st.toast(t(lang, "created"), icon="☕")
-            go_review(result["bean"]["id"], notes=tasting_notes_from_form())
-            st.rerun()
+        persist_add_bean(lang, force=force)
 
 
 def main() -> None:
