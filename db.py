@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.9.1"
+VERSION = "3.0.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -129,6 +129,7 @@ def init_db() -> None:
                 roast_level TEXT DEFAULT '',
                 roaster_notes TEXT DEFAULT '',
                 flavor_tags TEXT DEFAULT '[]',
+                suitable_for TEXT DEFAULT '[]',
                 story TEXT DEFAULT '',
                 image_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
@@ -198,6 +199,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
     if "story" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
+    if "suitable_for" not in beans:
+        conn.execute("ALTER TABLE beans ADD COLUMN suitable_for TEXT DEFAULT '[]'")
     for column in (
         "recommended_method",
         "grind_size",
@@ -432,6 +435,19 @@ def _apply_meta_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], meta: d
     bean.update(updates)
 
 
+def _apply_suitable_if_empty(
+    conn: sqlite3.Connection, bean: dict[str, Any], tags: list[str]
+) -> None:
+    incoming = [str(item).strip() for item in (tags or []) if str(item).strip()]
+    if not incoming or (bean.get("suitable_for") or []):
+        return
+    conn.execute(
+        "UPDATE beans SET suitable_for = ? WHERE id = ?",
+        (json.dumps(incoming), bean["id"]),
+    )
+    bean["suitable_for"] = incoming
+
+
 def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -441,6 +457,7 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
         data["flavor_tags"] = json.loads(tags)
     except json.JSONDecodeError:
         data["flavor_tags"] = [t.strip() for t in str(tags).split(",") if t.strip()]
+    data["suitable_for"] = _parse_json_list(data.get("suitable_for"))
     data["story"] = (data.get("story") or "").strip()
     brew = {
         "recommended_method": (data.get("recommended_method") or "").strip(),
@@ -465,6 +482,21 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     favorite = data.pop("is_favorite", None)
     data["is_favorite"] = bool(is_favorite if favorite is None else favorite)
     return data
+
+
+def _parse_json_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        pass
+    return [part.strip() for part in text.split(",") if part.strip()]
 
 
 def _normalize(value: str) -> str:
@@ -550,6 +582,7 @@ def insert_bean(
     roast_level: str = "",
     roaster_notes: str = "",
     flavor_tags: list[str] | None = None,
+    suitable_for: list[str] | None = None,
     skip_fuzzy: bool = False,
     image_url: str = "",
     story: str = "",
@@ -598,25 +631,27 @@ def insert_bean(
         if story and not (bean.get("story") or "").strip():
             update_bean_story(bean["id"], story)
             bean["story"] = story
-        if any(brew.values()) or any(meta.values()):
+        if any(brew.values()) or any(meta.values()) or suitable_for:
             with connect() as conn:
                 if any(brew.values()):
                     _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
+                _apply_suitable_if_empty(conn, bean, suitable_for or [])
         return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
 
     tags = json.dumps(flavor_tags or _tags_from_notes(roaster_notes))
+    suitability = json.dumps(suitable_for or [])
     with connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
-                flavor_tags, story, image_url, recommended_method, grind_size,
+                flavor_tags, suitable_for, story, image_url, recommended_method, grind_size,
                 water_temp, brew_ratio, roast_date, altitude, varietal,
                 latitude, longitude, region_full, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -626,6 +661,7 @@ def insert_bean(
                 _normalize(roast_level),
                 (roaster_notes or "").strip(),
                 tags,
+                suitability,
                 story,
                 image_url,
                 brew["recommended_method"],
@@ -662,6 +698,7 @@ def insert_bean(
             if bean:
                 _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
+                _apply_suitable_if_empty(conn, bean, suitable_for or [])
             return {"status": "exists", "bean": bean}
 
         bean = conn.execute(
@@ -679,6 +716,7 @@ def update_bean(
     roast_level: str = "",
     roaster_notes: str = "",
     flavor_tags: list[str] | None = None,
+    suitable_for: list[str] | None = None,
     story: str = "",
     image_url: str = "",
     recommended_method: str = "",
@@ -718,6 +756,9 @@ def update_bean(
         origin,
     )
     tags = flavor_tags if flavor_tags is not None else existing.get("flavor_tags") or []
+    suitability = (
+        suitable_for if suitable_for is not None else existing.get("suitable_for") or []
+    )
     image_url = (image_url or "").strip() or (existing.get("image_url") or "")
     story = (story or "").strip()
     with connect() as conn:
@@ -731,7 +772,7 @@ def update_bean(
             """
             UPDATE beans SET
                 name = ?, roaster = ?, origin = ?, process = ?, roast_level = ?,
-                roaster_notes = ?, flavor_tags = ?, story = ?, image_url = ?,
+                roaster_notes = ?, flavor_tags = ?, suitable_for = ?, story = ?, image_url = ?,
                 recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
                 roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
                 longitude = ?, region_full = ?
@@ -745,6 +786,7 @@ def update_bean(
                 _normalize(roast_level),
                 (roaster_notes or "").strip(),
                 json.dumps(tags),
+                json.dumps(suitability),
                 story,
                 image_url,
                 brew["recommended_method"],
@@ -838,9 +880,9 @@ def list_beans(
         WHERE 1=1
     """
     if search:
-        query += " AND (b.name LIKE ? OR b.roaster LIKE ? OR b.origin LIKE ? OR b.flavor_tags LIKE ?)"
+        query += " AND (b.name LIKE ? OR b.roaster LIKE ? OR b.origin LIKE ? OR b.flavor_tags LIKE ? OR b.suitable_for LIKE ?)"
         like = f"%{search}%"
-        params.extend([like, like, like, like])
+        params.extend([like, like, like, like, like])
     if origin:
         query += " AND b.origin = ?"
         params.append(origin)

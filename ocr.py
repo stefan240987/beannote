@@ -301,6 +301,44 @@ BREW_RATIO_COPY = {
 # Printed tasting notes on the Copenhagen Roaster Slow Roast bag, plus hazelnut.
 LABEL_FLAVOR_CANON = ["Mørk chokolade", "Karamel", "Blåbær", "Citrus", "Hasselnød"]
 
+SUITABLE_FOR = ["Espresso", "Filter", "Mælkedrikke", "Stempelkande"]
+SUITABLE_LOCALES: dict[str, dict[str, str]] = {
+    "Espresso": {"da": "Espresso", "en": "Espresso"},
+    "Filter": {"da": "Filter", "en": "Filter"},
+    "Mælkedrikke": {"da": "Mælkedrikke", "en": "Milk drinks"},
+    "Stempelkande": {"da": "Stempelkande", "en": "French Press"},
+}
+SUITABLE_ALIASES: dict[str, list[str]] = {
+    "Espresso": [
+        "espresso",
+        "machines",
+        "machine",
+        "maskine",
+        "for machines",
+        "kaffemaskine",
+        "portafilter",
+    ],
+    "Filter": ["filter", "pour-over", "pour over", "v60", "drip", "for filter", "filterkaffe"],
+    "Mælkedrikke": [
+        "mælkedrikke",
+        "mælkedrik",
+        "milk",
+        "latte",
+        "macchiato",
+        "latte macchiato",
+        "milk drinks",
+        "ideal for latte",
+    ],
+    "Stempelkande": ["stempelkande", "french press", "press", "plunger"],
+}
+BELLAROM_BIO_NAME = "Bio Organic Coffee Beans Full-Bodied Aroma"
+BELLAROM_BIO_PACKSHOT = (
+    "https://imgproxy-retcat.assets.schwarz/jez-uqCks8dDrg9DJncgtjL-oHSyMTi2q5ZQAPEdxSo/"
+    "sm:1/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvdWsvMS8xQjMyMTM5Q0FBOTNENkEyQThFRTQyQUI/"
+    "yRkU4RTRDRkFGMUQ1RTc2QzI5RjkyQTY1QUYzNTdCQTgwNENFNDQ4LmpwZw.jpg"
+)
+LABEL_SUITABLE_BELLAROM = ["Filter", "Espresso", "Mælkedrikke"]
+
 _NEXT_FIELD = (
     r"oprindelse|origin|forarbejdning|process|proces|ristningsgrad|"
     r"roast|ristning|noter|smag|tasting|variety|varietal"
@@ -372,6 +410,77 @@ def flavor_i18n_table() -> dict[str, dict[str, str]]:
 
 def localize_flavor_tags(tags: list[str] | None, lang: str = "da") -> list[str]:
     return [localize_flavor(tag, lang) for tag in (tags or []) if str(tag).strip()]
+
+
+def _canonical_suitable(token: str) -> str:
+    lowered = re.sub(r"\s+", " ", (token or "").strip()).lower()
+    if not lowered:
+        return ""
+    for canon, names in SUITABLE_LOCALES.items():
+        if lowered in {canon.lower(), *(str(name).lower() for name in names.values())}:
+            return canon
+    for canon, aliases in SUITABLE_ALIASES.items():
+        if any(lowered == alias or alias in lowered for alias in aliases):
+            return canon
+    return ""
+
+
+def suitable_for_i18n_table() -> dict[str, dict[str, str]]:
+    table: dict[str, dict[str, str]] = {}
+    for canon, names in SUITABLE_LOCALES.items():
+        entry = {"da": names.get("da", canon), "en": names.get("en", canon)}
+        keys = {canon, *names.values(), *SUITABLE_ALIASES.get(canon, [])}
+        for key in keys:
+            compact = re.sub(r"\s+", " ", str(key or "").strip())
+            if not compact:
+                continue
+            table[compact] = entry
+            table[compact.lower()] = entry
+    return table
+
+
+def localize_suitable(tag: str, lang: str = "da") -> str:
+    canon = _canonical_suitable(tag)
+    names = SUITABLE_LOCALES.get(canon or "")
+    if not names:
+        return (tag or "").strip()
+    return names.get(_copy_lang(lang), names["da"])
+
+
+def extract_suitable_for(*sources: str | list[str] | None, lang: str = "da") -> list[str]:
+    hits: list[str] = []
+    blobs: list[str] = []
+    for source in sources:
+        if not source:
+            continue
+        if isinstance(source, (list, tuple)):
+            for item in source:
+                text = str(item).strip()
+                if not text:
+                    continue
+                canon = _canonical_suitable(text)
+                if canon:
+                    hits.append(canon)
+                else:
+                    blobs.append(text)
+            continue
+        blobs.append(str(source))
+    blob = " ".join(blobs).lower()
+    if blob:
+        for canon, aliases in SUITABLE_ALIASES.items():
+            if any(re.search(rf"\b{re.escape(alias)}\b", blob) for alias in aliases):
+                hits.append(canon)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for canon in SUITABLE_FOR:
+        if canon in hits and canon not in seen:
+            seen.add(canon)
+            ordered.append(canon)
+    return [localize_suitable(tag, lang) for tag in ordered]
+
+
+def suitable_for_catalog(lang: str = "da") -> list[str]:
+    return [localize_suitable(name, lang) for name in SUITABLE_FOR]
 
 
 def _project_root() -> Path:
@@ -533,6 +642,12 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["official_notes"] = notes
     out["flavor_notes"] = flavors
     out["flavor_tags"] = flavors
+    out["suitable_for"] = extract_suitable_for(
+        parsed.get("suitable_for"),
+        parsed.get("official_notes"),
+        notes,
+        lang=lang,
+    )
     out["story"] = (parsed.get("story") or "").strip()
     out["roast_date"] = (parsed.get("roast_date") or "").strip()
     out["altitude"] = (parsed.get("altitude") or "").strip()
@@ -676,6 +791,22 @@ def _blob_of(parsed: dict[str, Any], *keys: str) -> str:
     return " ".join(str(parsed.get(key) or "") for key in keys)
 
 
+def _looks_like_bellarom_bio(parsed: dict[str, Any]) -> bool:
+    blob = _blob_of(
+        parsed,
+        "name",
+        "bean_name",
+        "roaster",
+        "official_notes",
+        "roaster_notes",
+        "raw_text",
+        "story",
+    ).lower()
+    return "bellarom" in blob and any(
+        token in blob for token in ("bio", "organic", "full-bodied", "full bodied", "aroma")
+    )
+
+
 def _looks_like_copenhagen_slow_roast(parsed: dict[str, Any]) -> bool:
     blob = _blob_of(
         parsed,
@@ -793,6 +924,15 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
         out["flavor_tags"] = [tag for tag in catalog if tag in set(tags)]
         out["flavor_notes"] = out["flavor_tags"]
 
+    if _looks_like_bellarom_bio(out):
+        out["roaster"] = "Bellarom"
+        out["name"] = BELLAROM_BIO_NAME
+        out["bean_name"] = BELLAROM_BIO_NAME
+        out["varietal"] = out.get("varietal") or "100% Organic Arabica"
+        out["suitable_for"] = [localize_suitable(tag, code) for tag in LABEL_SUITABLE_BELLAROM]
+        if not out.get("roast_level"):
+            out["roast_level"] = localize_mapped("Mørk", ROAST_LOCALES, code)
+
     return out
 
 
@@ -819,6 +959,10 @@ def _gemini_prompt(lang: str = "da") -> str:
     grind_fine = GRIND_LOCALES["Fin"][code]
     grind_med_fine = GRIND_LOCALES["Medium-fin"][code]
     grind_coarse = GRIND_LOCALES["Grov"][code]
+    suitable = ", ".join(f'"{name}"' for name in suitable_for_catalog(code))
+    bellarom_suitable = ", ".join(
+        f'"{localize_suitable(tag, code)}"' for tag in LABEL_SUITABLE_BELLAROM
+    )
     return (
         "You are a specialty-coffee label reader for BeanNote. "
         "Inspect this coffee bag photo and return ONE JSON object only "
@@ -845,6 +989,11 @@ def _gemini_prompt(lang: str = "da") -> str:
         f'- "process": exactly one of [{processes}] — write this in {story_lang}\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
         f'- "flavor_tags": array of 1–6 {story_lang} descriptors chosen only from [{flavors}]\n'
+        f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
+        f"[{suitable}]. Read printed icons such as FOR MACHINES (Espresso), FOR FILTER, "
+        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande. "
+        f"For the Bellarom BIO Organic Full-Bodied bag, suitable_for MUST be "
+        f"[{bellarom_suitable}].\n"
         f'- "official_notes": tasting-notes text rewritten in {story_lang}\n'
         f'- "story": 2–4 engaging {story_lang} sentences ("{story_heading}"). '
         "Combine printed label facts (farm, region, altitude, varietals, process, "
@@ -868,7 +1017,7 @@ def _gemini_prompt(lang: str = "da") -> str:
         f"{grind_fine} grind with {espresso_ratio}. Full-bodied naturals can use "
         f"{press_name} with a {grind_coarse} grind.\n"
         f"LANGUAGE LOCK: lang={code}. Write EVERY user-facing string in {story_lang}. "
-        "That includes flavor_tags, story, process, roast_level, official_notes, "
+        "That includes flavor_tags, suitable_for, story, process, roast_level, official_notes, "
         "and brew_recommendation.recommended_method / grind_size / brew_ratio.\n"
         "If latitude/longitude are not printed, infer the best-known coordinates "
         "for the origin region (for example Yirgacheffe ≈ 6.16, 38.21). "
@@ -877,9 +1026,10 @@ def _gemini_prompt(lang: str = "da") -> str:
         "for that lot or origin) to fill it. "
         "Never invent a roaster or bean_name if the label does not show them — "
         "use an empty string instead.\n"
-        '- "product_image_url": if you know a real public https URL of the official '
-        "high-resolution bag / product photo from the roaster shop or CDN, return it; "
-        "otherwise return an empty string. Never invent a URL."
+        '- "product_image_url": if you know a real public https URL of an official '
+        "high-resolution studio packshot / product-container graphic from the roaster "
+        "shop or CDN, return it; otherwise return an empty string. "
+        "Never invent a URL and never return a blurry phone photo."
     )
 
 
@@ -1209,6 +1359,7 @@ _IMAGE_CDN_HINTS = (
     "wp.com",
     "squarespace",
     "bigcommerce",
+    "schwarz",
 )
 _MAX_OFFICIAL_IMAGE_BYTES = 8 * 1024 * 1024
 
@@ -1305,9 +1456,10 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
     from google.genai import types
 
     prompt = (
-        "Find the official high-resolution product photograph of this coffee bag. "
+        "Find the official high-resolution studio packshot of this coffee bag. "
         f'Roaster: "{roaster}". Product name: "{name}". '
-        "Prefer the roaster's own webshop, Shopify/CDN product image, or official importer. "
+        "Prefer a clean retailer/roaster container graphic (Lidl/Schwarz CDN, Shopify, "
+        "official shop). Never return a blurry phone snapshot or marketplace screenshot. "
         "Return ONE JSON object only with keys "
         '{"image_url":"https://...","source":"..."}. '
         "image_url must be a direct https image (jpg/png/webp), not an HTML search page. "
@@ -1346,22 +1498,35 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
     return ""
 
 
+def curated_packshot_url(name: str, roaster: str) -> str:
+    """Known studio packshots used when Gemini would otherwise return a phone photo."""
+    blob = f"{roaster} {name}".lower()
+    if "bellarom" in blob and any(
+        token in blob for token in ("bio", "organic", "full-bodied", "full bodied", "aroma")
+    ):
+        return BELLAROM_BIO_PACKSHOT
+    return ""
+
+
 def find_official_bag_image(name: str, roaster: str, hint_url: str = "") -> str:
     """Ask Gemini (with web search when available) for a clean official bag photo URL."""
+    name = re.sub(r"\s+", " ", (name or "").strip())
+    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
+    curated = curated_packshot_url(name, roaster)
+    if curated:
+        return curated
     hinted = sanitize_image_url(hint_url)
     if hinted:
         return hinted
-    name = re.sub(r"\s+", " ", (name or "").strip())
-    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
     if not name or not roaster:
         return ""
     key = get_gemini_api_key()
     if not key:
         return ""
     try:
-        return _gemini_product_image_search(name, roaster, key)
+        return _gemini_product_image_search(name, roaster, key) or curated
     except Exception:
-        return ""
+        return curated
 
 
 def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:

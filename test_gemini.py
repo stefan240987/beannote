@@ -10,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LABEL_IMAGE = ROOT / "Screenshot 2026-08-23 at 11.07.28.jpg"
+BELLAROM_IMAGE = ROOT / "IMG_9354.jpg"
+BELLAROM_NAME = "Bio Organic Coffee Beans Full-Bodied Aroma"
 
 EXPECTED_CORE = {
     "roaster": "Copenhagen Roaster",
@@ -32,7 +34,7 @@ EXPECTED_BY_LANG = {
         "process": "Natural",
         "flavor_tags": ["Dark chocolate", "Caramel", "Blueberry", "Citrus", "Hazelnut"],
         "story_needles": re.compile(
-            r"\b(coffee|harvest|beans?|flavor|farmers?|region|altitude|cherries)\b",
+            r"\b(coffee|harvest|beans?|flavor|farmers?|region|altitudes?|cherries|blend)\b",
             re.I,
         ),
         "story_forbid": re.compile(r"[æøåÆØÅ]"),
@@ -79,6 +81,8 @@ def test_prompt_locks_name_and_lang() -> None:
     _assert_true("en flavors", "Dark chocolate" in en)
     _assert_true("da brew", "18g kaffe til 36g espresso" in da)
     _assert_true("en brew", "18g coffee to 36g espresso" in en)
+    _assert_true("da suitable_for", "Mælkedrikke" in da)
+    _assert_true("en suitable_for", "Milk drinks" in en)
     print("OK  Gemini prompt locks bean name and localizes flavor/brew copy")
 
 
@@ -127,6 +131,38 @@ def test_refine_and_flavor_i18n() -> None:
         ["Dark chocolate", "Caramel", "Blueberry"],
     )
     print("OK  refine_label_fields + flavor tags localize and rename Crema → Espresso")
+
+
+def test_bellarom_suitability_and_packshot() -> None:
+    from ocr import (
+        BELLAROM_BIO_PACKSHOT,
+        extract_suitable_for,
+        find_official_bag_image,
+        refine_label_fields,
+    )
+
+    raw = {
+        "roaster": "Bellarom",
+        "bean_name": "BIO Organic COFFEE BEANS FULL-BODIED AROMA",
+        "official_notes": "FOR MACHINES FOR FILTER IDEAL FOR LATTE MACCHIATO",
+        "suitable_for": ["Filter", "Espresso", "Mælkedrikke"],
+    }
+    da = refine_label_fields(dict(raw), lang="da")
+    en = refine_label_fields(dict(raw), lang="en")
+    _assert_eq("bellarom roaster", da.get("roaster"), "Bellarom")
+    _assert_eq("bellarom name", da.get("name"), BELLAROM_NAME)
+    _assert_eq("da suitable_for", da.get("suitable_for"), ["Filter", "Espresso", "Mælkedrikke"])
+    _assert_eq("en suitable_for", en.get("suitable_for"), ["Filter", "Espresso", "Milk drinks"])
+    extracted = extract_suitable_for(
+        "FOR MACHINES", "FOR FILTER", "IDEAL FOR LATTE MACCHIATO", lang="da"
+    )
+    _assert_eq("icon suitable_for", extracted, ["Espresso", "Filter", "Mælkedrikke"])
+    url = find_official_bag_image(BELLAROM_NAME, "Bellarom")
+    _assert_eq("studio packshot", url, BELLAROM_BIO_PACKSHOT)
+    _assert_true("https packshot", url.startswith("https://"))
+    _assert_true("not camera snapshot", not url.startswith("images/"))
+    _assert_true("schwarz studio host", "assets.schwarz" in url)
+    print("OK  Bellarom suitability tags and studio packshot fallback")
 
 
 def _profile(parsed: dict) -> dict:
@@ -185,14 +221,50 @@ def test_label_extraction(lang: str) -> None:
     print(f"OK  lang={lang} Slow Roast Espresso extracted with localized tags and story")
 
 
+def test_bellarom_label_extraction() -> None:
+    from ocr import encode_scan_jpeg, find_official_bag_image, get_gemini_api_key, scan_label_gemini
+    from ocr import BELLAROM_BIO_PACKSHOT
+
+    if not BELLAROM_IMAGE.is_file():
+        raise FileNotFoundError(f"Missing label image: {BELLAROM_IMAGE.name}")
+    if not get_gemini_api_key():
+        raise RuntimeError("GEMINI_API_KEY missing — set it in .env")
+
+    jpeg = encode_scan_jpeg(BELLAROM_IMAGE.read_bytes())
+    parsed = scan_label_gemini(jpeg, lang="da")
+    if not parsed:
+        raise RuntimeError("Gemini Vision returned no profile for Bellarom")
+    _assert_eq("bellarom roaster", parsed.get("roaster"), "Bellarom")
+    _assert_eq("bellarom name", parsed.get("name"), BELLAROM_NAME)
+    _assert_eq(
+        "bellarom suitable_for",
+        parsed.get("suitable_for"),
+        ["Filter", "Espresso", "Mælkedrikke"],
+    )
+    url = parsed.get("official_image_url") or find_official_bag_image(
+        parsed.get("name") or "", parsed.get("roaster") or ""
+    )
+    if not url:
+        url = find_official_bag_image(BELLAROM_NAME, "Bellarom")
+    _assert_true("packshot https", str(url).startswith("https://"))
+    _assert_true("packshot not snapshot", not str(url).startswith("images/"))
+    _assert_true(
+        "packshot studio",
+        url == BELLAROM_BIO_PACKSHOT or "assets.schwarz" in str(url) or "cdn" in str(url),
+    )
+    print("OK  IMG_9354 Bellarom extracted with suitability tags and studio image fallback")
+
+
 def main() -> int:
     try:
         test_parse_gemini_json()
         test_prompt_locks_name_and_lang()
         test_dynamic_tag_i18n()
         test_refine_and_flavor_i18n()
+        test_bellarom_suitability_and_packshot()
         test_label_extraction("da")
         test_label_extraction("en")
+        test_bellarom_label_extraction()
     except Exception as exc:
         print(f"FAIL  {exc}", file=sys.stderr)
         return 1

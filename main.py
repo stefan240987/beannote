@@ -48,6 +48,8 @@ from ocr import (
     fetch_official_image_bytes,
     flavor_i18n_table,
     flavor_notes_for,
+    suitable_for_catalog,
+    suitable_for_i18n_table,
     load_local_env,
     processes_for,
     roast_levels_for,
@@ -362,6 +364,8 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
         "roast_levels": roast_levels_for(lang),
         "flavor_notes": flavor_notes_for(lang),
         "flavor_i18n": flavor_i18n_table(),
+        "suitable_for": suitable_for_catalog(lang),
+        "suitable_i18n": suitable_for_i18n_table(),
         "origins": distinct_values("origin"),
         "roasts": distinct_values("roast_level"),
     }
@@ -381,6 +385,7 @@ class BeanIn(BaseModel):
     roast_level: str = ""
     roaster_notes: str = ""
     flavor_tags: list[str] = Field(default_factory=list)
+    suitable_for: list[str] = Field(default_factory=list)
     story: str = ""
     image_url: str = ""
     recommended_method: str = ""
@@ -674,6 +679,7 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             roast_level=payload.roast_level,
             roaster_notes=payload.roaster_notes,
             flavor_tags=payload.flavor_tags,
+            suitable_for=payload.suitable_for,
             skip_fuzzy=payload.skip_fuzzy,
             image_url=payload.image_url,
             story=payload.story,
@@ -712,6 +718,7 @@ def replace_bean(
             roast_level=payload.roast_level,
             roaster_notes=payload.roaster_notes,
             flavor_tags=payload.flavor_tags,
+            suitable_for=payload.suitable_for,
             story=payload.story,
             image_url=payload.image_url,
             recommended_method=payload.recommended_method,

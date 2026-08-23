@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [3.0.0] - 2026-08-23
+
+- After `✅ Godkend & Gem`, BeanNote shows a confirmation modal instead of jumping to Rate: rate now, or reset into Explore.
+- Tapping `☕ Udforsk` always starts fresh — search cleared, cards feed (not World Map), and a smooth scroll to top.
+- Gemini extracts `suitable_for` brew tags. Explore has a scrollable Alle / Espresso / Filter / Mælkedrikke bar, and detail cards show `🎯 Egnet til` badges.
+- `test_gemini.py` covers the Bellarom Bio Organic bag (`IMG_9354.jpg`), including suitability tags and the studio packshot image fallback.
+
 ## [2.9.1] - 2026-08-23
 
 - Flavor tags now translate instantly when switching Dansk / English (`Mørk chokolade` ↔ `Dark chocolate`, `Karamel` ↔ `Caramel`, `Blåbær` ↔ `Blueberry`), including beans already stored in SQLite.

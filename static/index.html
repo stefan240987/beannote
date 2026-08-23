@@ -91,6 +91,8 @@
       busy: false,
       beanFilter: "all",
       exploreMode: "cards",
+      suitabilityFilter: "",
+      savedPrompt: null,
       rate: {
         brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
         notes: "", grind_setting: "", coffee_grams: "", water_grams: "", brew_time: "",
@@ -113,6 +115,32 @@
     const normalizeLang = (lang) => (String(lang || "da").toLowerCase() === "en" ? "en" : "da");
     const activeLang = () => normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
     const isAdmin = () => !!state.user?.is_admin;
+
+    function localizeSuitable(tag) {
+      const raw = String(tag || "").trim();
+      if (!raw) return raw;
+      const table = state.config?.suitable_i18n || {};
+      const hit = table[raw] || table[raw.toLowerCase()];
+      return (hit && (hit[activeLang()] || hit.da)) || raw;
+    }
+
+    function matchesSuitable(tags, filter) {
+      if (!filter) return true;
+      const aliases = {
+        espresso: ["espresso", "machines", "maskine"],
+        filter: ["filter", "pour-over", "pour over", "v60", "drip"],
+        milk: ["mælkedrikke", "milk", "latte", "macchiato"],
+      };
+      const needles = aliases[filter] || [filter];
+      return (tags || []).some((tag) => {
+        const low = String(tag || "").toLowerCase();
+        return needles.some((needle) => low.includes(needle));
+      });
+    }
+
+    function visibleBeans() {
+      return (state.beans || []).filter((bean) => matchesSuitable(bean.suitable_for, state.suitabilityFilter));
+    }
 
     function localizeTag(tag) {
       const raw = String(tag || "").trim();
@@ -477,10 +505,31 @@
       </header>`;
     }
 
+    function suitabilityBar() {
+      const chips = [
+        ["", t("filter_suitable_all")],
+        ["espresso", t("filter_suitable_espresso")],
+        ["filter", t("filter_suitable_filter")],
+        ["milk", t("filter_suitable_milk")],
+      ];
+      return `<div class="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        ${chips.map(([id, label]) => {
+          const on = state.suitabilityFilter === id;
+          return `<button type="button" data-suitable="${id}" class="shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${on ? "bg-espresso text-cream" : "bg-white text-espresso ring-1 ring-latte"}">${esc(label)}</button>`;
+        }).join("")}
+      </div>`;
+    }
+
+    function suitabilityLine(tags) {
+      const labels = (tags || []).map(localizeSuitable).filter(Boolean);
+      if (!labels.length) return "";
+      return `<p class="text-sm font-medium text-espresso">${esc(t("suitable_for"))}: ${esc(labels.join(" · "))}</p>`;
+    }
+
     function exploreView() {
       const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
       const mapMode = state.exploreMode === "map";
-      const cards = state.beans.map((bean) => {
+      const cards = visibleBeans().map((bean) => {
         const photo = photoImg(bean.image_url, bean.snapshot_url, "h-[180px] w-full rounded-t-2xl object-cover");
         return `<article class="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
           ${heartBtn(bean, "absolute right-2 top-2 z-10")}
@@ -498,6 +547,7 @@
         </article>`;
       }).join("");
       const toolbar = `<div class="grid shrink-0 gap-2">
+        ${suitabilityBar()}
         ${segment("filter", [["all", t("filter_all_beans"), "filter_all_beans"], ["favorites", t("filter_favorites"), "filter_favorites"]], state.beanFilter)}
         ${segment("view", [["cards", t("view_cards"), "view_cards"], ["map", t("view_map"), "view_map"]], state.exploreMode)}
       </div>`;
@@ -555,6 +605,7 @@
               <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
               <p class="text-sm text-muted">${esc(info)}</p>
               <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+              ${suitabilityLine(bean.suitable_for)}
               ${metaBadges(bean)}
               ${storyBlock(bean.story)}
             </section>
@@ -612,6 +663,7 @@
             <h2 class="font-display text-2xl font-bold">${esc(scan.name || t("add_name"))}</h2>
             <p class="text-sm text-muted">${esc(scan.roaster)} · ${esc(scan.origin)} · ${esc(scan.process)}</p>
             <div class="flex flex-wrap gap-1">${pills(scan.flavor_tags)}</div>
+            ${suitabilityLine(scan.suitable_for)}
             ${metaBadges(scan)}
             ${originMapBox(scan)}
             ${journalBits(scan)}
@@ -857,7 +909,7 @@
         worldMap = L.map(world, { scrollWheelZoom: false, worldCopyJump: true }).setView([20, 0], 2);
         addOsm(worldMap);
         const points = [];
-        state.beans.forEach((bean) => {
+        visibleBeans().forEach((bean) => {
           const lat = Number(bean.latitude);
           const lng = Number(bean.longitude);
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -889,6 +941,36 @@
       }
     }
 
+    function savedPromptModal() {
+      const prompt = state.savedPrompt;
+      if (!prompt) return "";
+      return `<div id="saved-prompt" class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+        <article class="mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0">
+          <h2 class="font-display text-2xl font-bold">${esc(t("saved_prompt_title"))}</h2>
+          <p class="mt-2 text-sm text-muted">${esc(t("saved_prompt_sub"))}</p>
+          <div class="mt-5 grid gap-2">
+            <button id="saved-rate" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${esc(t("saved_prompt_rate"))}</button>
+            <button id="saved-explore" class="min-h-12 w-full rounded-xl bg-white font-semibold text-espresso ring-1 ring-latte">${esc(t("saved_prompt_explore"))}</button>
+          </div>
+        </article>
+      </div>`;
+    }
+
+    async function resetExplore() {
+      state.tab = "explore";
+      state.search = "";
+      state.exploreMode = "cards";
+      state.suitabilityFilter = "";
+      state.beanFilter = "all";
+      state.selectedId = null;
+      state.profile = null;
+      state.editBean = false;
+      state.savedPrompt = null;
+      await loadBeans();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     function closeBean() {
       if (!state.profile && state.selectedId == null) return;
       state.selectedId = null;
@@ -906,6 +988,7 @@
         roast_level: source.roast_level,
         roaster_notes: source.roaster_notes,
         flavor_tags: source.flavor_tags || [],
+        suitable_for: source.suitable_for || [],
         story: source.story,
         image_url: source.image_url,
         recommended_method: source.recommended_method || source.brew_recommendation?.recommended_method || "",
@@ -935,7 +1018,7 @@
         return;
       }
       document.documentElement.lang = state.config.lang || "da";
-      document.body.classList.toggle("modal-open", !!(state.user && state.tab === "explore" && state.profile?.bean));
+      document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt)));
       if (!state.user) {
         root.innerHTML = authView();
         bindAuth();
@@ -943,7 +1026,7 @@
       }
       const body = { explore: exploreView, scan: scanView, rate: rateView, profile: profileView }[state.tab]();
       const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
+      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
       drawRadar();
       drawMaps();
@@ -1042,10 +1125,27 @@
 
     function bindApp() {
       document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+        if (btn.dataset.tab === "explore") {
+          await resetExplore();
+          return;
+        }
         state.tab = btn.dataset.tab;
-        if (state.tab === "explore" || state.tab === "rate") await loadBeans();
+        if (state.tab === "rate") await loadBeans();
         render();
       }));
+      document.querySelectorAll("[data-suitable]").forEach((btn) => btn.addEventListener("click", () => {
+        state.suitabilityFilter = btn.dataset.suitable || "";
+        render();
+      }));
+      $("#saved-rate")?.addEventListener("click", async () => {
+        const id = Number(state.savedPrompt?.id);
+        state.savedPrompt = null;
+        if (id) await openBean(id, "rate");
+        else render();
+      });
+      $("#saved-explore")?.addEventListener("click", async () => {
+        await resetExplore();
+      });
       $("#search")?.addEventListener("change", async (event) => {
         state.search = event.target.value;
         await loadBeans();
@@ -1130,11 +1230,15 @@
             return;
           }
           const bean = result.bean;
-          toast(t(result.status === "created" ? "created" : "exists"));
           state.scan = null;
           await loadBeans();
-          if (bean?.id) await openBean(bean.id, "rate");
-          else render();
+          if (bean?.id) {
+            state.savedPrompt = { id: bean.id, name: bean.name };
+            state.tab = "scan";
+            render();
+            return;
+          }
+          render();
         } catch (err) {
           toast(t(err.detail || "required"));
         }
