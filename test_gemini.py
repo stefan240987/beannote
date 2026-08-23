@@ -82,6 +82,8 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("prompt asks for roaster_body", '"roaster_body"' in prompt)
         _assert_true("prompt asks for roaster_roast_level", '"roaster_roast_level"' in prompt)
         _assert_true("prompt asks for image_candidates", '"image_candidates"' in prompt)
+        _assert_true("prompt is optical-strict", "STRICT OPTICAL READING" in prompt)
+        _assert_true("prompt counts printed bean-meters", "bean-meters" in prompt)
         _assert_true("prompt includes da key", '"da"' in prompt)
         _assert_true("prompt includes en key", '"en"' in prompt)
         _assert_true("da flavors in map prompt", "Mørk chokolade" in prompt)
@@ -90,7 +92,7 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("en brew in map prompt", "18g coffee to 36g espresso" in prompt)
     _assert_true("da suitable_for", "Mælkedrikke" in da)
     _assert_true("en suitable_for", "Milk drinks" in en)
-    print("OK  Gemini prompt is brand-agnostic and asks for JSON language maps")
+    print("OK  Gemini prompt is brand-agnostic, optical-strict, and asks for JSON language maps")
 
 
 def test_get_localized_fallback() -> None:
@@ -442,6 +444,134 @@ def test_intensity_scores_and_support() -> None:
     print("OK  intensity scores, recipe i18n, and local support fallbacks")
 
 
+def test_grounded_official_product_merge() -> None:
+    from db import get_localized
+    from ocr import (
+        _extract_grounding_page_urls,
+        _grounded_product_prompt,
+        ensure_scan_schema,
+        merge_optical_and_official,
+        normalize_scan_fields,
+        official_product_search_query,
+    )
+
+    query = official_product_search_query("La Cabra", "Kenya AA")
+    _assert_eq(
+        "official search query",
+        query,
+        '"La Cabra" "Kenya AA" official site / product details',
+    )
+    grounded = _grounded_product_prompt("Kenya AA", "La Cabra", "da")
+    _assert_true("grounded prompt includes query", query in grounded)
+    _assert_true("grounded prompt asks flavor map", '"flavor_tags"' in grounded)
+    _assert_true("grounded prompt asks brew map", '"brew_recommendation"' in grounded)
+    _assert_true("grounded prompt asks story map", '"story"' in grounded)
+    _assert_true("grounded prompt asks product page", '"product_page_url"' in grounded)
+    _assert_true("grounded prompt is brand-agnostic", "Bellarom" not in grounded)
+
+    optical = {
+        "roaster": "La Cabra",
+        "bean_name": "Kenya AA",
+        "roaster_acidity": 5,
+        "roaster_body": None,
+        "origin": "Kenya",
+        "suitable_for": ["Filter"],
+        "flavor_tags": {"da": ["Citrus"], "en": ["Citrus"]},
+        "story": {},
+    }
+    official = {
+        "roaster_acidity": 3,
+        "roaster_body": 2,
+        "roaster_roast_level": 1,
+        "origin": "Kenya",
+        "region_full": "Nyeri, Kenya",
+        "altitude": "1700 - 1800 M.",
+        "process": "Washed",
+        "flavor_tags": {"da": ["Solbær", "Jasmin"], "en": ["Blackcurrant", "Jasmine"]},
+        "story": {"da": "Høstet i Nyeri.", "en": "Harvested in Nyeri."},
+        "official_notes": "Blackcurrant and jasmine.",
+        "brew_recommendation": {
+            "da": {
+                "recommended_method": "V60 / Pour-over",
+                "grind_size": "Medium-fin",
+                "water_temp": "93°C",
+                "brew_ratio": "1:16 (60g kaffe pr. 1 liter vand)",
+            },
+            "en": {
+                "recommended_method": "V60 / Pour-over",
+                "grind_size": "Medium-fine",
+                "water_temp": "93°C",
+                "brew_ratio": "1:16 (60g coffee per 1 liter water)",
+            },
+        },
+        "product_page_url": "https://lacabra.dk/kenya-aa",
+        "roaster_url": "https://lacabra.dk",
+    }
+    merged = merge_optical_and_official(optical, official)
+    _assert_eq("printed acidity meter wins", merged.get("roaster_acidity"), 5)
+    _assert_eq("web fills missing body", merged.get("roaster_body"), 2)
+    _assert_eq("web fills roast meter", merged.get("roaster_roast_level"), 1)
+    _assert_eq("web fills region", merged.get("region_full"), "Nyeri, Kenya")
+    _assert_eq("web fills altitude", merged.get("altitude"), "1700 - 1800 M.")
+    _assert_eq("web fills process", merged.get("process"), "Washed")
+    _assert_eq("printed brew icons win", merged.get("suitable_for"), ["Filter"])
+    _assert_eq("web story kept", merged.get("story", {}).get("en"), "Harvested in Nyeri.")
+    _assert_eq("enrichment flag", merged.get("scan_enrichment"), "optical+web")
+    tags = merged.get("flavor_tags") or {}
+    da_tags = tags.get("da") or []
+    _assert_true("official blackcurrant", "Solbær" in da_tags)
+    _assert_true("official jasmine", "Jasmin" in da_tags)
+    _assert_true("optical citrus kept", "Citrus" in da_tags)
+
+    parsed = normalize_scan_fields(merged, lang="da")
+    _assert_eq("normalized acidity", parsed.get("roaster_acidity"), 5)
+    _assert_eq("normalized body", parsed.get("roaster_body"), 2)
+    _assert_eq("normalized roast", parsed.get("roaster_roast_level"), 1)
+    _assert_eq("da process", parsed.get("process"), "Vasket")
+    _assert_true("schema story map", isinstance(parsed.get("story"), dict) and parsed["story"].get("da"))
+    _assert_true("schema flavor map", isinstance(parsed.get("flavor_tags"), dict) and parsed["flavor_tags"].get("da"))
+    _assert_true("schema brew map", isinstance(parsed.get("brew_recommendation"), dict) and parsed["brew_recommendation"].get("da"))
+    _assert_eq("product page sanitized", parsed.get("product_page_url"), "https://lacabra.dk/kenya-aa")
+    schema = ensure_scan_schema(parsed, lang="da")
+    for key in (
+        "roaster",
+        "name",
+        "origin",
+        "region_full",
+        "altitude",
+        "process",
+        "flavor_tags",
+        "story",
+        "brew_recommendation",
+        "roaster_acidity",
+        "roaster_body",
+        "roaster_roast_level",
+        "suitable_for",
+    ):
+        _assert_true(f"schema has {key}", key in schema)
+    _assert_true("localized official notes", bool(get_localized(schema.get("story"), "en")))
+
+    from types import SimpleNamespace
+
+    pages = _extract_grounding_page_urls(
+        SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    grounding_metadata=SimpleNamespace(
+                        grounding_chunks=[
+                            SimpleNamespace(web=SimpleNamespace(uri="https://lacabra.dk/products/kenya-aa"))
+                        ]
+                    )
+                )
+            ]
+        )
+    )
+    _assert_eq("grounding page url", pages, ["https://lacabra.dk/products/kenya-aa"])
+    optical_only = merge_optical_and_official({"roaster": "La Cabra", "bean_name": "Kenya AA"}, {})
+    _assert_eq("empty web stays optical", optical_only.get("scan_enrichment"), "optical")
+    print("OK  optical meters win; official page fills story, flavors, brew, and origin metadata")
+
+
 def test_grounded_image_candidates() -> None:
     from types import SimpleNamespace
 
@@ -489,6 +619,7 @@ def main() -> int:
         test_refine_and_flavor_i18n()
         test_bellarom_suitability_and_packshot()
         test_intensity_scores_and_support()
+        test_grounded_official_product_merge()
         test_grounded_image_candidates()
         test_label_extraction("da")
         test_label_extraction("en")

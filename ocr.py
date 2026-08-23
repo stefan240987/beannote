@@ -1,4 +1,4 @@
-"""Coffee bag scanner: Gemini Flash Vision with local Tesseract fallback."""
+"""Coffee bag scanner: optical Gemini Vision, grounded official-page lookup, Tesseract fallback."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from db import (
+    clamp_intensity_score,
     classify_matches,
     find_similar_beans,
     get_localized,
@@ -787,7 +788,7 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     flat = get_localized(brew, lang)
     if isinstance(flat, dict):
         out.update(flat)
-    return out
+    return ensure_scan_schema(out, lang=lang)
 
 
 def _as_story_map(value: Any, lang: str) -> dict[str, str]:
@@ -1061,8 +1062,11 @@ def _gemini_prompt(lang: str = "da") -> str:
     en_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("en"))
     return (
         "You are a specialty-coffee label reader for BeanNote. "
-        "Inspect this coffee bag photo and return ONE JSON object only "
-        "(no markdown) with these keys:\n"
+        "STEP 1 — STRICT OPTICAL READING. "
+        "Inspect this coffee bag photo and extract only values that are visibly "
+        "printed or shown as icons. Do not browse the web and do not guess from "
+        "typical-origin knowledge. Return ONE JSON object only (no markdown) "
+        "with these keys:\n"
         '- "roaster": roaster / brand name\n'
         '- "bean_name": the exact primary product name rendered on the bag. '
         "Read the largest title together with any product-line text printed "
@@ -1070,67 +1074,62 @@ def _gemini_prompt(lang: str = "da") -> str:
         "Copy the product identity as a title — do not pull words from the "
         "tasting paragraph. Cup-quality words in a blurb "
         "('flot crema', 'beautiful crema', 'crema') are not the bean name.\n"
-        f'- "origin": countries in {story_lang}. Join two origins with " & " '
-        f'(e.g. "{origin_example}")\n'
-        '- "region_full": full origin place name, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
-        '- "latitude": float WGS84 latitude of the farm or origin region\n'
-        '- "longitude": float WGS84 longitude of the farm or origin region\n'
+        f'- "origin": countries in {story_lang} only if printed. Join two origins with " & " '
+        f'(e.g. "{origin_example}"). Empty string if not printed.\n'
+        '- "region_full": printed origin place name, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
+        '- "latitude": float WGS84 latitude only if printed, else null\n'
+        '- "longitude": float WGS84 longitude only if printed, else null\n'
         '- "roast_date": roast date string if printed, else ""\n'
         '- "altitude": copy the printed MASL string exactly, e.g. "800 - 2100 M."\n'
         '- "varietal": copy printed varieties in ASCII '
         '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
-        f'- "process": exactly one of [{processes}] — write this in {story_lang}\n'
-        f'- "roast_level": exactly one of [{roasts}]\n'
-        '- "roaster_acidity": integer 1–5 for the roaster\'s target acidity / brightness '
-        "(1 = muted/low, 5 = sparkling citrus or berry). Infer from origin, "
-        "process, roast, and printed tasting notes when the bag has no numbers. "
+        f'- "process": exactly one of [{processes}] if printed — write this in {story_lang}. '
+        "Empty string if the bag does not name a process.\n"
+        f'- "roast_level": exactly one of [{roasts}] if printed, else ""\n'
+        '- "roaster_acidity": integer 1–5 counted from printed bean-meters / dots / bars '
+        "for acidity / brightness (filled icons out of 5). "
+        "null if the bag does not print this meter. "
         'Alias: "acidity_score".\n'
-        '- "roaster_body": integer 1–5 for the roaster\'s target body / mouthfeel '
-        "(1 = tea-like, 5 = syrupy or creamy). Infer from roast and process. "
+        '- "roaster_body": integer 1–5 counted from printed bean-meters / dots / bars '
+        "for body / mouthfeel. null if not printed. "
         'Alias: "body_score".\n'
-        '- "roaster_roast_level": integer 1–5 for the roaster\'s target roast depth '
-        "(1 = Light / Lys, 3 = Medium, 5 = Dark / Mørk). "
-        "Map Medium-Light to 2 and Medium-Dark to 4. "
+        '- "roaster_roast_level": integer 1–5 counted from printed bean-meters / dots / bars '
+        "for roast depth (1 = Light / Lys, 3 = Medium, 5 = Dark / Mørk). "
+        "Map a printed Medium-Light meter to 2 and Medium-Dark to 4. "
+        "null if not printed. "
         'Alias: "roast_level_score".\n'
         f'- "flavor_tags": language map keyed by {lang_keys}. Same flavors, same order, '
-        "translated per key. Schema:\n"
+        "translated per key, taken only from printed tasting notes. Schema:\n"
         f"{flavor_lines}\n"
         f'  Example: {{"da": ["Mørk chokolade"], "en": ["Dark chocolate"]}}. '
-        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}].\n"
+        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}]. "
+        "Use empty arrays when no flavor words are printed.\n"
         f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
-        f"[{suitable}]. Read printed icons such as FOR MACHINES (Espresso), FOR FILTER, "
-        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande.\n"
-        f'- "official_notes": tasting-notes text rewritten in {story_lang}\n'
-        f'- "story": language map keyed by {lang_keys}. Each value is 2–4 engaging sentences '
-        '("Kaffens Historie" / "The Coffee\'s Story"). Combine printed label facts '
-        "(farm, region, altitude, varietals, process, flavor notes) with specialty-coffee "
-        "knowledge. Do not invent a specific farm or producer name unless the label shows it. "
-        'Example: {"da": "Høstet i 1.900 meters højde i Yirgacheffe-regionen af småbønder, '
-        'der selektivt håndplukker de mest modne bær...", '
-        '"en": "Harvested at 1,900 meters in the Yirgacheffe region by smallholders '
-        'who selectively hand-pick the ripest cherries..."}. '
+        f"[{suitable}]. Read printed brew icons such as FOR MACHINES (Espresso), FOR FILTER, "
+        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande. "
+        "Empty array if no brew icons are printed.\n"
+        f'- "official_notes": tasting-notes text copied from the bag and rewritten in {story_lang}. '
+        "Empty string if none are printed.\n"
+        f'- "story": language map keyed by {lang_keys}. Copy a printed producer/farm story only. '
+        "Otherwise use empty strings — a later official-page lookup writes the coffee story. "
+        'Example: {"da": "Høstet i 1.900 meters højde i Yirgacheffe-regionen...", '
+        '"en": "Harvested at 1,900 meters in the Yirgacheffe region..."}. '
         "Each language key must stay in that language only — no mixed languages inside a key.\n"
         f'- "brew_recommendation": language map keyed by {lang_keys} with localized text fields:\n'
         f'{chr(10).join(brew_lines)}\n'
-        "Infer brew_recommendation from roast, origin, process and typical "
-        "specialty practice when the bag does not print brew advice. "
-        f"Light washed African lots usually suit V60 / Pour-over, {grind_med_fine}, "
-        f"92-94°C, {pour_ratio}. Darker or espresso-oriented roasts suit Espresso and a "
-        f"{grind_fine} grind with {espresso_ratio}. Full-bodied naturals can use "
-        f"{press_name} with a {grind_coarse} grind.\n"
+        "Copy printed brew advice only. If the bag does not print a recipe, "
+        "use empty strings for recommended_method, grind_size, water_temp, and brew_ratio. "
+        f"Do not infer V60 / {grind_med_fine} / {grind_fine} / {press_name} / {grind_coarse} "
+        f"or ratios such as {espresso_ratio} / {pour_ratio} during this optical pass.\n"
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
         "brew_recommendation. Adding another ISO key later (de, fr, es) uses the same shape. "
         f"Scalar fields (origin, process, roast_level, suitable_for, official_notes) stay in "
         f"{story_lang} because lang={code}.\n"
-        "If latitude/longitude are not printed, infer the best-known coordinates "
-        "for the origin region (for example Yirgacheffe ≈ 6.16, 38.21). "
-        "Read printed text first. If a field is missing on the label, "
-        "use your coffee knowledge (origin, process, typical roast and flavors "
-        "for that lot or origin) to fill it. "
-        "Never invent a roaster or bean_name if the label does not show them — "
-        "use an empty string instead.\n"
+        "Read printed text and icons only. If a field is missing on the label, "
+        "use an empty string, empty array, empty map, or null. "
+        "Never invent a roaster, bean_name, farm, URL, bean-meter score, or story.\n"
         '- "roaster_url": official https homepage of the roaster if printed on the bag '
-        "(www.example.com or https://…) or clearly known. Homepage only — never a product "
+        "(www.example.com or https://…). Homepage only — never a product "
         "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
         '- "image_candidates": array of up to 3 real public https URLs of official '
         "high-resolution studio packshots / product-container graphics from the roaster "
@@ -1139,6 +1138,266 @@ def _gemini_prompt(lang: str = "da") -> str:
         '- "product_image_urls": same list as image_candidates (legacy alias).\n'
         '- "product_image_url": first image_candidates URL, or "" if unknown.'
     )
+
+
+def official_product_search_query(roaster: str, name: str) -> str:
+    """Google query used by Gemini Search Grounding for the official product page."""
+    brand = re.sub(r"\s+", " ", (roaster or "").strip())
+    product = re.sub(r"\s+", " ", (name or "").strip())
+    if brand and product:
+        return f'"{brand}" "{product}" official site / product details'
+    if brand:
+        return f'"{brand}" official site / product details'
+    if product:
+        return f'"{product}" official site / product details'
+    return ""
+
+
+def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
+    code = _copy_lang(lang)
+    story_lang = STORY_LANG.get(code, "Danish")
+    lang_keys = ", ".join(f'"{item}"' for item in SUPPORTED_LANGUAGES)
+    query = official_product_search_query(roaster, name)
+    processes = ", ".join(f'"{name}"' for name in processes_for(code))
+    roasts = ", ".join(f'"{name}"' for name in roast_levels_for(code))
+    da_flavors = ", ".join(f'"{item}"' for item in flavor_notes_for("da"))
+    en_flavors = ", ".join(f'"{item}"' for item in flavor_notes_for("en"))
+    flavor_lines = "\n".join(
+        f'    "{item}": array of 1–6 descriptors chosen only from ['
+        + ", ".join(f'"{tag}"' for tag in flavor_notes_for(item))
+        + "]"
+        for item in SUPPORTED_LANGUAGES
+    )
+    brew_lines = []
+    for item in SUPPORTED_LANGUAGES:
+        methods = ", ".join(f'"{METHOD_LOCALES[name].get(item, name)}"' for name in BREW_METHODS_REC)
+        grinds = ", ".join(f'"{GRIND_LOCALES[name].get(item, name)}"' for name in GRIND_SIZES)
+        espresso_ratio = BREW_RATIO_COPY["espresso"].get(item, BREW_RATIO_COPY["espresso"]["en"])
+        pour_ratio = BREW_RATIO_COPY["pour_over"].get(item, BREW_RATIO_COPY["pour_over"]["en"])
+        brew_lines.append(
+            f'    "{item}": {{"recommended_method": one of [{methods}], '
+            f'"grind_size": one of [{grinds}], "water_temp": e.g. "92-94°C", '
+            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}"}}'
+        )
+    return (
+        "You are BeanNote's official product-page researcher. "
+        "STEP 2 — OFFICIAL WEB LOOKUP. "
+        "Enable Google Search grounding and query Google for the official product page:\n"
+        f"{query}\n"
+        "Prefer the roaster's own shop or official site over marketplaces "
+        "(Amazon, eBay, comparison sites) unless that marketplace is the brand's "
+        "only official product page. "
+        "STEP 3 — DATA VERIFICATION & ENRICHMENT. "
+        "Extract metadata published on that official page. "
+        "Return ONE JSON object only (no markdown) with these keys:\n"
+        '- "roaster": official brand / roaster name\n'
+        '- "bean_name": official product name\n'
+        f'- "origin": origin country or countries in {story_lang}, joined with " & "\n'
+        '- "region_full": region / farm / washing station, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
+        '- "latitude": float WGS84 if the official page publishes coordinates, else null\n'
+        '- "longitude": float WGS84 if published, else null\n'
+        '- "altitude": official MASL string, e.g. "1700 - 1900 M."\n'
+        '- "varietal": official varieties in ASCII\n'
+        f'- "process": exactly one of [{processes}] — Washed/Vasket, Natural, Anaerobic/Anaerob, or Honey\n'
+        f'- "roast_level": exactly one of [{roasts}]\n'
+        '- "roaster_acidity": official 1–5 acidity / brightness if the page publishes a meter. '
+        'Alias: "acidity_score". null if unpublished.\n'
+        '- "roaster_body": official 1–5 body / mouthfeel if published. '
+        'Alias: "body_score". null if unpublished.\n'
+        '- "roaster_roast_level": official 1–5 roast depth if published. '
+        'Alias: "roast_level_score". null if unpublished.\n'
+        f'- "flavor_tags": language map keyed by {lang_keys}. Full official tasting-notes map:\n'
+        f"{flavor_lines}\n"
+        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}].\n"
+        f'- "official_notes": official tasting blurb rewritten in {story_lang}\n'
+        f'- "story": language map keyed by {lang_keys}. 2–4 sentences from the official '
+        "coffee story / producer notes. Each language key stays in that language only.\n"
+        f'- "brew_recommendation": language map keyed by {lang_keys} for the official brew recipe:\n'
+        f"{chr(10).join(brew_lines)}\n"
+        f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
+        "brew_recommendation.\n"
+        '- "product_page_url": official https product page you used. Never invent a URL.\n'
+        '- "roaster_url": official https homepage. Homepage only — never a product image.\n'
+        '- "image_candidates": up to 3 real official studio packshot https URLs from that page.\n'
+        "If you cannot find a real official page, return empty strings, empty maps, and null scores. "
+        "Never invent a farm, score, URL, or flavor that the official page does not publish."
+    )
+
+
+def _blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, dict):
+        return not any(not _blank(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return not any(not _blank(item) for item in value)
+    return False
+
+
+def _prefer_optical(optical: Any, official: Any) -> Any:
+    return official if _blank(optical) else optical
+
+
+def _prefer_official(optical: Any, official: Any) -> Any:
+    return official if not _blank(official) else optical
+
+
+def _printed_score(*values: Any) -> int | None:
+    for value in values:
+        score = clamp_intensity_score(value)
+        if score is not None:
+            return score
+    return None
+
+
+def _merge_flavor_sources(optical: dict[str, Any], official: dict[str, Any]) -> dict[str, list[str]]:
+    """Official tasting notes first, then any extra pills printed on the bag."""
+    web = extract_flavor_canons(
+        official.get("flavor_tags"),
+        official.get("flavor_notes"),
+        official.get("official_notes"),
+        official.get("roaster_notes"),
+    )
+    bag = extract_flavor_canons(
+        optical.get("flavor_tags"),
+        optical.get("flavor_notes"),
+        optical.get("official_notes"),
+        optical.get("roaster_notes"),
+    )
+    ordered: list[str] = []
+    for tag in (*web, *bag):
+        if tag not in ordered:
+            ordered.append(tag)
+    if not ordered:
+        return {}
+    return {code: [localize_flavor(tag, code) for tag in ordered] for code in SUPPORTED_LANGUAGES}
+
+
+SCAN_SCALAR_DEFAULTS = {
+    "roaster": "",
+    "bean_name": "",
+    "name": "",
+    "origin": "",
+    "region_full": "",
+    "roast_date": "",
+    "altitude": "",
+    "varietal": "",
+    "process": "",
+    "roast_level": "",
+    "official_notes": "",
+    "roaster_notes": "",
+    "roaster_url": "",
+    "product_page_url": "",
+    "product_image_url": "",
+    "official_image_url": "",
+    "scan_source": "",
+    "scan_enrichment": "optical",
+}
+
+SCAN_LIST_KEYS = ("flavor_notes", "suitable_for", "image_candidates", "product_image_urls")
+SCAN_MAP_KEYS = ("flavor_tags", "story", "brew_recommendation")
+SCAN_SCORE_KEYS = (
+    "roaster_acidity",
+    "roaster_body",
+    "roaster_roast_level",
+    "acidity_score",
+    "body_score",
+    "roast_level_score",
+)
+
+
+def ensure_scan_schema(parsed: dict[str, Any], lang: str = "da") -> dict[str, Any]:
+    """Guarantee every scan field exists in a DB-ready shape before save."""
+    out = dict(parsed or {})
+    out["lang"] = _copy_lang(lang)
+    for key, default in SCAN_SCALAR_DEFAULTS.items():
+        if key not in out or out[key] is None:
+            out[key] = default
+        elif isinstance(default, str):
+            out[key] = str(out[key] or "").strip() if not isinstance(out[key], str) else out[key]
+    for key in SCAN_LIST_KEYS:
+        value = out.get(key)
+        if not isinstance(value, list):
+            out[key] = [value] if isinstance(value, str) and value.strip() else []
+    for key in SCAN_MAP_KEYS:
+        if not isinstance(out.get(key), dict):
+            out[key] = {}
+    if not out.get("name"):
+        out["name"] = out.get("bean_name") or ""
+    if not out.get("bean_name"):
+        out["bean_name"] = out.get("name") or ""
+    if not out.get("roaster_notes"):
+        out["roaster_notes"] = out.get("official_notes") or ""
+    if not out.get("official_notes"):
+        out["official_notes"] = out.get("roaster_notes") or ""
+    for key in SCAN_SCORE_KEYS:
+        out[key] = clamp_intensity_score(out.get(key))
+    return out
+
+
+def merge_optical_and_official(
+    optical: dict[str, Any] | None,
+    official: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Optical printed meters and icons win; official page fills story and missing metadata."""
+    bag = dict(optical or {})
+    web = dict(official or {})
+    if _blank(web):
+        bag.setdefault("scan_enrichment", "optical")
+        return bag
+
+    out = dict(bag)
+    out["roaster"] = _prefer_optical(bag.get("roaster"), web.get("roaster"))
+    out["bean_name"] = _prefer_optical(
+        bag.get("bean_name") or bag.get("name"),
+        web.get("bean_name") or web.get("name"),
+    )
+    out["name"] = out["bean_name"]
+
+    out["roaster_acidity"] = _printed_score(
+        bag.get("roaster_acidity"), bag.get("acidity_score")
+    ) or _printed_score(web.get("roaster_acidity"), web.get("acidity_score"))
+    out["roaster_body"] = _printed_score(
+        bag.get("roaster_body"), bag.get("body_score")
+    ) or _printed_score(web.get("roaster_body"), web.get("body_score"))
+    out["roaster_roast_level"] = _printed_score(
+        bag.get("roaster_roast_level"), bag.get("roast_level_score")
+    ) or _printed_score(web.get("roaster_roast_level"), web.get("roast_level_score"))
+    out["acidity_score"] = out["roaster_acidity"]
+    out["body_score"] = out["roaster_body"]
+    out["roast_level_score"] = out["roaster_roast_level"]
+
+    out["suitable_for"] = _prefer_optical(bag.get("suitable_for"), web.get("suitable_for"))
+    out["roast_date"] = _prefer_optical(bag.get("roast_date"), web.get("roast_date"))
+    for key in ("origin", "process", "roast_level", "altitude", "varietal", "region_full"):
+        out[key] = _prefer_optical(bag.get(key), web.get(key))
+
+    out["story"] = _prefer_official(bag.get("story"), web.get("story"))
+    notes = _prefer_official(
+        bag.get("official_notes") or bag.get("roaster_notes"),
+        web.get("official_notes") or web.get("roaster_notes"),
+    )
+    out["official_notes"] = notes
+    out["roaster_notes"] = notes
+    flavors = _merge_flavor_sources(bag, web)
+    if flavors:
+        out["flavor_tags"] = flavors
+    out["brew_recommendation"] = _prefer_official(
+        bag.get("brew_recommendation"),
+        web.get("brew_recommendation"),
+    )
+    out["roaster_url"] = _prefer_optical(
+        sanitize_roaster_url(bag.get("roaster_url")),
+        sanitize_roaster_url(web.get("roaster_url") or web.get("product_page_url")),
+    )
+    out["product_page_url"] = sanitize_roaster_url(
+        web.get("product_page_url") or bag.get("product_page_url")
+    )
+    out = _with_grounded_images(out)
+    out["scan_enrichment"] = "optical+web"
+    return out
 
 
 def _response_text(response: Any) -> str:
@@ -1329,6 +1588,26 @@ def _extract_grounding_urls(response: Any) -> list[str]:
     return collect_image_urls(raw)
 
 
+def _extract_grounding_page_urls(response: Any) -> list[str]:
+    """Official product / roaster pages from Search Grounding (not image CDNs)."""
+    if response is None:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for chunk in _iter_grounding_chunks(response):
+        web = getattr(chunk, "web", None)
+        if web is None and isinstance(chunk, dict):
+            web = chunk.get("web") or chunk.get("retrieved_context")
+        uri = getattr(web, "uri", None) if web is not None else None
+        if uri is None and isinstance(web, dict):
+            uri = web.get("uri") or web.get("url")
+        clean = sanitize_roaster_url(uri)
+        if clean and clean not in seen:
+            seen.add(clean)
+            found.append(clean)
+    return found
+
+
 def _with_grounded_images(data: dict[str, Any], response: Any | None = None) -> dict[str, Any]:
     out = dict(data or {})
     urls = collect_image_urls(
@@ -1459,8 +1738,115 @@ def verify_gemini_connection(model_name: str = GEMINI_STABLE_MODEL) -> dict[str,
     return {"ok": False, "model": model_name, "error": last_error}
 
 
+def _attach_grounded_pages(data: dict[str, Any], response: Any | None) -> dict[str, Any]:
+    out = _with_grounded_images(data if isinstance(data, dict) else {}, response)
+    pages = _extract_grounding_page_urls(response)
+    if pages and not sanitize_roaster_url(out.get("product_page_url")):
+        out["product_page_url"] = pages[0]
+    if pages and not sanitize_roaster_url(out.get("roaster_url")):
+        out["roaster_url"] = pages[0]
+    return out
+
+
+def _gemini_official_product_lookup(
+    name: str,
+    roaster: str,
+    key: str,
+    lang: str = "da",
+) -> dict[str, Any]:
+    """Google-grounded official product page → BeanNote metadata JSON."""
+    from google import genai
+    from google.genai import types
+
+    prompt = _grounded_product_prompt(name, roaster, lang)
+    client = genai.Client(api_key=key, http_options={"timeout": 35_000})
+    tools = _google_search_tools(types)
+    if not tools:
+        return {}
+    for model_name in GEMINI_MODELS:
+        config = types.GenerateContentConfig(temperature=0.1, tools=tools)
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            )
+            try:
+                data = _parse_gemini_json(_response_text(response))
+            except (ValueError, json.JSONDecodeError):
+                data = {}
+            return _attach_grounded_pages(data if isinstance(data, dict) else {}, response)
+        except Exception as exc:
+            if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                continue
+            if _tools_unsupported(exc):
+                return {}
+            if _transient_gemini_error(exc):
+                continue
+            break
+    return {}
+
+
+def _lookup_official_with_generativeai(
+    name: str,
+    roaster: str,
+    key: str,
+    lang: str = "da",
+) -> dict[str, Any]:
+    import google.generativeai as genai
+
+    prompt = _grounded_product_prompt(name, roaster, lang)
+    genai.configure(api_key=key)
+    tools = _legacy_google_search_tools()
+    for model_name in GEMINI_MODELS:
+        try:
+            kwargs: dict[str, Any] = {}
+            if tools:
+                kwargs["tools"] = tools
+            model = genai.GenerativeModel(model_name, **kwargs)
+            response = model.generate_content(prompt, generation_config={"temperature": 0.1})
+            try:
+                data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
+            except (ValueError, json.JSONDecodeError):
+                data = {}
+            return _attach_grounded_pages(data if isinstance(data, dict) else {}, response)
+        except Exception as exc:
+            if tools and _tools_unsupported(exc):
+                tools = None
+                continue
+            if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                continue
+            break
+    return {}
+
+
+def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") -> dict[str, Any]:
+    """Step 2–3: grounded official-page lookup, then merge onto optical fields."""
+    bag = dict(optical or {})
+    name = (bag.get("name") or bag.get("bean_name") or "").strip()
+    roaster = (bag.get("roaster") or "").strip()
+    if not name and not roaster:
+        bag.setdefault("scan_enrichment", "optical")
+        return bag
+    key = get_gemini_api_key()
+    if not key:
+        bag.setdefault("scan_enrichment", "optical")
+        return bag
+    official: dict[str, Any] = {}
+    try:
+        official = _gemini_official_product_lookup(name, roaster, key, lang)
+    except Exception:
+        official = {}
+    if _blank(official):
+        try:
+            official = _lookup_official_with_generativeai(name, roaster, key, lang)
+        except Exception:
+            official = {}
+    return merge_optical_and_official(bag, official)
+
+
 def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | None:
-    """Call Gemini Flash Vision and return a normalized BeanNote field dict."""
+    """Optical Vision pass, then grounded official-page enrichment, then normalize."""
     key = get_gemini_api_key()
     if not key:
         return None
@@ -1480,10 +1866,12 @@ def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | 
         if errors:
             raise RuntimeError("; ".join(errors))
         return None
+    data = enrich_scan_with_official_page(data, lang=lang)
     parsed = normalize_scan_fields(data, lang=lang)
     parsed["raw_text"] = json.dumps(data, ensure_ascii=False, indent=2)
     parsed["scan_source"] = "gemini"
     parsed["lang"] = _copy_lang(lang)
+    parsed.setdefault("scan_enrichment", data.get("scan_enrichment") or "optical")
     return parsed
 
 

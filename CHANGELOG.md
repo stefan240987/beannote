@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.4.0] - 2026-08-23
+
+- snapshot: v5.4.0 - integrated web-grounded official product page lookup into Gemini OCR
+- Gemini Vision now does a strict optical pass (printed brand, bean name, 1–5 bean-meters, brew icons), then Google Search grounding looks up `"{roaster}" "{bean_name}" official site / product details`.
+- Official page data fills `story`, `flavor_tags`, `brew_recommendation`, origin / region / altitude / process when the bag is incomplete. Printed meter counts always win over web scores.
+
 ## [5.3.0] - 2026-08-23
 
 - snapshot: v5.3.0 - separated official roaster profile from personal extraction log
