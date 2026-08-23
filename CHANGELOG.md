@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.0] - 2026-08-23
+
+- Flavor radar labels (Syre, Sødme, Krop, Eftersmag) stay fully visible: inset polar domain, generous plot margins, overflow-visible chart containers, and a taller 400px plot. The chart stays frozen (`staticPlot`) on desktop and touch.
+- Detail dialog uses Streamlit `width="large"` plus fluid CSS — near full-width on phones, a centered ~720px card on desktop — with bag photos scaled via `object-fit: contain` so they never stretch or shove content off-screen.
+- Flavor badges remain official 1–2 word descriptors only; sentence fragments and punctuated OCR leftovers never render as pills.
+- Mobile-first spacing: 14–16px safe-area gutters, 44–48px touch targets, and calmer tab/card padding.
+
 ## [1.0.8] - 2026-08-23
 
 - Plotly flavor radar is fully static (`staticPlot`, no mode bar) so it cannot be dragged, zoomed, or pinched on desktop or touch.

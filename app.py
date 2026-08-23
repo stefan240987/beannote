@@ -45,6 +45,11 @@ PROCESSES = ["Washed", "Natural", "Honey", "Anaerobic"]
 RADAR_CHART_CONFIG = {
     "staticPlot": True,
     "displayModeBar": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "displaylogo": False,
+    "editable": False,
+    "responsive": True,
 }
 BAG_PLACEHOLDER = """
 <div class="bn-card-fallback" aria-hidden="true">
@@ -85,14 +90,26 @@ def inject_css() -> None:
             --chip: #f4ebd9;
             --amber: #d97706;
         }
+        html {
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
         html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
             background: #faf6f0;
             color: var(--espresso);
             font-family: "Outfit", "Avenir Next", sans-serif;
+            overflow-x: hidden;
+            overscroll-behavior-x: none;
         }
         [data-testid="stHeader"] { background: transparent; }
         #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden; }
-        .block-container { padding-top: 0.75rem; padding-bottom: 3.5rem; max-width: 1100px; }
+        .block-container {
+            padding-top: 0.75rem;
+            padding-bottom: max(3.5rem, env(safe-area-inset-bottom));
+            padding-left: max(1rem, env(safe-area-inset-left));
+            padding-right: max(1rem, env(safe-area-inset-right));
+            max-width: 1100px;
+        }
         h1, h2, h3, .bn-brand {
             font-family: "Fraunces", Georgia, serif;
             color: var(--espresso);
@@ -220,24 +237,54 @@ def inject_css() -> None:
             border: 0 !important;
             box-shadow: none !important;
         }
+        [data-testid="stDialog"] [role="dialog"],
+        [data-testid="stModal"] [role="dialog"],
+        div[role="dialog"] {
+            width: min(720px, 92vw) !important;
+            max-width: min(720px, 92vw) !important;
+            padding: 1.15rem 1.35rem 1.25rem !important;
+            border-radius: 16px !important;
+        }
+        .bn-modal-hero {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 0.75rem;
+            max-height: min(280px, 34vh);
+            background: transparent;
+        }
+        .bn-modal-img,
         [data-testid="stDialog"] img,
         [data-testid="stModal"] img,
         div[role="dialog"] img {
-            max-height: 250px !important;
+            max-height: min(280px, 34vh) !important;
             width: auto !important;
             max-width: 100% !important;
+            height: auto !important;
             object-fit: contain !important;
             display: block;
             margin: 0 auto;
             border-radius: 12px;
         }
+        [data-testid="stImage"] img {
+            object-fit: contain !important;
+            max-width: 100% !important;
+            height: auto !important;
+        }
+        [data-testid="stPlotlyChart"],
+        [data-testid="stPlotlyChart"] > div,
         .js-plotly-plot,
         .plot-container,
         .svg-container {
             max-width: 100% !important;
-            overflow: hidden !important;
+            overflow: visible !important;
             touch-action: none !important;
             user-select: none !important;
+            -webkit-user-select: none !important;
+        }
+        [data-testid="stPlotlyChart"] {
+            padding: 0.15rem 0.35rem 0.35rem;
+            min-height: 400px;
         }
         .bn-scan-slot { margin: 0 0 0.7rem; }
         .bn-roaster {
@@ -264,15 +311,24 @@ def inject_css() -> None:
             letter-spacing: 0;
             font-family: "Outfit", sans-serif;
         }
+        .bn-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.28rem;
+            margin: 0.15rem 0 0.25rem;
+        }
         .bn-badge {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             background-color: #f4ebd9;
             color: #3c2a21;
             border-radius: 16px;
-            padding: 4px 8px;
-            margin: 0.12rem 0.22rem 0.12rem 0;
-            font-size: 11px;
+            padding: 5px 10px;
+            font-size: 12px;
             font-weight: 500;
+            line-height: 1.2;
+            white-space: nowrap;
+            max-width: 100%;
         }
         .bn-badge.match { background: #b85c38; color: #faf6f0; }
         .bn-warn {
@@ -298,10 +354,11 @@ def inject_css() -> None:
             border: 0;
             border-radius: 8px;
             font-weight: 600;
-            min-height: 40px;
+            min-height: 44px;
             padding: 0.45rem 1rem;
             box-shadow: none !important;
             outline: none !important;
+            touch-action: manipulation;
         }
         .stButton button:hover, .stDownloadButton button:hover,
         button[data-testid="stBaseButton-primary"]:hover {
@@ -408,8 +465,9 @@ def inject_css() -> None:
         }
         @media (max-width: 768px) {
             .block-container {
-                padding-left: 10px;
-                padding-right: 10px;
+                padding-left: max(14px, env(safe-area-inset-left));
+                padding-right: max(14px, env(safe-area-inset-right));
+                padding-bottom: max(3.75rem, env(safe-area-inset-bottom));
                 max-width: 100%;
                 overflow-x: hidden;
             }
@@ -418,28 +476,39 @@ def inject_css() -> None:
                 max-width: 100%;
             }
             [data-testid="stHorizontalBlock"] {
-                gap: 0.5rem;
+                gap: 0.55rem;
                 flex-wrap: wrap;
             }
-            .bn-hero { padding: 0.75rem 0.9rem; border-radius: 12px; }
+            .bn-hero { padding: 0.8rem 0.95rem; border-radius: 12px; }
             .bn-hero h1 { font-size: 1.35rem; }
             .bn-card { width: 100%; }
+            .bn-card-fallback,
+            .bn-bag-img,
+            .bn-card.has-photo img.bn-bag-img { height: 180px !important; }
             div[data-testid="stDialog"] > div,
             div[data-testid="stDialog"] div[role="dialog"],
             [data-testid="stModal"] > div,
+            [data-testid="stDialog"] [role="dialog"],
             div[role="dialog"] {
-                width: 95vw !important;
-                max-width: 95vw !important;
-                padding: 12px !important;
+                width: min(96vw, 100%) !important;
+                max-width: 96vw !important;
+                padding: 16px 14px 20px !important;
+                margin: 8px !important;
+                border-radius: 14px !important;
             }
-            [data-testid="stDialog"] .js-plotly-plot,
-            [data-testid="stDialog"] .plot-container {
-                max-height: 250px;
+            .bn-modal-hero,
+            .bn-modal-img,
+            [data-testid="stDialog"] img {
+                max-height: min(220px, 28vh) !important;
+            }
+            [data-testid="stPlotlyChart"] {
+                min-height: 360px;
+                padding: 0.35rem 0.15rem 0.5rem;
             }
             .stButton button, .stDownloadButton button,
             button[data-testid="stBaseButton-primary"] { width: 100%; min-height: 48px; }
-            button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 40px; }
-            [data-testid="stSlider"] { padding-bottom: 0.85rem; }
+            button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 44px; }
+            [data-testid="stSlider"] { padding-bottom: 0.95rem; }
             [data-testid="stColumn"],
             [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
             div[data-testid="stButtonGroup"] {
@@ -528,44 +597,92 @@ def flavor_radar(
                 fillcolor="rgba(184, 92, 56, 0.28)",
             )
         )
+    fig.update_traces(hoverinfo="skip", hovertemplate=None, cliponaxis=False)
     fig.update_layout(
         polar=dict(
             bgcolor="#fffdf9",
-            radialaxis=dict(visible=True, range=[0, 5], tickfont=dict(size=9)),
-            angularaxis=dict(tickfont=dict(size=11, color="#3c2a21")),
+            domain=dict(x=[0.16, 0.84], y=[0.18, 0.86]),
+            radialaxis=dict(
+                visible=True,
+                range=[0, 5],
+                tickvals=[1, 2, 3, 4, 5],
+                tickfont=dict(size=10, color="#8c7a6b"),
+                gridcolor="#eae3d9",
+                linecolor="#e8d8c8",
+            ),
+            angularaxis=dict(
+                rotation=90,
+                direction="clockwise",
+                tickfont=dict(size=13, color="#3c2a21", family="Outfit, sans-serif"),
+                gridcolor="#eae3d9",
+                linecolor="#e8d8c8",
+                ticks="",
+                layer="above traces",
+            ),
         ),
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.06, font=dict(size=11)),
-        margin=dict(l=8, r=8, t=4, b=22),
-        height=260,
+        font=dict(family="Outfit, sans-serif", color="#3c2a21"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0.5,
+            xanchor="center",
+            font=dict(size=12),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        margin=dict(l=56, r=56, t=48, b=48, pad=8),
+        height=400,
         autosize=True,
         dragmode=False,
         hovermode=False,
+        uirevision="beannote-radar",
+        showlegend=True,
     )
     return fig
 
 
-def note_chips(tags: list[str], overlap: list[str]) -> str:
-    pills = extract_flavor_tags(tags)
-    html = []
+def flavor_badges_html(
+    tags: list[str] | str | None,
+    overlap: list[str] | None = None,
+    extra: list[str] | str | None = None,
+    limit: int = 8,
+) -> str:
+    """Official 1–2 word flavor pills only. Never emits sentence fragments."""
+    pills = extract_flavor_tags(tags, extra)[:limit]
+    if not pills:
+        return ""
+    matched = set(overlap or [])
+    chips = []
     for tag in pills:
-        klass = "bn-badge match" if tag in overlap else "bn-badge"
-        html.append(f'<span class="{klass}">{escape(tag)}</span>')
-    return "".join(html)
+        klass = "bn-badge match" if tag in matched else "bn-badge"
+        chips.append(f'<span class="{klass}">{escape(tag)}</span>')
+    return f'<div class="bn-badges">{"".join(chips)}</div>'
 
 
-def bag_image_markup(photo: Path) -> str:
+def note_chips(tags: list[str], overlap: list[str]) -> str:
+    return flavor_badges_html(tags, overlap=overlap)
+
+
+def bag_image_markup(photo: Path, kind: str = "card") -> str:
     raw = photo.read_bytes()
     suffix = photo.suffix.lower()
     mime = "image/png" if suffix == ".png" else "image/jpeg"
     encoded = base64.b64encode(raw).decode("ascii")
+    if kind == "modal":
+        return (
+            f'<div class="bn-modal-hero">'
+            f'<img class="bn-modal-img" src="data:{mime};base64,{encoded}" alt="" />'
+            f"</div>"
+        )
     return f'<img class="bn-bag-img" src="data:{mime};base64,{encoded}" alt="" />'
 
 
 def bean_card_markup(bean: dict, lang: str) -> str:
     avg = bean.get("avg_rating") or 0
-    tags = extract_flavor_tags(bean.get("flavor_tags"), bean.get("roaster_notes"))
-    tags_html = "".join(f'<span class="bn-badge">{escape(tag)}</span>' for tag in tags[:4])
+    tags_html = flavor_badges_html(
+        bean.get("flavor_tags"), extra=bean.get("roaster_notes"), limit=4
+    )
     photo = resolve_image_path(bean.get("image_url") or "")
     media = bag_image_markup(photo) if photo else BAG_PLACEHOLDER
     return (
@@ -795,7 +912,7 @@ def sidebar(lang: str) -> dict:
     return {"lang": picked, "origin": origin, "roast": roast, "min_rating": min_rating}
 
 
-@st.dialog("BeanNote")
+@st.dialog("BeanNote", width="large")
 def bean_dialog(bean_id: int, lang: str) -> None:
     profile = get_flavor_profile(bean_id)
     bean = profile["bean"]
@@ -803,7 +920,7 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     user = profile["user"]
     photo = resolve_image_path(bean.get("image_url") or "")
     if photo:
-        st.image(str(photo), width="stretch")
+        st.markdown(bag_image_markup(photo, kind="modal"), unsafe_allow_html=True)
     st.markdown(f'<div class="bn-roaster">{escape(str(bean["roaster"]))}</div>', unsafe_allow_html=True)
     st.markdown(f'<h3 class="bn-name">{escape(str(bean["name"]))}</h3>', unsafe_allow_html=True)
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
@@ -813,9 +930,9 @@ def bean_dialog(bean_id: int, lang: str) -> None:
         f'<div class="bn-meta">{community["rating_count"]} {t(lang, "reviews")}</div>',
         unsafe_allow_html=True,
     )
-    tags = extract_flavor_tags(bean.get("flavor_tags"), bean.get("roaster_notes"))
-    if tags:
-        st.markdown("".join(f'<span class="bn-badge">{escape(tag)}</span>' for tag in tags), unsafe_allow_html=True)
+    tags_html = flavor_badges_html(bean.get("flavor_tags"), extra=bean.get("roaster_notes"))
+    if tags_html:
+        st.markdown(tags_html, unsafe_allow_html=True)
     labels = [t(lang, k) for k in ("acidity", "sweetness", "body", "aftertaste")]
     st.plotly_chart(
         flavor_radar(user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
@@ -846,7 +963,7 @@ def compare_notes(
     right.markdown(f"**{t(lang, 'user_notes')}**")
     right.markdown(note_chips(match["user"], match["overlap"]) or "—", unsafe_allow_html=True)
     if match["overlap"]:
-        pills = "".join(f'<span class="bn-badge match">{escape(tag)}</span>' for tag in match["overlap"])
+        pills = flavor_badges_html(match["overlap"], overlap=match["overlap"])
         st.markdown(
             f'<div class="bn-match-box"><div class="bn-meta">{escape(t(lang, "matching_notes"))}</div>{pills}</div>',
             unsafe_allow_html=True,

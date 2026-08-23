@@ -491,6 +491,8 @@ def is_short_flavor(tag: str) -> bool:
     compact = re.sub(r"\s+", " ", (tag or "").strip())
     if not compact or len(compact) > MAX_FLAVOR_CHARS:
         return False
+    if re.search(r"[.!?;:/]", compact):
+        return False
     return 1 <= len(compact.split()) <= MAX_FLAVOR_WORDS
 
 
@@ -551,6 +553,9 @@ def extract_flavor_tags(*sources: str | list[str] | None) -> list[str]:
                 text = str(item).strip()
                 if not text:
                     continue
+                if not is_short_flavor(text) and len(text.split()) > MAX_FLAVOR_WORDS:
+                    blobs.append(text)
+                    continue
                 canon = _canonical_flavor(text)
                 if canon:
                     hits.append(canon)
@@ -562,7 +567,7 @@ def extract_flavor_tags(*sources: str | list[str] | None) -> list[str]:
     blob = " ".join(blobs)
     if blob:
         hits.extend(_match_flavors(blob))
-    return _dedupe_flavors(hits)
+    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag) and tag in FLAVOR_NOTES]
 
 
 def compare_flavor_notes(

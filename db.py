@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.0.8"
+VERSION = "1.1.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -580,7 +580,14 @@ def export_ratings(fmt: str = "csv") -> tuple[str, str, bytes]:
 
 def _is_short_tag(tag: str) -> bool:
     compact = " ".join((tag or "").split())
-    return bool(compact) and 1 <= len(compact.split()) <= 2 and len(compact) <= 28
+    if not compact or len(compact) > 24:
+        return False
+    if any(mark in compact for mark in ".!?;:/"):
+        return False
+    lowered = compact.lower()
+    if any(token in lowered.split() for token in {"and", "og", "with", "med", "the", "en", "et"}):
+        return False
+    return 1 <= len(compact.split()) <= 2
 
 
 def _tags_from_notes(notes: str) -> list[str]:
