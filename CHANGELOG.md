@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.3.0] - 2026-08-23
+
+- Gemini 1.5 Flash Vision scans coffee-bag photos and returns structured fields (roaster, bean name, origin, process, roast level, flavor tags, official notes), then pre-fills the add-bean form including matching `st.multiselect` tags and `st.selectbox` values.
+- Local `.env` is created automatically; `GEMINI_API_KEY` is read from the environment or Streamlit secrets. `.env` and `.streamlit/secrets.toml` stay gitignored.
+- Unraid / Docker: `docker-compose.yml` passes `GEMINI_API_KEY=${GEMINI_API_KEY}` so the key can be set in the Docker GUI. Tesseract remains the offline fallback.
+
 ## [1.1.0] - 2026-08-23
 
 - Flavor radar labels (Syre, Sødme, Krop, Eftersmag) stay fully visible: inset polar domain, generous plot margins, overflow-visible chart containers, and a taller 400px plot. The chart stays frozen (`staticPlot`) on desktop and touch.

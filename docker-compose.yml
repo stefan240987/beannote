@@ -11,6 +11,7 @@ services:
       PUID: "99"
       PGID: "100"
       TZ: Europe/Copenhagen
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     volumes:
       - /mnt/user/appdata/beannote/data:/app/data
     labels:

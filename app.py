@@ -26,8 +26,20 @@ from db import (
     save_bean_image,
     update_bean_image,
 )
-from ocr import FLAVOR_NOTES, compare_flavor_notes, extract_flavor_tags
+from ocr import (
+    FLAVOR_NOTES,
+    PROCESSES,
+    ROAST_LEVELS,
+    compare_flavor_notes,
+    ensure_local_env,
+    extract_flavor_tags,
+    load_local_env,
+    normalize_scan_fields,
+)
 from translations import LANGS, t
+
+ensure_local_env()
+load_local_env()
 
 BREW_METHODS = [
     "V60",
@@ -40,8 +52,9 @@ BREW_METHODS = [
     "Moka",
     "Cold Brew",
 ]
-ROAST_LEVELS = ["Lys", "Medium", "Medium-Dark", "Mørk", "Light", "Dark"]
-PROCESSES = ["Washed", "Natural", "Honey", "Anaerobic"]
+ROAST_FILTERS = list(ROAST_LEVELS) + [
+    value for value in ("Light", "Medium-Dark", "Dark") if value not in ROAST_LEVELS
+]
 RADAR_CHART_CONFIG = {
     "staticPlot": True,
     "displayModeBar": False,
@@ -746,16 +759,24 @@ def apply_pending_ui() -> None:
 
 
 def apply_ocr_form(parsed: dict) -> None:
-    """Write OCR fields into widget keys so inputs update on the next rerun."""
+    """Write Gemini/OCR fields into widget keys so inputs update on the next rerun."""
+    parsed = normalize_scan_fields(parsed)
+    flavors = [tag for tag in (parsed.get("flavor_notes") or []) if tag in FLAVOR_NOTES]
+    process = parsed.get("process") or ""
+    roast = parsed.get("roast_level") or ""
+    if process not in PROCESSES:
+        process = ""
+    if roast not in ROAST_LEVELS:
+        roast = ""
     st.session_state.ocr_form = parsed
     st.session_state.pending_similar = parsed.get("similar") or []
     st.session_state.add_name = parsed.get("name") or ""
     st.session_state.add_roaster = parsed.get("roaster") or ""
     st.session_state.add_origin = parsed.get("origin") or ""
-    st.session_state.add_process = parsed.get("process") or ""
-    st.session_state.add_roast = parsed.get("roast_level") or ""
-    st.session_state.add_notes = parsed.get("roaster_notes") or ""
-    st.session_state.add_flavors = parsed.get("flavor_notes") or []
+    st.session_state.add_process = process
+    st.session_state.add_roast = roast
+    st.session_state.add_notes = parsed.get("official_notes") or parsed.get("roaster_notes") or ""
+    st.session_state.add_flavors = flavors
     if parsed.get("image_url"):
         st.session_state.pending_image_url = parsed["image_url"]
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
@@ -774,14 +795,14 @@ def pending_image_url() -> str:
 
 
 def process_scan_image(image_file) -> None:
-    """OCR + fuzzy match a snapped/uploaded bag, then route to Rate or Add."""
-    from ocr import configure_tesseract, scan_label
+    """Gemini/OCR + fuzzy match a snapped/uploaded bag, then route to Rate or Add."""
+    from ocr import scan_available, scan_label
 
     image_bytes = image_file.getvalue()
     filename = getattr(image_file, "name", "") or "scan.jpg"
     image_url = save_bean_image(image_bytes, filename)
 
-    if not configure_tesseract():
+    if not scan_available():
         st.session_state.pending_image_url = image_url
         st.session_state.ocr_flash = "ocr_missing"
         st.session_state.pending_tab = "add"
@@ -897,7 +918,7 @@ def sidebar(lang: str) -> dict:
         )
         roast = st.selectbox(
             t(lang, "roast"),
-            [""] + ROAST_LEVELS,
+            [""] + ROAST_FILTERS,
             format_func=lambda v: t(lang, "all") if v == "" else v,
         )
         min_rating = st.slider(t(lang, "min_rating"), 0.0, 5.0, 0.0, 0.5)
@@ -1069,7 +1090,7 @@ def render_review(lang: str) -> None:
 
 
 def render_add(lang: str) -> None:
-    from ocr import configure_tesseract, scan_label
+    from ocr import scan_available, scan_label
 
     uploaded = st.file_uploader(
         t(lang, "upload"),
@@ -1077,7 +1098,7 @@ def render_add(lang: str) -> None:
         help=t(lang, "upload_help"),
     )
     if uploaded and st.button(t(lang, "scan"), type="primary", use_container_width=True):
-        if not configure_tesseract():
+        if not scan_available():
             st.error(t(lang, "ocr_missing"))
         else:
             try:

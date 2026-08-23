@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85

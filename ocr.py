@@ -1,8 +1,9 @@
-"""Local Tesseract OCR + regex parser for Danish coffee bag labels."""
+"""Coffee bag scanner: Gemini 1.5 Flash Vision with local Tesseract fallback."""
 
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import shutil
@@ -34,19 +35,27 @@ ORIGIN_CANON = {
     "india": "India",
 }
 
+PROCESSES = ["Vasket", "Natural", "Anaerob", "Honey"]
+ROAST_LEVELS = ["Lys", "Medium-Lys", "Medium", "Medium-Mørk", "Mørk"]
+
 PROCESS_MAP = {
-    "Washed": ["washed", "vasket", "wet process", "fully washed"],
+    "Vasket": ["washed", "vasket", "wet process", "fully washed"],
     "Natural": ["natural", "naturlig", "dry process", "tørret"],
     "Honey": ["honey", "honning", "pulped natural"],
-    "Anaerobic": ["anaerobic", "anaerob", "carbonic"],
+    "Anaerob": ["anaerobic", "anaerob", "carbonic"],
 }
 
-# Stored / selectbox values: Lys, Medium, Mørk (plus Medium-Dark).
+# Longer roast aliases first so "medium-dark" wins over "medium" / "dark".
 ROAST_MAP = {
+    "Medium-Lys": ["medium-light", "medium lys", "medium-lys", "mellemlys", "light-medium"],
+    "Medium-Mørk": ["medium-dark", "medium-mørk", "medium mørk", "mellemmørk", "medium dark"],
     "Medium": ["mellemristet", "mellemristede", "medium"],
-    "Lys": ["lysristet", "lysristede", "light"],
-    "Mørk": ["mørkristet", "mørkriste", "mørkpistet", "morkristet", "dark"],
+    "Lys": ["lysristet", "lysristede", "light", "lys"],
+    "Mørk": ["mørkristet", "mørkriste", "mørkpistet", "morkristet", "dark", "mørk"],
 }
+
+GEMINI_MODELS = ("gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest")
+ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
 
 KNOWN_ROASTERS = [
     "Copenhagen Roaster",
@@ -165,6 +174,233 @@ _NEXT_FIELD = (
 )
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def load_local_env() -> None:
+    """Load root .env into os.environ without overwriting existing vars."""
+    env_path = _project_root() / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def ensure_local_env() -> Path:
+    """Create an empty local .env if missing. Never writes a real API key."""
+    env_path = _project_root() / ".env"
+    if not env_path.exists():
+        env_path.write_text(ENV_PLACEHOLDER, encoding="utf-8")
+    return env_path
+
+
+def get_gemini_api_key() -> str:
+    load_local_env()
+    key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        import streamlit as st
+
+        secrets = getattr(st, "secrets", None)
+        if secrets is not None:
+            return str(secrets.get("GEMINI_API_KEY") or "").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def gemini_available() -> bool:
+    return bool(get_gemini_api_key())
+
+
+def scan_available() -> bool:
+    return gemini_available() or bool(configure_tesseract())
+
+
+def _canon_choice(value: str, mapping: dict[str, list[str]], options: list[str]) -> str:
+    raw = re.sub(r"\s+", " ", (value or "").strip())
+    if not raw:
+        return ""
+    for option in options:
+        if option.lower() == raw.lower():
+            return option
+    hit = _map_aliases(raw, mapping)
+    return hit if hit in options else ""
+
+
+def _canon_process(value: str) -> str:
+    return _canon_choice(value, PROCESS_MAP, PROCESSES)
+
+
+def _canon_roast(value: str) -> str:
+    return _canon_choice(value, ROAST_MAP, ROAST_LEVELS)
+
+
+def normalize_scan_fields(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Map Gemini/Tesseract fields onto the add-bean widget keys."""
+    notes = (parsed.get("official_notes") or parsed.get("roaster_notes") or "").strip()
+    name = (parsed.get("bean_name") or parsed.get("name") or "").strip()
+    flavors = extract_flavor_tags(
+        parsed.get("flavor_tags"),
+        parsed.get("flavor_notes"),
+        notes,
+    )
+    out = dict(parsed)
+    out["name"] = name
+    out["roaster"] = (parsed.get("roaster") or "").strip()
+    out["origin"] = (parsed.get("origin") or "").strip()
+    out["process"] = _canon_process(parsed.get("process") or "")
+    out["roast_level"] = _canon_roast(parsed.get("roast_level") or "")
+    out["roaster_notes"] = notes
+    out["official_notes"] = notes
+    out["flavor_notes"] = flavors
+    out["flavor_tags"] = flavors
+    return out
+
+
+def _gemini_prompt() -> str:
+    flavors = ", ".join(f'"{name}"' for name in FLAVOR_NOTES)
+    processes = ", ".join(f'"{name}"' for name in PROCESSES)
+    roasts = ", ".join(f'"{name}"' for name in ROAST_LEVELS)
+    return (
+        "You are a specialty-coffee label reader for BeanNote. "
+        "Inspect this coffee bag photo and return ONE JSON object only "
+        "(no markdown) with these keys:\n"
+        '- "roaster": roaster / brand name\n'
+        '- "bean_name": coffee / lot name (not the roaster)\n'
+        '- "origin": country and optional region, e.g. "Ethiopia, Yirgacheffe"\n'
+        f'- "process": exactly one of [{processes}]\n'
+        f'- "roast_level": exactly one of [{roasts}]\n'
+        f'- "flavor_tags": array of 1–6 descriptors chosen only from [{flavors}]\n'
+        '- "official_notes": raw tasting-notes text from the label\n'
+        "Read printed text first. If a field is missing on the label, "
+        "use your coffee knowledge (origin, process, typical roast and flavors "
+        "for that lot or origin) to fill it. Prefer Danish process/roast labels. "
+        "Never invent a roaster or bean_name if the label does not show them — "
+        "use an empty string instead."
+    )
+
+
+def _response_text(response: Any) -> str:
+    try:
+        text = getattr(response, "text", None) or ""
+        if text:
+            return text
+    except Exception:
+        text = ""
+    chunks: list[str] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            piece = getattr(part, "text", None)
+            if piece:
+                chunks.append(piece)
+    return "\n".join(chunks)
+
+
+def _parse_gemini_json(text: str) -> dict[str, Any]:
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise
+        data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise ValueError("Gemini response was not a JSON object")
+    return data
+
+
+def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
+    image = Image.open(BytesIO(image_bytes))
+    if image.mode not in {"L", "RGB"}:
+        image = image.convert("RGB")
+    width, height = image.size
+    longest = max(width, height)
+    if longest > 1600:
+        scale = 1600 / longest
+        image = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+    return image
+
+
+def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:
+    from google import genai
+
+    client = genai.Client(api_key=key)
+    last_error: Exception | None = None
+    for model_name in GEMINI_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[prompt, image],
+                config={"response_mime_type": "application/json"},
+            )
+            return _parse_gemini_json(_response_text(response))
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return None
+
+
+def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:
+    import google.generativeai as genai
+
+    genai.configure(api_key=key)
+    last_error: Exception | None = None
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                [prompt, image],
+                generation_config={"response_mime_type": "application/json"},
+            )
+            return _parse_gemini_json(response.text or "")
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return None
+
+
+def scan_label_gemini(image_bytes: bytes) -> dict[str, Any] | None:
+    """Call Gemini 1.5 Flash Vision and return a normalized BeanNote field dict."""
+    key = get_gemini_api_key()
+    if not key:
+        return None
+    image = _prepare_scan_image(image_bytes)
+    prompt = _gemini_prompt()
+    data: dict[str, Any] | None = None
+    try:
+        data = _scan_with_genai(image, key, prompt)
+    except Exception:
+        try:
+            data = _scan_with_generativeai(image, key, prompt)
+        except Exception:
+            return None
+    if not data:
+        return None
+    parsed = normalize_scan_fields(data)
+    parsed["raw_text"] = json.dumps(data, ensure_ascii=False, indent=2)
+    parsed["scan_source"] = "gemini"
+    return parsed
+
+
 def configure_tesseract() -> str | None:
     """Prefer Homebrew paths on Mac local, then PATH / container install."""
     import pytesseract
@@ -235,8 +471,11 @@ def parse_label(text: str) -> dict[str, Any]:
 
 
 def scan_label(image_bytes: bytes) -> dict[str, Any]:
-    raw = extract_text(image_bytes)
-    parsed = parse_label(raw)
+    parsed = scan_label_gemini(image_bytes)
+    if not parsed or not ((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip()):
+        raw = extract_text(image_bytes)
+        parsed = normalize_scan_fields(parse_label(raw))
+        parsed["scan_source"] = parsed.get("scan_source") or "tesseract"
     similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
     parsed["similar"] = similar
     parsed["match_tier"] = classify_matches(similar)
