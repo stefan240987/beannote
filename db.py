@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -64,6 +64,7 @@ def init_db() -> None:
                 roast_level TEXT DEFAULT '',
                 roaster_notes TEXT DEFAULT '',
                 flavor_tags TEXT DEFAULT '[]',
+                story TEXT DEFAULT '',
                 image_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
                 community_sweetness REAL DEFAULT 3.5,
@@ -101,6 +102,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
     if "image_url" not in cols:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
+    if "story" not in cols:
+        conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
 
 
 def get_images_dir() -> Path:
@@ -135,6 +138,17 @@ def resolve_image_path(image_url: str) -> Path | None:
 def update_bean_image(bean_id: int, image_url: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
+
+
+def update_bean_story(bean_id: int, story: str) -> None:
+    story = (story or "").strip()
+    if not story:
+        return
+    with connect() as conn:
+        conn.execute(
+            "UPDATE beans SET story = ? WHERE id = ? AND (story IS NULL OR story = '')",
+            (story, bean_id),
+        )
 
 
 def _seed_if_empty() -> None:
@@ -258,6 +272,7 @@ def _row_to_bean(row: sqlite3.Row | None) -> dict[str, Any] | None:
         data["flavor_tags"] = json.loads(tags)
     except json.JSONDecodeError:
         data["flavor_tags"] = [t.strip() for t in str(tags).split(",") if t.strip()]
+    data["story"] = (data.get("story") or "").strip()
     return data
 
 
@@ -346,10 +361,12 @@ def insert_bean(
     flavor_tags: list[str] | None = None,
     skip_fuzzy: bool = False,
     image_url: str = "",
+    story: str = "",
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
     image_url = (image_url or "").strip()
+    story = (story or "").strip()
     if not name or not roaster:
         raise ValueError("name_roaster_required")
 
@@ -360,6 +377,9 @@ def insert_bean(
         if image_url and not (bean.get("image_url") or "").strip():
             update_bean_image(bean["id"], image_url)
             bean["image_url"] = image_url
+        if story and not (bean.get("story") or "").strip():
+            update_bean_story(bean["id"], story)
+            bean["story"] = story
         return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
@@ -370,8 +390,8 @@ def insert_bean(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
-                flavor_tags, image_url, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                flavor_tags, story, image_url, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -381,6 +401,7 @@ def insert_bean(
                 _normalize(roast_level),
                 (roaster_notes or "").strip(),
                 tags,
+                story,
                 image_url,
                 _now(),
             ),
@@ -397,6 +418,12 @@ def insert_bean(
                     (image_url, bean["id"]),
                 )
                 bean["image_url"] = image_url
+            if bean and story and not (bean.get("story") or "").strip():
+                conn.execute(
+                    "UPDATE beans SET story = ? WHERE id = ?",
+                    (story, bean["id"]),
+                )
+                bean["story"] = story
             return {"status": "exists", "bean": bean}
 
         bean = conn.execute(

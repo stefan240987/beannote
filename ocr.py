@@ -264,6 +264,7 @@ def normalize_scan_fields(parsed: dict[str, Any]) -> dict[str, Any]:
     out["official_notes"] = notes
     out["flavor_notes"] = flavors
     out["flavor_tags"] = flavors
+    out["story"] = (parsed.get("story") or "").strip()
     return out
 
 
@@ -282,6 +283,15 @@ def _gemini_prompt() -> str:
         f'- "roast_level": exactly one of [{roasts}]\n'
         f'- "flavor_tags": array of 1–6 descriptors chosen only from [{flavors}]\n'
         '- "official_notes": raw tasting-notes text from the label\n'
+        '- "story": 2–4 engaging Danish sentences ("Kaffens Historie"). '
+        "Combine printed label facts (farm, region, altitude, varietals, process, "
+        "flavor notes) with your specialty-coffee knowledge into a short "
+        "background story. Include farm, region, altitude, varietals, or a "
+        "flavor-characteristic narrative when known. Example tone: "
+        '"Høstet i 1.900 meters højde i Yirgacheffe-regionen af småbønder, '
+        'der selektivt håndplukker de mest modne bær..." '
+        "Do not invent a specific farm or producer name unless the label shows it; "
+        "you may use well-known regional context.\n"
         "Read printed text first. If a field is missing on the label, "
         "use your coffee knowledge (origin, process, typical roast and flavors "
         "for that lot or origin) to fill it. Prefer Danish process/roast labels. "
@@ -466,6 +476,7 @@ def parse_label(text: str) -> dict[str, Any]:
         "roast_level": roast_level,
         "roaster_notes": notes_text,
         "flavor_notes": flavors,
+        "story": "",
         "raw_text": text,
     }
 

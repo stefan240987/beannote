@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.4.0] - 2026-08-23
+
+- Gemini Vision now writes a short Danish "Kaffens Historie" from label facts plus coffee knowledge (farm, region, altitude, varietals, flavor narrative).
+- `beans.story` column with a safe migration; the scan-result editor and Explore detail modal show the story as a journal section.
+
 ## [1.3.0] - 2026-08-23
 
 - Gemini 1.5 Flash Vision scans coffee-bag photos and returns structured fields (roaster, bean name, origin, process, roast level, flavor tags, official notes), then pre-fills the add-bean form including matching `st.multiselect` tags and `st.selectbox` values.

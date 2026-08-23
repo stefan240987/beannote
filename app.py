@@ -25,6 +25,7 @@ from db import (
     resolve_image_path,
     save_bean_image,
     update_bean_image,
+    update_bean_story,
 )
 from ocr import (
     FLAVOR_NOTES,
@@ -214,6 +215,42 @@ def inject_css() -> None:
             border-radius: 12px;
             padding: 0.65rem 0.8rem;
             margin: 0.55rem 0 0.2rem;
+        }
+        .bn-story {
+            background: linear-gradient(180deg, #faf6f0 0%, #f4ebd9 100%);
+            border: 1px solid #e2b089;
+            border-left: 4px solid #b85c38;
+            border-radius: 12px;
+            padding: 0.9rem 1rem 0.95rem;
+            margin: 0.75rem 0 0.9rem;
+            box-shadow: 0 1px 0 rgba(60, 42, 33, 0.05);
+        }
+        .bn-story-kicker {
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 15px;
+            font-weight: 700;
+            color: #3c2a21;
+            letter-spacing: -0.01em;
+            margin: 0 0 0.45rem;
+        }
+        .bn-story p {
+            margin: 0;
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 14.5px;
+            line-height: 1.6;
+            color: #4a3328;
+            font-weight: 500;
+        }
+        .bn-story-head {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #3c2a21;
+            letter-spacing: -0.01em;
+            margin: 0.85rem 0 0.2rem;
         }
         [data-testid="stColumn"]:has(.bn-card-hit),
         [data-testid="column"]:has(.bn-card-hit) {
@@ -756,6 +793,7 @@ def apply_pending_ui() -> None:
     st.session_state.add_roast = ""
     st.session_state.add_notes = ""
     st.session_state.add_flavors = []
+    st.session_state.add_story = ""
 
 
 def apply_ocr_form(parsed: dict) -> None:
@@ -777,6 +815,7 @@ def apply_ocr_form(parsed: dict) -> None:
     st.session_state.add_roast = roast
     st.session_state.add_notes = parsed.get("official_notes") or parsed.get("roaster_notes") or ""
     st.session_state.add_flavors = flavors
+    st.session_state.add_story = parsed.get("story") or ""
     if parsed.get("image_url"):
         st.session_state.pending_image_url = parsed["image_url"]
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
@@ -826,6 +865,9 @@ def process_scan_image(image_file) -> None:
     if parsed.get("scan_action") == "rate" and match:
         if not (match.get("image_url") or "").strip():
             update_bean_image(match["id"], image_url)
+        story = (parsed.get("story") or "").strip()
+        if story and not (match.get("story") or "").strip():
+            update_bean_story(match["id"], story)
         notes = parsed.get("roaster_notes") or ", ".join(parsed.get("flavor_notes") or [])
         st.session_state.bean_found_flash = True
         go_review(match["id"], notes=notes)
@@ -954,6 +996,7 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     tags_html = flavor_badges_html(bean.get("flavor_tags"), extra=bean.get("roaster_notes"))
     if tags_html:
         st.markdown(tags_html, unsafe_allow_html=True)
+    render_bean_story(lang, bean.get("story") or "")
     labels = [t(lang, k) for k in ("acidity", "sweetness", "body", "aftertaste")]
     st.plotly_chart(
         flavor_radar(user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
@@ -969,6 +1012,19 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     if st.button(t(lang, "tab_review"), type="primary", use_container_width=True):
         go_review(bean_id)
         st.rerun()
+
+
+def render_bean_story(lang: str, story: str) -> None:
+    text = (story or "").strip()
+    if not text:
+        return
+    st.markdown(
+        f'<div class="bn-story">'
+        f'<div class="bn-story-kicker">📖 {escape(t(lang, "bean_story"))}</div>'
+        f"<p>{escape(text)}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def compare_notes(
@@ -1133,6 +1189,18 @@ def render_add(lang: str) -> None:
     roast = c3.selectbox(t(lang, "add_roast"), [""] + ROAST_LEVELS, key="add_roast")
     flavors = st.multiselect(t(lang, "add_flavor_notes"), FLAVOR_NOTES, key="add_flavors")
     roaster_notes = st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
+    st.markdown(
+        f'<div class="bn-story-head">📖 {escape(t(lang, "bean_story"))}</div>',
+        unsafe_allow_html=True,
+    )
+    story = st.text_area(
+        t(lang, "bean_story"),
+        key="add_story",
+        height=130,
+        help=t(lang, "bean_story_help"),
+        placeholder=t(lang, "bean_story_ph"),
+        label_visibility="collapsed",
+    )
     if "raw_text" in form:
         with st.expander(t(lang, "raw_ocr")):
             st.code(form.get("raw_text") or "—")
@@ -1171,6 +1239,7 @@ def render_add(lang: str) -> None:
             flavor_tags=extract_flavor_tags(flavors) or None,
             skip_fuzzy=force,
             image_url=pending_image_url() or (form.get("image_url") or ""),
+            story=story,
         )
         if result["status"] in {"fuzzy", "exact"}:
             st.session_state.pending_similar = result["similar"]

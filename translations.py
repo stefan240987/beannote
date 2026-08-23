@@ -94,6 +94,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "or_upload": "Eller vælg et billede fra biblioteket",
         "camera_help": "Peg kameraet mod posens etiket. BeanNote scanner med Gemini Vision og matcher med det samme.",
         "attached_label": "Vedhæftet posebillede",
+        "bean_story": "Kaffens Historie",
+        "bean_story_help": "En kort AI-fortælling om bønnens oprindelse, gård, højde og karakter. Redigér frit før du gemmer.",
+        "bean_story_ph": "Høstet i 1.900 meters højde i Yirgacheffe-regionen af småbønder, der selektivt håndplukker de mest modne bær…",
     },
     "en": {
         "app_name": "BeanNote",
@@ -178,6 +181,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "or_upload": "Or choose a photo from your library",
         "camera_help": "Point the camera at the bag label. BeanNote scans with Gemini Vision and matches immediately.",
         "attached_label": "Attached bag photo",
+        "bean_story": "The Coffee's Story",
+        "bean_story_help": "A short AI background on the bean’s farm, region, altitude, and character. Edit freely before saving.",
+        "bean_story_ph": "Harvested at 1,900 metres in the Yirgacheffe region by smallholders who selectively hand-pick the ripest cherries…",
     },
     "de": {
         "app_name": "BeanNote",
@@ -262,6 +268,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "or_upload": "Oder ein Foto aus der Mediathek wählen",
         "camera_help": "Richte die Kamera auf das Etikett. BeanNote scannt mit Gemini Vision und vergleicht sofort.",
         "attached_label": "Angehängtes Tütenfoto",
+        "bean_story": "Die Geschichte des Kaffees",
+        "bean_story_help": "Eine kurze KI-Geschichte zu Farm, Region, Höhenlage und Charakter. Vor dem Speichern frei bearbeiten.",
+        "bean_story_ph": "Geerntet auf 1.900 Metern in der Region Yirgacheffe von Kleinbauern, die selektiv die reifsten Kirschen pflücken…",
     },
     "fr": {
         "app_name": "BeanNote",
@@ -346,6 +355,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "or_upload": "Ou choisir une photo dans la bibliothèque",
         "camera_help": "Pointez la caméra vers l’étiquette. BeanNote scanne avec Gemini Vision et compare immédiatement.",
         "attached_label": "Photo du sac jointe",
+        "bean_story": "L'histoire du café",
+        "bean_story_help": "Un court récit IA sur la ferme, la région, l’altitude et le caractère. Modifiez-le avant d’enregistrer.",
+        "bean_story_ph": "Récolté à 1 900 mètres dans la région de Yirgacheffe par de petits producteurs qui cueillent à la main les cerises les plus mûres…",
     },
     "es": {
         "app_name": "BeanNote",
@@ -430,6 +442,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "or_upload": "O elige una foto de la biblioteca",
         "camera_help": "Apunta la cámara a la etiqueta. BeanNote escanea con Gemini Vision y compara al instante.",
         "attached_label": "Foto de la bolsa adjunta",
+        "bean_story": "La historia del café",
+        "bean_story_help": "Un relato breve de IA sobre la finca, la región, la altitud y el carácter. Edítalo antes de guardar.",
+        "bean_story_ph": "Cosechado a 1.900 metros en la región de Yirgacheffe por pequeños productores que recogen a mano las cerezas más maduras…",
     },
 }
 
