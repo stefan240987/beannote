@@ -14,7 +14,14 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
-from db import classify_matches, find_similar_beans, get_localized, resolve_origin_geo, scan_destination
+from db import (
+    classify_matches,
+    find_similar_beans,
+    get_localized,
+    resolve_origin_geo,
+    sanitize_roaster_url,
+    scan_destination,
+)
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 from image_search import (
     BELLAROM_BIO_PACKSHOT,
@@ -691,6 +698,19 @@ def _canon_roast(value: str) -> str:
     return _canon_choice(value, ROAST_MAP, ROAST_LEVELS)
 
 
+def _extract_roaster_url(parsed: dict[str, Any]) -> str:
+    """Prefer Gemini's roaster homepage, then any URL printed on the bag."""
+    for key in ("roaster_url", "website", "official_website", "homepage", "url"):
+        found = sanitize_roaster_url(parsed.get(key))
+        if found:
+            return found
+    for key in ("raw_text", "official_notes", "roaster_notes"):
+        found = sanitize_roaster_url(parsed.get(key))
+        if found:
+            return found
+    return ""
+
+
 def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, Any]:
     """Map Gemini/Tesseract fields onto the add-bean widget keys."""
     notes = (parsed.get("official_notes") or parsed.get("roaster_notes") or "").strip()
@@ -732,6 +752,7 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["latitude"] = lat
     out["longitude"] = lng
     out["region_full"] = region
+    out["roaster_url"] = _extract_roaster_url(parsed)
     out = refine_label_fields(out, lang=lang)
     if not isinstance(out.get("flavor_tags"), dict):
         out["flavor_tags"] = flavor_tags_lang_map(out.get("flavor_tags"), out.get("flavor_notes"))
@@ -1164,6 +1185,9 @@ def _gemini_prompt(lang: str = "da") -> str:
         "for that lot or origin) to fill it. "
         "Never invent a roaster or bean_name if the label does not show them — "
         "use an empty string instead.\n"
+        '- "roaster_url": official https homepage of the roaster if printed on the bag '
+        "(www.example.com or https://…) or clearly known. Homepage only — never a product "
+        "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
         '- "product_image_urls": array of up to 3 real public https URLs of official '
         "high-resolution studio packshots / product-container graphics from the roaster "
         "shop or CDN (for example Lidl/Schwarz, Shopify, official shop). "
@@ -1476,6 +1500,7 @@ def parse_label(text: str) -> dict[str, Any]:
         "altitude": altitude,
         "varietal": varietal,
         "roast_date": roast_date,
+        "roaster_url": sanitize_roaster_url(blob),
         "raw_text": text,
     }
 

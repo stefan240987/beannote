@@ -80,6 +80,7 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("prompt asks for story map", '"story": language map' in prompt)
         _assert_true("prompt asks for flavor map", '"flavor_tags": language map' in prompt)
         _assert_true("prompt asks for brew map", '"brew_recommendation": language map' in prompt)
+        _assert_true("prompt asks for roaster_url", '"roaster_url"' in prompt)
         _assert_true("prompt includes da key", '"da"' in prompt)
         _assert_true("prompt includes en key", '"en"' in prompt)
         _assert_true("da flavors in map prompt", "Mørk chokolade" in prompt)
@@ -160,6 +161,15 @@ def test_normalize_builds_language_maps() -> None:
     _assert_eq("string story wraps under en", wrapped["story"].get("en"), "Harvested by smallholders on the hillside.")
     _assert_true("wrapped flavors da", "Karamel" in (wrapped["flavor_tags"].get("da") or []))
     _assert_true("wrapped flavors en", "Caramel" in (wrapped["flavor_tags"].get("en") or []))
+    with_url = normalize_scan_fields(
+        {
+            "bean_name": "Kenya AA",
+            "roaster": "La Cabra",
+            "roaster_url": "Shop at https://lacabra.dk/",
+        },
+        lang="da",
+    )
+    _assert_eq("scan keeps sanitized roaster_url", with_url.get("roaster_url"), "https://lacabra.dk")
     print("OK  normalize_scan_fields stores story/flavor_tags/brew as language maps")
 
 
@@ -178,6 +188,26 @@ def test_dynamic_tag_i18n() -> None:
     _assert_true("reject localhost", not is_public_image_url("https://localhost/bag.jpg"))
     _assert_eq("empty sanitizer", sanitize_image_url("null"), "")
     print("OK  dynamic flavor i18n maps DA↔EN and rejects unsafe image URLs")
+
+
+def test_roaster_url_and_retailer_i18n() -> None:
+    from db import sanitize_roaster_url
+    from ocr import parse_label
+    from translations import t
+
+    _assert_eq("https ok", sanitize_roaster_url("https://coffeecollective.dk"), "https://coffeecollective.dk")
+    _assert_eq("www upgrade", sanitize_roaster_url("www.thebarn.de/coffee"), "https://www.thebarn.de/coffee")
+    _assert_eq("extract from sentence", sanitize_roaster_url("Besøg os: https://aprilcoffee.dk/"), "https://aprilcoffee.dk")
+    _assert_eq("reject javascript", sanitize_roaster_url("javascript:alert(1)"), "")
+    _assert_eq("reject localhost", sanitize_roaster_url("https://localhost/shop"), "")
+    _assert_eq("reject image url", sanitize_roaster_url("https://cdn.shopify.com/bag.jpg"), "")
+    parsed = parse_label("COFFEE COLLECTIVE\nKenya AA\nwww.coffeecollective.dk")
+    _assert_eq("tesseract website", parsed.get("roaster_url"), "https://www.coffeecollective.dk")
+    _assert_eq("da find", t("da", "find_retailer"), "🛍️ Find forhandler")
+    _assert_eq("en find", t("en", "find_retailer"), "🛍️ Find Retailer")
+    _assert_eq("da visit", t("da", "visit_roaster"), "🌐 Besøg risteri")
+    _assert_eq("en visit", t("en", "visit_roaster"), "🌐 Visit Roaster")
+    print("OK  roaster URL sanitizer + retailer i18n")
 
 
 def test_refine_and_flavor_i18n() -> None:
@@ -370,6 +400,7 @@ def main() -> int:
         test_get_localized_fallback()
         test_normalize_builds_language_maps()
         test_dynamic_tag_i18n()
+        test_roaster_url_and_retailer_i18n()
         test_refine_and_flavor_i18n()
         test_bellarom_suitability_and_packshot()
         test_label_extraction("da")

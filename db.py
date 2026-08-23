@@ -7,18 +7,26 @@ import difflib
 import io
 import json
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlparse, urlunparse
 
 import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
+_ROASTER_URL_RE = re.compile(
+    r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
+    re.IGNORECASE,
+)
+_BLOCKED_SITE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+_IMAGE_PATH_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif")
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -64,6 +72,31 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def sanitize_roaster_url(value: Any) -> str:
+    """Keep public http(s) roaster homepages; extract from messy Gemini/OCR text."""
+    raw = str(value or "").strip().strip("'\"")
+    if not raw or raw.lower() in {"none", "null", "undefined", "unknown", "n/a", "-"}:
+        return ""
+    match = _ROASTER_URL_RE.search(raw)
+    candidate = (match.group(1) if match else raw).rstrip(").,;]'\"")
+    if candidate.lower().startswith("www."):
+        candidate = "https://" + candidate
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    host = (parsed.hostname or "").lower()
+    if not host or "." not in host:
+        return ""
+    if host in _BLOCKED_SITE_HOSTS or host.endswith(".local"):
+        return ""
+    path = parsed.path or ""
+    if any(path.lower().endswith(suffix) for suffix in _IMAGE_PATH_SUFFIXES):
+        return ""
+    if path == "/":
+        path = ""
+    return urlunparse(("https", parsed.netloc.lower(), path, "", parsed.query, ""))
 
 
 def _has_localized_value(value: Any) -> bool:
@@ -356,6 +389,7 @@ def init_db() -> None:
                 suitable_for TEXT DEFAULT '[]',
                 story TEXT DEFAULT '{}',
                 image_url TEXT DEFAULT '',
+                roaster_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
                 community_sweetness REAL DEFAULT 3.5,
                 community_body REAL DEFAULT 3.3,
@@ -423,6 +457,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     beans = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
     if "image_url" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
+    if "roaster_url" not in beans:
+        conn.execute("ALTER TABLE beans ADD COLUMN roaster_url TEXT DEFAULT ''")
     if "story" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
     if "suitable_for" not in beans:
@@ -526,6 +562,14 @@ def resolve_image_path(image_url: str) -> Path | None:
 def update_bean_image(bean_id: int, image_url: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
+
+
+def update_bean_roaster_url(bean_id: int, roaster_url: str) -> None:
+    clean = sanitize_roaster_url(roaster_url)
+    if not clean:
+        return
+    with connect() as conn:
+        conn.execute("UPDATE beans SET roaster_url = ? WHERE id = ?", (clean, bean_id))
 
 
 def update_bean_story(bean_id: int, story: Any, lang: str | None = None) -> None:
@@ -776,6 +820,7 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     data["roast_date"] = (data.get("roast_date") or "").strip()
     data["altitude"] = (data.get("altitude") or "").strip()
     data["varietal"] = (data.get("varietal") or "").strip()
+    data["roaster_url"] = sanitize_roaster_url(data.get("roaster_url"))
     data["latitude"] = lat
     data["longitude"] = lng
     data["region_full"] = region
@@ -885,6 +930,7 @@ def insert_bean(
     suitable_for: list[str] | None = None,
     skip_fuzzy: bool = False,
     image_url: str = "",
+    roaster_url: str = "",
     story: str | dict[str, Any] = "",
     recommended_method: str = "",
     grind_size: str = "",
@@ -901,6 +947,7 @@ def insert_bean(
     name = _normalize(name)
     roaster = _normalize(roaster)
     image_url = (image_url or "").strip()
+    roaster_url = sanitize_roaster_url(roaster_url)
     story_map = coerce_text_map(story)
     flavor_map = coerce_list_map(flavor_tags if flavor_tags is not None else _tags_from_notes(roaster_notes))
     brew = _normalize_brew_fields(
@@ -929,6 +976,9 @@ def insert_bean(
         if image_url and not (bean.get("image_url") or "").strip():
             update_bean_image(bean["id"], image_url)
             bean["image_url"] = image_url
+        if roaster_url and not (bean.get("roaster_url") or "").strip():
+            update_bean_roaster_url(bean["id"], roaster_url)
+            bean["roaster_url"] = roaster_url
         if story_map:
             update_bean_story(bean["id"], story_map)
             bean["story"] = merge_text_map(bean.get("story"), story_map)
@@ -951,10 +1001,10 @@ def insert_bean(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
-                flavor_tags, suitable_for, story, image_url, recommended_method, grind_size,
+                flavor_tags, suitable_for, story, image_url, roaster_url, recommended_method, grind_size,
                 water_temp, brew_ratio, brew_recommendation, roast_date, altitude, varietal,
                 latitude, longitude, region_full, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -967,6 +1017,7 @@ def insert_bean(
                 suitability,
                 story_json,
                 image_url,
+                roaster_url,
                 brew["recommended_method"],
                 brew["grind_size"],
                 brew["water_temp"],
@@ -993,6 +1044,12 @@ def insert_bean(
                     (image_url, bean["id"]),
                 )
                 bean["image_url"] = image_url
+            if bean and roaster_url and not (bean.get("roaster_url") or "").strip():
+                conn.execute(
+                    "UPDATE beans SET roaster_url = ? WHERE id = ?",
+                    (roaster_url, bean["id"]),
+                )
+                bean["roaster_url"] = roaster_url
             if bean and story_map:
                 merged_story = merge_text_map(bean.get("story"), story_map)
                 conn.execute(
@@ -1024,6 +1081,7 @@ def update_bean(
     suitable_for: list[str] | None = None,
     story: str | dict[str, Any] = "",
     image_url: str = "",
+    roaster_url: str = "",
     recommended_method: str = "",
     grind_size: str = "",
     water_temp: str = "",
@@ -1069,6 +1127,7 @@ def update_bean(
         suitable_for if suitable_for is not None else existing.get("suitable_for") or []
     )
     image_url = (image_url or "").strip() or (existing.get("image_url") or "")
+    roaster_url = sanitize_roaster_url(roaster_url) or (existing.get("roaster_url") or "")
     story_map = coerce_text_map(story) if story else coerce_text_map(existing.get("story"))
     brew_map = brew.get("brew_map") or coerce_brew_map(existing.get("brew_recommendation"))
     with connect() as conn:
@@ -1083,7 +1142,7 @@ def update_bean(
             UPDATE beans SET
                 name = ?, roaster = ?, origin = ?, process = ?, roast_level = ?,
                 roaster_notes = ?, flavor_tags = ?, suitable_for = ?, story = ?, image_url = ?,
-                recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
+                roaster_url = ?, recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
                 brew_recommendation = ?, roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
                 longitude = ?, region_full = ?
             WHERE id = ?
@@ -1099,6 +1158,7 @@ def update_bean(
                 json.dumps(suitability),
                 _dump_lang_map(story_map),
                 image_url,
+                roaster_url,
                 brew["recommended_method"],
                 brew["grind_size"],
                 brew["water_temp"],

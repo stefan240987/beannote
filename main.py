@@ -391,6 +391,7 @@ class BeanIn(BaseModel):
     suitable_for: list[str] = Field(default_factory=list)
     story: Any = ""
     image_url: str = ""
+    roaster_url: str = ""
     recommended_method: str = ""
     grind_size: str = ""
     water_temp: str = ""
@@ -685,6 +686,7 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             suitable_for=payload.suitable_for,
             skip_fuzzy=payload.skip_fuzzy,
             image_url=payload.image_url,
+            roaster_url=payload.roaster_url,
             story=payload.story,
             recommended_method=payload.recommended_method,
             grind_size=payload.grind_size,
@@ -724,6 +726,7 @@ def replace_bean(
             suitable_for=payload.suitable_for,
             story=payload.story,
             image_url=payload.image_url,
+            roaster_url=payload.roaster_url,
             recommended_method=payload.recommended_method,
             grind_size=payload.grind_size,
             water_temp=payload.water_temp,

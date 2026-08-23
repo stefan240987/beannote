@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [3.7.0] - 2026-08-23
+
+- Bean Detail now has a prominent 🛍️ Find forhandler / Find Retailer button under the title. Tapping it opens a new tab with a Google search for `"{roaster}" "{bean}" køb buy`.
+- When Gemini Vision (or printed bag text) finds an official roaster website, BeanNote stores `roaster_url` and shows a 🌐 Besøg risteri / Visit Roaster button next to the search action.
+
 ## [3.6.0] - 2026-08-23
 
 - Scalable JSON-based multi-language i18n: `story`, `flavor_tags`, and `brew_recommendation` are language maps (`{"da": "...", "en": "..."}`) with `getLocalized` fallback to English.

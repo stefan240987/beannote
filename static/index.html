@@ -711,6 +711,38 @@
       </section>`;
     }
 
+    function retailerSearchHref(bean) {
+      const query = `"${bean.roaster || ""}" "${bean.name || ""}" køb buy`;
+      return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    }
+
+    function safeRoasterHref(url) {
+      const raw = String(url || "").trim();
+      if (!/^https?:\/\//i.test(raw)) return "";
+      try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+        const host = (parsed.hostname || "").toLowerCase();
+        if (!host || host === "localhost" || host.endsWith(".local")) return "";
+        parsed.protocol = "https:";
+        return parsed.href;
+      } catch {
+        return "";
+      }
+    }
+
+    function retailerActions(bean) {
+      const search = retailerSearchHref(bean);
+      const site = safeRoasterHref(bean.roaster_url);
+      const visit = site
+        ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-espresso font-semibold text-cream" data-i18n="visit_roaster">${t("visit_roaster")}</a>`
+        : "";
+      return `<div class="grid gap-2">
+        ${visit}
+        <a href="${esc(search)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="find_retailer">${t("find_retailer")}</a>
+      </div>`;
+    }
+
     function beanModal(profile) {
       const bean = profile.bean;
       const photo = photoImg(bean.image_url, bean.snapshot_url, "max-h-72 w-full object-cover");
@@ -727,6 +759,7 @@
             <section class="space-y-3">
               <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
               <p class="text-sm text-muted">${esc(info)}</p>
+              ${retailerActions(bean)}
               <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
               ${suitabilityLine(bean.suitable_for)}
               ${metaBadges(bean)}
@@ -859,6 +892,7 @@
       return `<form id="scan-edit" class="space-y-2 rounded-xl bg-foam p-3">
         <input name="name" value="${esc(scan.name || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_name"))}">
         <input name="roaster" value="${esc(scan.roaster || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_roaster"))}">
+        <input name="roaster_url" value="${esc(scan.roaster_url || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_roaster_url"))}" inputmode="url">
         <input name="origin" value="${esc(scan.origin || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("origin"))}">
         <input name="region_full" value="${esc(scan.region_full || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("region_full"))}">
         <input name="roast_date" value="${esc(scan.roast_date || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("roast_date"))}">
@@ -1153,6 +1187,7 @@
         suitable_for: source.suitable_for || [],
         story: source.story || {},
         image_url: source.image_url,
+        roaster_url: source.roaster_url || "",
         recommended_method: source.recommended_method || brewSource(source).method || "",
         grind_size: source.grind_size || brewSource(source).grind || "",
         water_temp: source.water_temp || brewSource(source).temp || "",
@@ -1249,6 +1284,7 @@
         ...base,
         name: data.get("name"),
         roaster: data.get("roaster"),
+        roaster_url: data.get("roaster_url"),
         origin: data.get("origin"),
         region_full: data.get("region_full"),
         roast_date: data.get("roast_date"),

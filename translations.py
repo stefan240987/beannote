@@ -196,6 +196,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "cover_your_photo": "📸 Dit Billede",
         "cover_studio_photo": "✨ Studio Billede {n}",
         "cover_use_own": "📸 Brug eget foto",
+        "find_retailer": "🛍️ Find forhandler",
+        "visit_roaster": "🌐 Besøg risteri",
+        "add_roaster_url": "Risteriets website",
     },
     "en": {
         "app_name": "BeanNote",
@@ -364,6 +367,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "cover_your_photo": "📸 Your Photo",
         "cover_studio_photo": "✨ Studio Photo {n}",
         "cover_use_own": "📸 Use my photo",
+        "find_retailer": "🛍️ Find Retailer",
+        "visit_roaster": "🌐 Visit Roaster",
+        "add_roaster_url": "Roaster website",
     },
     "de": {
         "app_name": "BeanNote",
@@ -532,6 +538,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "cover_your_photo": "📸 Dein Bild",
         "cover_studio_photo": "✨ Studiofoto {n}",
         "cover_use_own": "📸 Eigenes Foto verwenden",
+        "find_retailer": "🛍️ Händler finden",
+        "visit_roaster": "🌐 Rösterei besuchen",
+        "add_roaster_url": "Website der Rösterei",
     },
     "fr": {
         "app_name": "BeanNote",
@@ -700,6 +709,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "cover_your_photo": "📸 Votre photo",
         "cover_studio_photo": "✨ Photo studio {n}",
         "cover_use_own": "📸 Utiliser ma photo",
+        "find_retailer": "🛍️ Trouver un revendeur",
+        "visit_roaster": "🌐 Visiter le torréfacteur",
+        "add_roaster_url": "Site du torréfacteur",
     },
     "es": {
         "app_name": "BeanNote",
@@ -868,6 +880,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "cover_your_photo": "📸 Tu foto",
         "cover_studio_photo": "✨ Foto de estudio {n}",
         "cover_use_own": "📸 Usar mi foto",
+        "find_retailer": "🛍️ Buscar tienda",
+        "visit_roaster": "🌐 Visitar tostador",
+        "add_roaster_url": "Web del tostador",
     },
 }
 
