@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import difflib
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import time
+import urllib.error
+import urllib.request
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
 
@@ -347,6 +352,26 @@ def localize_flavor(tag: str, lang: str = "da") -> str:
     if not names:
         return tag
     return names.get(_copy_lang(lang), names["da"])
+
+
+def flavor_i18n_table() -> dict[str, dict[str, str]]:
+    """Bidirectional flavor lookup so saved DA/EN tags can switch instantly."""
+    table: dict[str, dict[str, str]] = {}
+    for canon, names in FLAVOR_LOCALES.items():
+        entry = {"da": names.get("da", canon), "en": names.get("en", canon)}
+        keys = {canon, *names.values(), *FLAVOR_ALIASES.get(canon, [])}
+        for key in keys:
+            compact = re.sub(r"\s+", " ", str(key or "").strip())
+            if not compact:
+                continue
+            table[compact] = entry
+            table[compact.lower()] = entry
+            table[compact.title()] = entry
+    return table
+
+
+def localize_flavor_tags(tags: list[str] | None, lang: str = "da") -> list[str]:
+    return [localize_flavor(tag, lang) for tag in (tags or []) if str(tag).strip()]
 
 
 def _project_root() -> Path:
@@ -851,7 +876,10 @@ def _gemini_prompt(lang: str = "da") -> str:
         "use your coffee knowledge (origin, process, typical roast and flavors "
         "for that lot or origin) to fill it. "
         "Never invent a roaster or bean_name if the label does not show them — "
-        "use an empty string instead."
+        "use an empty string instead.\n"
+        '- "product_image_url": if you know a real public https URL of the official '
+        "high-resolution bag / product photo from the roaster shop or CDN, return it; "
+        "otherwise return an empty string. Never invent a URL."
     )
 
 
@@ -1163,6 +1191,188 @@ def parse_label(text: str) -> dict[str, Any]:
     }
 
 
+_BLOCKED_IMAGE_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "metadata.google.internal",
+}
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_IMAGE_CDN_HINTS = (
+    "cdn",
+    "shopify",
+    "cloudinary",
+    "imgix",
+    "cloudfront",
+    "googleusercontent",
+    "wp.com",
+    "squarespace",
+    "bigcommerce",
+)
+_MAX_OFFICIAL_IMAGE_BYTES = 8 * 1024 * 1024
+
+
+def _host_is_public(host: str) -> bool:
+    hostname = (host or "").strip().lower().rstrip(".")
+    if not hostname or hostname in _BLOCKED_IMAGE_HOSTS or hostname.endswith(".local"):
+        return False
+    try:
+        infos = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for info in infos:
+        raw_ip = info[4][0]
+        try:
+            ip = ipaddress.ip_address(raw_ip)
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
+def is_public_image_url(url: str) -> bool:
+    raw = (url or "").strip()
+    parsed = urlparse(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not _host_is_public(host):
+        return False
+    path = (parsed.path or "").lower()
+    if any(path.endswith(suffix) for suffix in _IMAGE_SUFFIXES):
+        return True
+    if any(hint in host for hint in _IMAGE_CDN_HINTS):
+        return True
+    return any(token in path for token in ("/image", "/images/", "/img/", "/media/", "/cdn/"))
+
+
+def sanitize_image_url(url: str) -> str:
+    raw = (url or "").strip().strip("'").strip('"')
+    if not raw or raw.lower() in {"none", "null", "undefined"}:
+        return ""
+    return raw if is_public_image_url(raw) else ""
+
+
+def fetch_official_image_bytes(url: str, timeout: float = 6.0) -> bytes | None:
+    """Download a validated official product image. Returns None on any failure."""
+    clean = sanitize_image_url(url)
+    if not clean:
+        return None
+    class _PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not is_public_image_url(newurl):
+                return None
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    request = urllib.request.Request(
+        clean,
+        headers={
+            "User-Agent": "BeanNote/2.9 (+https://beannote.local)",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+        method="GET",
+    )
+    opener = urllib.request.build_opener(_PublicRedirectHandler)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            if content_type and not content_type.startswith("image/"):
+                return None
+            data = response.read(_MAX_OFFICIAL_IMAGE_BYTES + 1)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+    if not data or len(data) > _MAX_OFFICIAL_IMAGE_BYTES:
+        return None
+    try:
+        image = Image.open(BytesIO(data))
+        image.verify()
+    except Exception:
+        return None
+    return data
+
+
+def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
+    from google import genai
+    from google.genai import types
+
+    prompt = (
+        "Find the official high-resolution product photograph of this coffee bag. "
+        f'Roaster: "{roaster}". Product name: "{name}". '
+        "Prefer the roaster's own webshop, Shopify/CDN product image, or official importer. "
+        "Return ONE JSON object only with keys "
+        '{"image_url":"https://...","source":"..."}. '
+        "image_url must be a direct https image (jpg/png/webp), not an HTML search page. "
+        'If no real official image exists, return {"image_url":"","source":""}. '
+        "Do not invent URLs."
+    )
+    client = genai.Client(api_key=key)
+    tools: list[Any] = []
+    try:
+        tools = [types.Tool(google_search=types.GoogleSearch())]
+    except Exception:
+        tools = []
+    last_error: Exception | None = None
+    for model_name in GEMINI_MODELS:
+        config_kwargs: dict[str, Any] = {"temperature": 0.1}
+        if tools:
+            config_kwargs["tools"] = tools
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config_kwargs),
+            )
+            data = _parse_gemini_json(_response_text(response))
+            return sanitize_image_url(str(data.get("image_url") or data.get("url") or ""))
+        except Exception as exc:
+            last_error = exc
+            if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                continue
+            if tools:
+                tools = []
+                continue
+            break
+    if last_error:
+        raise last_error
+    return ""
+
+
+def find_official_bag_image(name: str, roaster: str, hint_url: str = "") -> str:
+    """Ask Gemini (with web search when available) for a clean official bag photo URL."""
+    hinted = sanitize_image_url(hint_url)
+    if hinted:
+        return hinted
+    name = re.sub(r"\s+", " ", (name or "").strip())
+    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
+    if not name or not roaster:
+        return ""
+    key = get_gemini_api_key()
+    if not key:
+        return ""
+    try:
+        return _gemini_product_image_search(name, roaster, key)
+    except Exception:
+        return ""
+
+
+def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
+    out = dict(parsed)
+    hint = str(out.get("product_image_url") or out.get("official_image_url") or "")
+    official = find_official_bag_image(out.get("name") or "", out.get("roaster") or "", hint)
+    out["official_image_url"] = official
+    out["product_image_url"] = official
+    return out
+
+
 def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
     if gemini_available():
         parsed = scan_label_gemini(image_bytes, lang=lang)
@@ -1172,6 +1382,7 @@ def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
         raw = extract_text(image_bytes)
         parsed = normalize_scan_fields(parse_label(raw), lang=lang)
         parsed["scan_source"] = "tesseract"
+    parsed = attach_official_bag_image(parsed)
     similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
     parsed["similar"] = similar
     parsed["match_tier"] = classify_matches(similar)

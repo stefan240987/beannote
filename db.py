@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.9.0"
+VERSION = "2.9.1"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -27,6 +27,10 @@ RESET_DB_ON_START = os.getenv("RESET_DB_ON_START", "").strip().lower() in {
     "1",
     "true",
     "yes",
+}
+LOCAL_ADMIN_EMAILS = {
+    "google_test_user@beannote.local",
+    "apple_test_user@beannote.local",
 }
 
 
@@ -112,6 +116,7 @@ def init_db() -> None:
                 password_hash TEXT DEFAULT '',
                 auth_provider TEXT NOT NULL DEFAULT 'email',
                 oauth_id TEXT DEFAULT '',
+                is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -208,6 +213,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for column, decl in (("latitude", "REAL"), ("longitude", "REAL")):
         if column not in beans:
             conn.execute(f"ALTER TABLE beans ADD COLUMN {column} {decl}")
+    users = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    if "is_admin" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
@@ -662,6 +670,99 @@ def insert_bean(
         return {"status": "created", "bean": _row_to_bean(bean)}
 
 
+def update_bean(
+    bean_id: int,
+    name: str,
+    roaster: str,
+    origin: str = "",
+    process: str = "",
+    roast_level: str = "",
+    roaster_notes: str = "",
+    flavor_tags: list[str] | None = None,
+    story: str = "",
+    image_url: str = "",
+    recommended_method: str = "",
+    grind_size: str = "",
+    water_temp: str = "",
+    brew_ratio: str = "",
+    brew_recommendation: dict[str, Any] | None = None,
+    roast_date: str = "",
+    altitude: str = "",
+    varietal: str = "",
+    latitude: Any = None,
+    longitude: Any = None,
+    region_full: str = "",
+) -> dict[str, Any] | None:
+    """Replace bean masterdata. Callers must enforce admin authorization."""
+    existing = get_bean(bean_id)
+    if not existing:
+        return None
+    name = _normalize(name) or existing.get("name") or ""
+    roaster = _normalize(roaster) or existing.get("roaster") or ""
+    if not name or not roaster:
+        raise ValueError("name_roaster_required")
+    brew = _normalize_brew_fields(
+        recommended_method,
+        grind_size,
+        water_temp,
+        brew_ratio,
+        brew_recommendation,
+    )
+    meta = _normalize_meta_fields(
+        roast_date,
+        altitude,
+        varietal,
+        latitude,
+        longitude,
+        region_full,
+        origin,
+    )
+    tags = flavor_tags if flavor_tags is not None else existing.get("flavor_tags") or []
+    image_url = (image_url or "").strip() or (existing.get("image_url") or "")
+    story = (story or "").strip()
+    with connect() as conn:
+        clash = conn.execute(
+            "SELECT id FROM beans WHERE name = ? AND roaster = ? AND id != ?",
+            (name, roaster, bean_id),
+        ).fetchone()
+        if clash:
+            raise ValueError("name_roaster_taken")
+        conn.execute(
+            """
+            UPDATE beans SET
+                name = ?, roaster = ?, origin = ?, process = ?, roast_level = ?,
+                roaster_notes = ?, flavor_tags = ?, story = ?, image_url = ?,
+                recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
+                roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
+                longitude = ?, region_full = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                roaster,
+                _normalize(origin),
+                _normalize(process),
+                _normalize(roast_level),
+                (roaster_notes or "").strip(),
+                json.dumps(tags),
+                story,
+                image_url,
+                brew["recommended_method"],
+                brew["grind_size"],
+                brew["water_temp"],
+                brew["brew_ratio"],
+                meta["roast_date"],
+                meta["altitude"],
+                meta["varietal"],
+                meta["latitude"],
+                meta["longitude"],
+                meta["region_full"],
+                bean_id,
+            ),
+        )
+    return get_bean(bean_id)
+
+
 def get_bean(bean_id: int, user_id: int | None = None) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM beans WHERE id = ?", (bean_id,)).fetchone()
@@ -967,11 +1068,28 @@ def matching_flavor_tags(roaster_notes: str, user_notes: str) -> dict[str, list[
     return {"roaster": roaster[:12], "user": user[:12], "overlap": overlap[:12]}
 
 
+def _is_bootstrap_admin(email: str) -> bool:
+    return (email or "").strip().lower() in LOCAL_ADMIN_EMAILS
+
+
+def _grant_admin(email: str) -> bool:
+    if _is_bootstrap_admin(email):
+        return True
+    if ENVIRONMENT != "local":
+        return False
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM users WHERE COALESCE(is_admin, 0) = 1 LIMIT 1"
+        ).fetchone()
+    return row is None
+
+
 def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     data = dict(row)
     data.pop("password_hash", None)
+    data["is_admin"] = bool(data.get("is_admin"))
     return data
 
 
@@ -1029,10 +1147,10 @@ def create_email_user(email: str, password: str, username: str = "") -> dict[str
         cur = conn.execute(
             """
             INSERT INTO users (
-                email, username, password_hash, auth_provider, oauth_id, created_at
-            ) VALUES (?, ?, ?, 'email', '', ?)
+                email, username, password_hash, auth_provider, oauth_id, is_admin, created_at
+            ) VALUES (?, ?, ?, 'email', '', ?, ?)
             """,
-            (email, username, hash_password(password), _now()),
+            (email, username, hash_password(password), int(_grant_admin(email)), _now()),
         )
         row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
     user = _public_user(row)
@@ -1075,10 +1193,17 @@ def upsert_oauth_user(
                 UPDATE users
                 SET username = CASE WHEN username = '' THEN ? ELSE username END,
                     auth_provider = ?,
-                    oauth_id = ?
+                    oauth_id = ?,
+                    is_admin = CASE WHEN ? = 1 THEN 1 ELSE is_admin END
                 WHERE id = ?
                 """,
-                (username, provider, oauth_id, existing["id"]),
+                (
+                    username,
+                    provider,
+                    oauth_id,
+                    int(_is_bootstrap_admin(email)),
+                    existing["id"],
+                ),
             )
             row = conn.execute("SELECT * FROM users WHERE id = ?", (existing["id"],)).fetchone()
         user = _public_user(row)
@@ -1090,10 +1215,10 @@ def upsert_oauth_user(
         cur = conn.execute(
             """
             INSERT INTO users (
-                email, username, password_hash, auth_provider, oauth_id, created_at
-            ) VALUES (?, ?, '', ?, ?, ?)
+                email, username, password_hash, auth_provider, oauth_id, is_admin, created_at
+            ) VALUES (?, ?, '', ?, ?, ?, ?)
             """,
-            (email, username, provider, oauth_id, _now()),
+            (email, username, provider, oauth_id, int(_grant_admin(email)), _now()),
         )
         row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
     user = _public_user(row)

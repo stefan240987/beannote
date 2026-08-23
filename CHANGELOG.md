@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.9.1] - 2026-08-23
+
+- Flavor tags now translate instantly when switching Dansk / English (`Mørk chokolade` ↔ `Dark chocolate`, `Karamel` ↔ `Caramel`, `Blåbær` ↔ `Blueberry`), including beans already stored in SQLite.
+- After Gemini Vision reads roaster + bean name, a grounded image search looks up a high-res official bag photo. That URL (or a locally cached copy) becomes `image_url`; the camera snapshot stays as fallback.
+- Users have an `is_admin` flag (default false). Local Google/Apple test users are admins. `✏️ Ret oplysninger` and `PUT /api/beans/{id}` are admin-only; everyone can still 1-click approve a scan and save personal recipes.
+
 ## [2.9.0] - 2026-08-23
 
 - Gemini Vision now reads the exact primary bag title. The Copenhagen Roaster Slow Roast bag is stored as `Slow Roast Espresso` (never `Slow Roast Crema`).

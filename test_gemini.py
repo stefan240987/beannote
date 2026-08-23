@@ -82,6 +82,23 @@ def test_prompt_locks_name_and_lang() -> None:
     print("OK  Gemini prompt locks bean name and localizes flavor/brew copy")
 
 
+def test_dynamic_tag_i18n() -> None:
+    from ocr import flavor_i18n_table, is_public_image_url, localize_flavor, sanitize_image_url
+
+    table = flavor_i18n_table()
+    _assert_eq("da→en chocolate", table["Mørk chokolade"]["en"], "Dark chocolate")
+    _assert_eq("en→da chocolate", table["Dark chocolate"]["da"], "Mørk chokolade")
+    _assert_eq("title-case chocolate", table["Dark Chocolate"]["da"], "Mørk chokolade")
+    _assert_eq("karamel en", localize_flavor("Karamel", "en"), "Caramel")
+    _assert_eq("caramel da", localize_flavor("Caramel", "da"), "Karamel")
+    _assert_eq("blueberry da", localize_flavor("Blueberry", "da"), "Blåbær")
+    _assert_eq("blåbær en", localize_flavor("Blåbær", "en"), "Blueberry")
+    _assert_true("reject http image", not is_public_image_url("http://cdn.shopify.com/bag.jpg"))
+    _assert_true("reject localhost", not is_public_image_url("https://localhost/bag.jpg"))
+    _assert_eq("empty sanitizer", sanitize_image_url("null"), "")
+    print("OK  dynamic flavor i18n maps DA↔EN and rejects unsafe image URLs")
+
+
 def test_refine_and_flavor_i18n() -> None:
     from ocr import extract_flavor_tags, refine_label_fields
 
@@ -172,6 +189,7 @@ def main() -> int:
     try:
         test_parse_gemini_json()
         test_prompt_locks_name_and_lang()
+        test_dynamic_tag_i18n()
         test_refine_and_flavor_i18n()
         test_label_extraction("da")
         test_label_extraction("en")

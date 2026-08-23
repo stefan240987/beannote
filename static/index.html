@@ -86,6 +86,7 @@
       profile: null,
       scan: null,
       editScan: false,
+      editBean: false,
       toast: "",
       busy: false,
       beanFilter: "all",
@@ -111,6 +112,30 @@
     };
     const normalizeLang = (lang) => (String(lang || "da").toLowerCase() === "en" ? "en" : "da");
     const activeLang = () => normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
+    const isAdmin = () => !!state.user?.is_admin;
+
+    function localizeTag(tag) {
+      const raw = String(tag || "").trim();
+      if (!raw) return raw;
+      const table = state.config?.flavor_i18n || {};
+      const hit = table[raw] || table[raw.toLowerCase()] || table[raw.replace(/\s+/g, " ")];
+      return (hit && (hit[activeLang()] || hit.da)) || raw;
+    }
+
+    function refreshFlavorCatalog(lang) {
+      const table = state.config?.flavor_i18n || {};
+      const next = normalizeLang(lang);
+      const seen = new Set();
+      const notes = [];
+      Object.values(table).forEach((entry) => {
+        const label = entry?.[next] || entry?.da;
+        if (label && !seen.has(label)) {
+          seen.add(label);
+          notes.push(label);
+        }
+      });
+      if (notes.length) state.config.flavor_notes = notes;
+    }
 
     function applyLanguage(lang) {
       const next = normalizeLang(lang);
@@ -118,6 +143,7 @@
       document.documentElement.lang = next;
       const strings = state.i18n?.[next] || state.config?.strings || {};
       state.config = { ...(state.config || {}), lang: next, strings };
+      refreshFlavorCatalog(next);
       document.querySelectorAll("[data-i18n]").forEach((el) => {
         const key = el.getAttribute("data-i18n");
         if (key) el.textContent = t(key);
@@ -162,6 +188,17 @@
       const name = url.split("/").pop();
       return `/media/${encodeURIComponent(name)}`;
     };
+
+    function photoImg(url, fallback, className) {
+      const src = mediaSrc(url);
+      const fb = mediaSrc(fallback);
+      if (!src && !fb) return "";
+      const primary = src || fb;
+      const extra = src && fb && src !== fb
+        ? ` data-fallback="${esc(fb)}" onerror="if(this.dataset.fallback){this.src=this.dataset.fallback;this.removeAttribute('data-fallback');}"`
+        : "";
+      return `<img src="${esc(primary)}" alt="" class="${className}"${extra}>`;
+    }
 
     async function api(path, options = {}) {
       const headers = options.headers || {};
@@ -236,6 +273,7 @@
         brew_time: user?.brew_time || "",
       };
       state.tab = tab;
+      state.editBean = false;
       render();
     }
 
@@ -268,10 +306,7 @@
     }
 
     function coffeeMiniCard(bean) {
-      const photo = mediaSrc(bean.image_url);
-      const img = photo
-        ? `<img src="${photo}" alt="" class="h-16 w-16 shrink-0 rounded object-cover">`
-        : bagThumb();
+      const img = photoImg(bean.image_url, bean.snapshot_url, "h-16 w-16 shrink-0 rounded object-cover") || bagThumb();
       return `<div class="flex min-w-[13.5rem] max-w-[16rem] items-center gap-3">
         ${img}
         <div class="min-w-0 flex-1">
@@ -284,13 +319,13 @@
 
     function pills(tags) {
       return (tags || []).map((tag) =>
-        `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(tag)}</span>`
+        `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(localizeTag(tag))}</span>`
       ).join("");
     }
 
     function feedPills(tags) {
       const clean = (tags || [])
-        .map((tag) => String(tag || "").trim())
+        .map((tag) => localizeTag(tag))
         .filter((tag) => tag && !/[.!?;:]/.test(tag) && tag.split(/\s+/).length <= 2)
         .slice(0, 3);
       return clean.map((tag) =>
@@ -446,11 +481,11 @@
       const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
       const mapMode = state.exploreMode === "map";
       const cards = state.beans.map((bean) => {
-        const photo = mediaSrc(bean.image_url);
+        const photo = photoImg(bean.image_url, bean.snapshot_url, "h-[180px] w-full rounded-t-2xl object-cover");
         return `<article class="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
           ${heartBtn(bean, "absolute right-2 top-2 z-10")}
           <button data-open-bean="${bean.id}" class="w-full text-left">
-            ${photo ? `<img src="${photo}" alt="" class="h-[180px] w-full rounded-t-2xl object-cover">` : bagFallback()}
+            ${photo || bagFallback()}
             <div class="p-3">
               <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
               <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
@@ -505,13 +540,14 @@
 
     function beanModal(profile) {
       const bean = profile.bean;
-      const photo = mediaSrc(bean.image_url);
+      const photo = photoImg(bean.image_url, bean.snapshot_url, "max-h-72 w-full object-cover");
       const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
+      const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
       return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
         <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
           <button type="button" data-close-modal class="absolute left-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
           <div class="relative">
-            ${photo ? `<img src="${photo}" alt="" class="max-h-72 w-full object-cover">` : bagFallback("h-56")}
+            ${photo || bagFallback("h-56")}
             ${heartBtn(bean, "absolute right-3 top-3")}
           </div>
           <div class="space-y-5 p-4 pb-8">
@@ -536,6 +572,9 @@
               </div>
             </section>
             ${tastingHistory(profile.history)}
+            ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
+            ${editor}
+            ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
             <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="go_rate_existing">${t("go_rate_existing")}</button>
           </div>
         </article>
@@ -560,12 +599,14 @@
           </div>
         </section>`;
       }
-      const preview = scan.preview || mediaSrc(scan.image_url);
+      const preview = photoImg(scan.image_url, scan.preview || scan.snapshot_url, "max-h-72 w-full object-contain bg-foam")
+        || (scan.preview ? `<img src="${esc(scan.preview)}" alt="" class="max-h-72 w-full object-contain bg-foam">` : "");
       const similar = scan.similar?.[0];
-      const fields = state.editScan ? scanEditor(scan) : "";
+      const canEdit = isAdmin();
+      const fields = canEdit && state.editScan ? scanEditor(scan) : "";
       return `<section class="px-4 pb-28 pt-4">
         <article class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
-          ${preview ? `<img src="${preview}" alt="" class="max-h-72 w-full object-contain bg-foam">` : bagFallback()}
+          ${preview || bagFallback()}
           <div class="space-y-3 p-4">
             <p class="text-xs font-semibold uppercase tracking-wider text-muted">${t("ai_summary_title")}</p>
             <h2 class="font-display text-2xl font-bold">${esc(scan.name || t("add_name"))}</h2>
@@ -580,7 +621,7 @@
               <button data-rate-bean="${similar.id}" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-cream">${t("use_existing")}</button>
             </div>` : ""}
             <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("approve_save")}</button>
-            <button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>
+            ${canEdit ? `<button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
             ${fields}
           </div>
         </article>
@@ -671,6 +712,7 @@
           <p class="text-xs uppercase tracking-wider text-muted" data-i18n="signed_in_as">${t("signed_in_as")}</p>
           <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
           <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
+          ${isAdmin() ? `<p class="mt-2 inline-flex rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-semibold">${esc(t("admin_badge"))}</p>` : ""}
         </div>
         ${langToggle()}
         <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold" data-i18n="export_csv">${t("export_csv")}</a>
@@ -851,7 +893,34 @@
       if (!state.profile && state.selectedId == null) return;
       state.selectedId = null;
       state.profile = null;
+      state.editBean = false;
       render();
+    }
+
+    function beanPayload(source) {
+      return {
+        name: source.name,
+        roaster: source.roaster,
+        origin: source.origin,
+        process: source.process,
+        roast_level: source.roast_level,
+        roaster_notes: source.roaster_notes,
+        flavor_tags: source.flavor_tags || [],
+        story: source.story,
+        image_url: source.image_url,
+        recommended_method: source.recommended_method || source.brew_recommendation?.recommended_method || "",
+        grind_size: source.grind_size || source.brew_recommendation?.grind_size || "",
+        water_temp: source.water_temp || source.brew_recommendation?.water_temp || "",
+        brew_ratio: source.brew_ratio || source.brew_recommendation?.brew_ratio || "",
+        brew_recommendation: source.brew_recommendation || {},
+        roast_date: source.roast_date || "",
+        altitude: source.altitude || "",
+        varietal: source.varietal || "",
+        latitude: source.latitude,
+        longitude: source.longitude,
+        region_full: source.region_full || "",
+        skip_fuzzy: false,
+      };
     }
 
     function render() {
@@ -927,12 +996,12 @@
       });
     }
 
-    function readScanForm() {
+    function readScanForm(base = state.scan) {
       const form = $("#scan-edit");
-      if (!form || !state.scan) return state.scan;
+      if (!form || !base) return base;
       const data = new FormData(form);
       return {
-        ...state.scan,
+        ...base,
         name: data.get("name"),
         roaster: data.get("roaster"),
         origin: data.get("origin"),
@@ -1018,35 +1087,41 @@
       });
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
-      $("#toggle-edit")?.addEventListener("click", () => { state.editScan = !state.editScan; render(); });
+      $("#toggle-edit")?.addEventListener("click", () => {
+        if (!isAdmin()) return;
+        state.editScan = !state.editScan;
+        render();
+      });
+      $("#toggle-bean-edit")?.addEventListener("click", () => {
+        if (!isAdmin()) return;
+        state.editBean = !state.editBean;
+        render();
+      });
+      $("#save-masterdata")?.addEventListener("click", async () => {
+        if (!isAdmin() || !state.profile?.bean?.id) return;
+        const source = readScanForm(state.profile.bean);
+        try {
+          const result = await api(`/api/beans/${state.profile.bean.id}`, {
+            method: "PUT",
+            body: JSON.stringify(beanPayload(source)),
+          });
+          if (result.bean) {
+            state.profile.bean = result.bean;
+            state.beans = state.beans.map((bean) => bean.id === result.bean.id ? { ...bean, ...result.bean } : bean);
+          }
+          state.editBean = false;
+          toast(t("saved_toast"));
+          render();
+        } catch (err) {
+          toast(t(err.detail || "forbidden"));
+        }
+      });
       $("#approve-bean")?.addEventListener("click", async () => {
-        const scan = readScanForm();
+        const scan = isAdmin() ? readScanForm() : state.scan;
         try {
           const result = await api("/api/beans", {
             method: "POST",
-            body: JSON.stringify({
-              name: scan.name,
-              roaster: scan.roaster,
-              origin: scan.origin,
-              process: scan.process,
-              roast_level: scan.roast_level,
-              roaster_notes: scan.roaster_notes,
-              flavor_tags: scan.flavor_tags || [],
-              story: scan.story,
-              image_url: scan.image_url,
-              recommended_method: scan.recommended_method || scan.brew_recommendation?.recommended_method || "",
-              grind_size: scan.grind_size || scan.brew_recommendation?.grind_size || "",
-              water_temp: scan.water_temp || scan.brew_recommendation?.water_temp || "",
-              brew_ratio: scan.brew_ratio || scan.brew_recommendation?.brew_ratio || "",
-              brew_recommendation: scan.brew_recommendation || {},
-              roast_date: scan.roast_date || "",
-              altitude: scan.altitude || "",
-              varietal: scan.varietal || "",
-              latitude: scan.latitude,
-              longitude: scan.longitude,
-              region_full: scan.region_full || "",
-              skip_fuzzy: false,
-            }),
+            body: JSON.stringify(beanPayload(scan)),
           });
           if (result.status === "fuzzy") {
             state.scan = { ...scan, similar: result.similar };

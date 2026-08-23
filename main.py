@@ -38,12 +38,15 @@ from db import (
     toggle_favorite,
     save_bean_image,
     should_auto_flush,
+    update_bean,
     upsert_oauth_user,
 )
 from ocr import (
     compare_flavor_notes,
     encode_scan_jpeg,
     ensure_local_env,
+    fetch_official_image_bytes,
+    flavor_i18n_table,
     flavor_notes_for,
     load_local_env,
     processes_for,
@@ -160,6 +163,12 @@ def optional_user(request: Request) -> Optional[dict[str, Any]]:
         return current_user(request)
     except HTTPException:
         return None
+
+
+def require_admin(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return user
 
 
 def _oauth_configured(provider: str) -> bool:
@@ -352,6 +361,7 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
         "processes": processes_for(lang),
         "roast_levels": roast_levels_for(lang),
         "flavor_notes": flavor_notes_for(lang),
+        "flavor_i18n": flavor_i18n_table(),
         "origins": distinct_values("origin"),
         "roasts": distinct_values("roast_level"),
     }
@@ -409,6 +419,8 @@ def _auth_error(code: str) -> HTTPException:
         "email_taken": 409,
         "invalid_credentials": 401,
         "oauth_unavailable": 503,
+        "forbidden": 403,
+        "name_roaster_taken": 409,
     }
     return HTTPException(status_code=mapping.get(code, 400), detail=code)
 
@@ -682,6 +694,45 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
     return result
 
 
+@app.put("/api/beans/{bean_id}")
+def replace_bean(
+    bean_id: int,
+    payload: BeanIn,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    if not get_bean(bean_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    try:
+        bean = update_bean(
+            bean_id,
+            name=payload.name,
+            roaster=payload.roaster,
+            origin=payload.origin,
+            process=payload.process,
+            roast_level=payload.roast_level,
+            roaster_notes=payload.roaster_notes,
+            flavor_tags=payload.flavor_tags,
+            story=payload.story,
+            image_url=payload.image_url,
+            recommended_method=payload.recommended_method,
+            grind_size=payload.grind_size,
+            water_temp=payload.water_temp,
+            brew_ratio=payload.brew_ratio,
+            brew_recommendation=payload.brew_recommendation,
+            roast_date=payload.roast_date,
+            altitude=payload.altitude,
+            varietal=payload.varietal,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            region_full=payload.region_full,
+        )
+    except ValueError as exc:
+        raise _auth_error(str(exc)) from exc
+    if not bean:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"status": "updated", "bean": bean}
+
+
 @app.post("/api/beans/{bean_id}/favorite")
 def favorite_bean(bean_id: int, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     if not get_bean(bean_id):
@@ -712,8 +763,17 @@ async def scan(
         raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
-    image_url = save_bean_image(jpeg, filename="scan.jpg")
+    snapshot_url = save_bean_image(jpeg, filename="scan.jpg")
+    official_url = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
+    image_url = snapshot_url
+    if official_url:
+        official_bytes = fetch_official_image_bytes(official_url)
+        if official_bytes:
+            image_url = save_bean_image(official_bytes, filename="official.jpg")
+        else:
+            image_url = official_url
     parsed["image_url"] = image_url
+    parsed["snapshot_url"] = snapshot_url
     parsed["preview"] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
     return parsed
 
