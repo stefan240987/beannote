@@ -1,0 +1,28 @@
+# BeanNote project constraints
+
+You are working on BeanNote, a Streamlit coffee journal. Keep changes modular and concise.
+
+## Architecture
+- `db.py`: SQLite schema, dual-env paths, UNIQUE(name, roaster) ON CONFLICT IGNORE, fuzzy dedupe via `difflib.get_close_matches` (cutoff 0.80), queries, export.
+- `ocr.py`: local Tesseract only. Detect `/opt/homebrew/bin/tesseract` or `/usr/local/bin/tesseract`. Regex-parse roaster, name, origin, process.
+- `translations.py`: DA / EN / DE / FR / ES keys only. No inline UI copy in other files.
+- `app.py`: Streamlit UI, custom CSS, Plotly radar, sidebar export. No business logic that belongs in db.py/ocr.py.
+- Do not add extra frameworks, cloud OCR, or a second database.
+
+## Environment
+- `ENVIRONMENT=local` → `./data/beannote.db`
+- `ENVIRONMENT=production` → `/app/data/beannote.db`
+- Unraid: PUID=99, PGID=100, TZ=Europe/Copenhagen, volume `/mnt/user/appdata/beannote/data`.
+
+## Deduplication
+- Always fuzzy-check before insert (manual or OCR).
+- UI warning must stay: "Minder denne bønne om en eksisterende i BeanNote?" (via i18n key `duplicate_warning`) plus a 1-click jump to rate the existing bean.
+
+## Snapshots
+- After any feature or refactor, append `CHANGELOG.md` and create a git snapshot:
+  `git commit -m "snapshot: vX.Y.Z - <feature>"`
+- Bump VERSION in `db.py` when the change is user-facing.
+
+## Scope
+- Mobile-first CSS via `st.markdown`. Do not redesign the palette (Espresso `#3c2a21`, Terracotta `#b85c38`, Cream `#faf6f0`).
+- No README expansion, no extra markdown, no drive-by refactors.

@@ -1,0 +1,25 @@
+services:
+  beannote:
+    image: ghcr.io/${GITHUB_USERNAME:-stefan240987}/beannote:latest
+    build: .
+    container_name: beannote
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      ENVIRONMENT: production
+      PUID: "99"
+      PGID: "100"
+      TZ: Europe/Copenhagen
+    volumes:
+      - /mnt/user/appdata/beannote/data:/app/data
+    labels:
+      net.unraid.docker.managed: dockerman
+      net.unraid.docker.webui: "http://[IP]:[PORT:8501]"
+      net.unraid.docker.icon: "https://raw.githubusercontent.com/stefan240987/beannote/main/.github/icon.png"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s

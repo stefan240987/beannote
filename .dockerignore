@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+data
+*.db
+.DS_Store
+.env
+CHANGELOG.md
+.cursorrules
+run_local.sh
