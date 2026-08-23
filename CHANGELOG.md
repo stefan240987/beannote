@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.2.1] - 2026-08-23
+
+- snapshot: v5.2.1 - cleaned up flavor profile UI and streamlined brew log cards
+- Bean Detail Flavor Profile is a single compact 5-dot row per note (Syre, Sødme, Krop, Eftersmag) — no duplicate progress bars, no stacked OCR intensity block, and no "Du vs. fællesskabet" chart heading.
+- Bryg-log entries are compact recipe cards (`⭐ rating · ☕ method · date` plus grind/dose/time badges and an optional comment) instead of repeating the four sensory bars on every tasting.
+
 ## [5.2.0] - 2026-08-23
 
 - snapshot: v5.2.0 - integrated Gemini Grounded search for image candidates and redesigned Rate UI without radar chart

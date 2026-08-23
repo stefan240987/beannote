@@ -92,20 +92,9 @@
       box-shadow: 0 0 0 2px rgba(184, 92, 56, 0.45);
       transform: translateY(-1px);
     }
-    .flavor-track {
-      height: 0.42rem;
-      border-radius: 999px;
-      background: #e8d8c8;
-      overflow: hidden;
-    }
-    .flavor-fill {
-      height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, #b85c38, #3c2a21);
-    }
     .flavor-dot {
-      width: 0.62rem;
-      height: 0.62rem;
+      width: 0.7rem;
+      height: 0.7rem;
       border-radius: 999px;
       background: #e8d8c8;
     }
@@ -661,31 +650,32 @@
     function progressRow(labelKey, score) {
       const n = Number(score);
       const value = Number.isFinite(n) ? Math.max(0, Math.min(5, n)) : 0;
-      const pct = (value / 5) * 100;
       const rounded = Math.round(value);
+      const display = Number.isInteger(value) || Math.abs(value - rounded) < 0.05
+        ? String(rounded)
+        : value.toFixed(1);
       const dots = [1, 2, 3, 4, 5].map((i) =>
         `<span class="flavor-dot${i <= rounded ? " on" : ""}" aria-hidden="true"></span>`
       ).join("");
-      return `<div>
-        <div class="mb-1 flex items-center justify-between gap-2">
-          <p class="text-sm font-semibold" data-i18n="${labelKey}">${esc(t(labelKey))}</p>
-          <p class="text-xs font-semibold tabular-nums text-terracotta">${value.toFixed(1)}/5</p>
+      return `<div class="flex items-center justify-between gap-3">
+        <p class="min-w-[6.5rem] shrink-0 text-sm font-semibold" data-i18n="${labelKey}">${esc(t(labelKey))}</p>
+        <div class="flex items-center gap-2" role="meter" aria-valuemin="0" aria-valuemax="5" aria-valuenow="${value}" aria-label="${esc(t(labelKey))}">
+          <div class="flex items-center gap-1">${dots}</div>
+          <p class="text-xs font-semibold tabular-nums text-terracotta">${display}/5</p>
         </div>
-        <div class="flavor-track" role="meter" aria-valuemin="0" aria-valuemax="5" aria-valuenow="${value.toFixed(1)}" aria-label="${esc(t(labelKey))}">
-          <div class="flavor-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="mt-1.5 flex items-center gap-1.5">${dots}</div>
       </div>`;
     }
 
     function sensoryStrip(scores) {
       if (!scores) return "";
-      return `<div class="mt-2 space-y-2">
-        ${progressRow("sense_acidity", scores.acidity)}
-        ${progressRow("sense_sweetness", scores.sweetness)}
-        ${progressRow("sense_body", scores.body)}
-        ${progressRow("sense_aftertaste", scores.aftertaste)}
-      </div>`;
+      const rows = [
+        ["sense_acidity", scores.acidity],
+        ["sense_sweetness", scores.sweetness],
+        ["sense_body", scores.body],
+        ["sense_aftertaste", scores.aftertaste],
+      ].filter(([, score]) => Number(score) > 0);
+      if (!rows.length) return "";
+      return `<div class="space-y-1.5">${rows.map(([key, score]) => progressRow(key, score)).join("")}</div>`;
     }
 
     function starControl(value) {
@@ -724,7 +714,7 @@
 
     function liveSensoryCard() {
       const r = state.rate;
-      return `<section id="sensory-preview" class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+      return `<section id="sensory-preview" class="space-y-2 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
         <div class="flex items-center justify-between gap-2">
           <p class="text-sm font-semibold" data-i18n="sensory_preview">${esc(t("sensory_preview"))}</p>
           <p class="text-sm font-bold text-amber-600">★ ${clampHalf(r.rating).toFixed(1)}</p>
@@ -833,50 +823,6 @@
       return (hit && (hit[activeLang()] || hit.en || hit.da)) || raw;
     }
 
-    function intensityScore(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return 0;
-      return Math.max(1, Math.min(5, Math.round(n)));
-    }
-
-    function intensityRow(iconKey, score, scale) {
-      const value = intensityScore(score);
-      if (!value) return "";
-      const pct = (value / 5) * 100;
-      const dots = [1, 2, 3, 4, 5].map((n) =>
-        `<span class="flavor-dot${n <= value ? " on" : ""}" aria-hidden="true"></span>`
-      ).join("");
-      const hint = scale
-        ? `<div class="mt-1 flex justify-between text-[10px] uppercase tracking-wide text-muted">
-            <span>${esc(t("roast_scale_light"))}</span>
-            <span>${esc(t("roast_scale_medium"))}</span>
-            <span>${esc(t("roast_scale_dark"))}</span>
-          </div>`
-        : "";
-      return `<div>
-        <div class="mb-1 flex items-center justify-between gap-2">
-          <p class="text-sm font-semibold" data-i18n="${iconKey}">${esc(t(iconKey))}</p>
-          <p class="text-xs font-semibold text-terracotta">${value}/5</p>
-        </div>
-        <div class="flavor-track" role="meter" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${value}" aria-label="${esc(t(iconKey))}">
-          <div class="flavor-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="mt-1.5 flex items-center gap-1.5">${dots}</div>
-        ${hint}
-      </div>`;
-    }
-
-    function intensityBars(bean) {
-      const acidity = intensityRow("intensity_acidity", bean?.acidity_score);
-      const body = intensityRow("intensity_body", bean?.body_score);
-      const roast = intensityRow("intensity_roast", bean?.roast_level_score, true);
-      if (!acidity && !body && !roast) return "";
-      return `<section class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
-        <p class="text-xs font-semibold uppercase tracking-wider text-muted" data-i18n="intensity_title">${esc(t("intensity_title"))}</p>
-        ${acidity}${body}${roast}
-      </section>`;
-    }
-
     function supportEnabled() {
       return !!(state.config?.support_enabled && (state.config.mobilepay_url || state.config.buymeacoffee_url));
     }
@@ -957,44 +903,45 @@
 
     function recipeMeta(row) {
       const bits = [];
-      if (row.grind_setting) bits.push(`⚙️ ${esc(row.grind_setting)}`);
+      if (row.grind_setting) bits.push(t("recipe_grind_value", { grind: row.grind_setting }));
       const coffee = row.coffee_grams;
       const water = row.water_grams;
       if (coffee != null && coffee !== "" && water != null && water !== "") {
-        bits.push(`⚖️ ${esc(t("recipe_ratio", { coffee, water }))}`);
+        bits.push(t("recipe_dose_value", { coffee, water }));
       } else {
-        if (coffee != null && coffee !== "") bits.push(`☕ ${esc(coffee)}g`);
-        if (water != null && water !== "") bits.push(`💧 ${esc(water)}g`);
+        if (coffee != null && coffee !== "") bits.push(`☕ ${coffee}g`);
+        if (water != null && water !== "") bits.push(`💧 ${water}g`);
       }
-      if (row.brew_time) bits.push(`⏱ ${esc(row.brew_time)}`);
+      if (row.brew_time) bits.push(`⏱️ ${row.brew_time}`);
       return bits;
+    }
+
+    function recipeCard(row) {
+      const method = localizeBrewMethod(row.brew_method);
+      const date = (row.created_at || "").slice(0, 10);
+      const header = [`⭐ ${Number(row.rating || 0).toFixed(1)}`];
+      if (method) header.push(`☕ ${method}`);
+      if (date) header.push(date);
+      const badges = recipeMeta(row);
+      const notes = String(row.tasting_notes_user || row.notes || "").trim();
+      return `<article class="rounded-2xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-latte">
+        <p class="text-sm font-semibold text-espresso">${esc(header.join(" · "))}</p>
+        ${badges.length ? `<p class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-espresso/80">${badges.map((item) => `<span>${esc(item)}</span>`).join(`<span class="text-latte">|</span>`)}</p>` : ""}
+        ${notes ? `<p class="mt-1.5 text-sm leading-5 text-espresso/80">💬 "${esc(notes)}"</p>` : ""}
+      </article>`;
     }
 
     function tastingHistory(history) {
       const rows = history || [];
       if (!rows.length) {
         return `<section>
-          <p class="text-sm font-semibold" data-i18n="recipe_log">${t("recipe_log")}</p>
-          <p class="mt-2 text-sm text-muted" data-i18n="no_ratings">${t("no_ratings")}</p>
+          <p class="text-sm font-semibold" data-i18n="recipe_log">${esc(t("recipe_log"))}</p>
+          <p class="mt-2 text-sm text-muted" data-i18n="no_ratings">${esc(t("no_ratings"))}</p>
         </section>`;
       }
       return `<section class="space-y-2">
-        <p class="text-sm font-semibold" data-i18n="recipe_log">${t("recipe_log")}</p>
-        ${rows.map((row) => {
-          const method = localizeBrewMethod(row.brew_method);
-          const notes = row.tasting_notes_user || row.notes || "";
-          const meta = recipeMeta(row);
-          return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-sm font-semibold text-amber-600">★ ${Number(row.rating || 0).toFixed(1)}</p>
-              <p class="text-xs text-muted">${esc((row.created_at || "").slice(0, 10))}</p>
-            </div>
-            ${method ? `<p class="mt-1 text-sm font-semibold">${esc(method)}</p>` : ""}
-            ${meta.length ? `<ul class="mt-2 space-y-1 text-xs text-espresso/80">${meta.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
-            ${notes ? `<p class="mt-2 rounded-xl bg-foam px-2.5 py-2 text-sm leading-6 text-espresso/80">💬 ${esc(notes)}</p>` : ""}
-            ${sensoryStrip(row)}
-          </article>`;
-        }).join("")}
+        <p class="text-sm font-semibold" data-i18n="recipe_log">${esc(t("recipe_log"))}</p>
+        ${rows.map(recipeCard).join("")}
       </section>`;
     }
 
@@ -1042,14 +989,13 @@
             ${photo || bagFallback("h-56")}
             ${heartBtn(bean, "modal-cover-fav absolute right-3 top-3 z-10")}
           </div>
-          <div class="space-y-5 p-4 pb-8">
+          <div class="space-y-4 p-4 pb-8">
             <section class="space-y-3">
               <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
               <p class="text-sm text-muted">${esc(info)}</p>
               ${retailerActions(bean)}
               <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
               ${suitabilityLine(bean.suitable_for)}
-              ${intensityBars(bean)}
               ${metaBadges(bean)}
               ${storyBlock(bean.story)}
             </section>
@@ -1060,7 +1006,7 @@
             <section>
               ${originMapBox(bean)}
             </section>
-            ${communityBars(profile)}
+            ${flavorProfile(profile)}
             ${tastingHistory(profile.history)}
             ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
             ${editor}
@@ -1071,14 +1017,40 @@
       </div>`;
     }
 
-    function communityBars(profile) {
-      const community = profile?.community;
-      if (!community) return "";
-      const keys = ["acidity", "sweetness", "body", "aftertaste"];
-      if (!keys.some((key) => Number(community[key]) > 0)) return "";
-      return `<section class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
-        <p class="text-sm font-semibold" data-i18n="community_chart">${esc(t("community_chart"))}</p>
-        ${sensoryStrip(community)}
+    function flavorScores(profile) {
+      const community = profile?.community || {};
+      const bean = profile?.bean || {};
+      if (Number(community.rating_count) > 0) {
+        return {
+          acidity: community.acidity,
+          sweetness: community.sweetness,
+          body: community.body,
+          aftertaste: community.aftertaste,
+        };
+      }
+      const user = profile?.user;
+      if (user && ["acidity", "sweetness", "body", "aftertaste"].some((key) => Number(user[key]) > 0)) {
+        return {
+          acidity: user.acidity,
+          sweetness: user.sweetness,
+          body: user.body,
+          aftertaste: user.aftertaste,
+        };
+      }
+      return {
+        acidity: bean.acidity_score,
+        sweetness: bean.sweetness_score,
+        body: bean.body_score,
+        aftertaste: bean.aftertaste_score,
+      };
+    }
+
+    function flavorProfile(profile) {
+      const strip = sensoryStrip(flavorScores(profile));
+      if (!strip) return "";
+      return `<section class="space-y-2 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <p class="text-sm font-semibold" data-i18n="flavor_profile">${esc(t("flavor_profile"))}</p>
+        ${strip}
       </section>`;
     }
 
@@ -1551,17 +1523,22 @@
         body.append("file", file);
         body.append("lang", lang);
         state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
+        state.busy = false;
         if (state.scan.scan_action === "rate" && state.scan.scan_match?.id) {
           toast(t("bean_found"));
           await openBean(state.scan.scan_match.id, "rate");
           return;
         }
         state.tab = "scan";
+        render();
       } catch (err) {
+        state.busy = false;
         toast(t(err.detail || "ocr_fail"));
       } finally {
-        state.busy = false;
-        render();
+        if (state.busy) {
+          state.busy = false;
+          render();
+        }
       }
     }
 
