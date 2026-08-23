@@ -12,7 +12,7 @@ from typing import Any
 
 from PIL import Image
 
-from db import classify_matches, find_similar_beans
+from db import classify_matches, find_similar_beans, scan_destination
 
 ORIGINS = [
     "Ethiopia", "Etiopien", "Colombia", "Kenya", "Brazil", "Brasilien",
@@ -240,6 +240,9 @@ def scan_label(image_bytes: bytes) -> dict[str, Any]:
     similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
     parsed["similar"] = similar
     parsed["match_tier"] = classify_matches(similar)
+    parsed["scan_match"] = similar[0] if similar else None
+    parsed["scan_confidence"] = float((similar[0].get("confidence") if similar else 0) or 0)
+    parsed["scan_action"] = scan_destination(similar)
     return parsed
 
 

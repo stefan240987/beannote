@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 import plotly.graph_objects as go
@@ -19,6 +20,9 @@ from db import (
     insert_rating,
     list_beans,
     matching_flavor_tags,
+    resolve_image_path,
+    save_bean_image,
+    update_bean_image,
 )
 from translations import LANGS, t
 
@@ -35,6 +39,17 @@ BREW_METHODS = [
 ]
 ROAST_LEVELS = ["Lys", "Medium", "Medium-Dark", "Mørk", "Light", "Dark"]
 PROCESSES = ["Washed", "Natural", "Honey", "Anaerobic"]
+BAG_PLACEHOLDER = """
+<div class="bn-card-fallback" aria-hidden="true">
+  <svg viewBox="0 0 80 64" width="64" height="52" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="22" y="10" width="36" height="46" rx="5" fill="#faf6f0"/>
+    <path d="M22 22h36" stroke="#b85c38" stroke-width="3"/>
+    <rect x="32" y="10" width="16" height="6" rx="2" fill="#e8d8c8"/>
+    <circle cx="40" cy="40" r="9" stroke="#3c2a21" stroke-width="2"/>
+    <path d="M36 39c1.2-3.2 6.8-3.2 8 0" stroke="#b85c38" stroke-width="1.6" fill="none"/>
+  </svg>
+</div>
+"""
 
 st.set_page_config(
     page_title="BeanNote",
@@ -122,7 +137,39 @@ def inject_css() -> None:
             border-radius: 12px;
             padding: 0.75rem 0.85rem 0.65rem;
             box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+            overflow: hidden;
+            max-width: 100%;
         }
+        .bn-card.has-photo { padding: 0; }
+        .bn-card.has-photo .bn-card-body { padding: 0.75rem 0.85rem 0.65rem; }
+        .bn-card-under-photo {
+            border-top: 0;
+            border-radius: 0 0 12px 12px;
+        }
+        .bn-card-fallback {
+            height: 160px;
+            border-radius: 8px 8px 0 0;
+            background: linear-gradient(160deg, #4a3328 0%, #3c2a21 58%, #b85c38 145%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        [data-testid="column"]:has(.bn-bag-flag) [data-testid="stImage"] {
+            margin-bottom: -1px;
+            background: #fffdf9;
+            border: 1px solid #eae3d9;
+            border-bottom: 0;
+            border-radius: 12px 12px 0 0;
+            overflow: hidden;
+        }
+        [data-testid="column"]:has(.bn-bag-flag) [data-testid="stImage"] img {
+            object-fit: cover;
+            height: 160px;
+            width: 100%;
+            border-radius: 8px 8px 0 0;
+            display: block;
+        }
+        .bn-scan-slot { margin: 0 0 0.7rem; }
         .bn-roaster {
             font-size: 11px;
             letter-spacing: 1px;
@@ -290,14 +337,59 @@ def inject_css() -> None:
             color: #fff;
         }
         @media (max-width: 768px) {
-            .block-container { padding-left: 0.7rem; padding-right: 0.7rem; }
+            .block-container {
+                padding-left: 10px;
+                padding-right: 10px;
+                max-width: 100%;
+                overflow-x: hidden;
+            }
+            [data-testid="stVerticalBlock"],
+            [data-testid="stHorizontalBlock"] {
+                max-width: 100%;
+            }
+            [data-testid="stHorizontalBlock"] {
+                gap: 0.5rem;
+                flex-wrap: wrap;
+            }
             .bn-hero { padding: 0.75rem 0.9rem; border-radius: 12px; }
             .bn-hero h1 { font-size: 1.35rem; }
+            .bn-card { width: 100%; }
             .stButton button, .stDownloadButton button,
-            button[data-testid="stBaseButton-primary"] { width: 100%; min-height: 44px; }
-            button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 34px; }
+            button[data-testid="stBaseButton-primary"] { width: 100%; min-height: 48px; }
+            button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 40px; }
             [data-testid="stSlider"] { padding-bottom: 0.85rem; }
             [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
+            div[data-testid="stButtonGroup"] {
+                flex-wrap: wrap;
+                padding: 4px;
+                gap: 4px;
+            }
+            div[data-testid="stButtonGroup"] button {
+                min-height: 48px;
+                font-size: 14px;
+                padding: 0.55rem 0.4rem;
+                white-space: normal;
+                line-height: 1.2;
+            }
+            div[data-testid="stRadio"] [role="radiogroup"] label {
+                min-height: 48px;
+                font-size: 14px;
+            }
+            [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+            [data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+                min-height: 48px !important;
+                font-size: 16px !important;
+            }
+            [data-testid="stTextInput"] input,
+            [data-testid="stNumberInput"] input,
+            [data-testid="stTextArea"] textarea {
+                font-size: 16px !important;
+                min-height: 48px;
+            }
+            [data-testid="stCameraInput"] button,
+            [data-testid="stFileUploader"] section {
+                min-height: 48px;
+            }
         }
         </style>
         """,
@@ -409,6 +501,7 @@ def apply_pending_ui() -> None:
         return
     st.session_state.ocr_form = {}
     st.session_state.pending_similar = None
+    st.session_state.pending_image_url = ""
     st.session_state.add_name = ""
     st.session_state.add_roaster = ""
     st.session_state.add_origin = ""
@@ -429,6 +522,8 @@ def apply_ocr_form(parsed: dict) -> None:
     st.session_state.add_roast = parsed.get("roast_level") or ""
     st.session_state.add_notes = parsed.get("roaster_notes") or ""
     st.session_state.add_flavors = parsed.get("flavor_notes") or []
+    if parsed.get("image_url"):
+        st.session_state.pending_image_url = parsed["image_url"]
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
     st.session_state.ocr_flash = "scanned" if filled else "ocr_empty"
 
@@ -436,7 +531,79 @@ def apply_ocr_form(parsed: dict) -> None:
 def clear_ocr_form() -> None:
     st.session_state.ocr_form = {}
     st.session_state.pending_similar = None
+    st.session_state.pending_image_url = ""
     st.session_state.reset_add_form = True
+
+
+def pending_image_url() -> str:
+    return (st.session_state.get("pending_image_url") or "").strip()
+
+
+def process_scan_image(image_file) -> None:
+    """OCR + fuzzy match a snapped/uploaded bag, then route to Rate or Add."""
+    from ocr import configure_tesseract, scan_label
+
+    image_bytes = image_file.getvalue()
+    filename = getattr(image_file, "name", "") or "scan.jpg"
+    image_url = save_bean_image(image_bytes, filename)
+
+    if not configure_tesseract():
+        st.session_state.pending_image_url = image_url
+        st.session_state.ocr_flash = "ocr_missing"
+        st.session_state.pending_tab = "add"
+        st.session_state.scan_panel_open = False
+        return
+
+    try:
+        parsed = scan_label(image_bytes)
+    except Exception:
+        st.session_state.pending_image_url = image_url
+        st.session_state.ocr_flash = "ocr_fail"
+        st.session_state.pending_tab = "add"
+        st.session_state.scan_panel_open = False
+        return
+
+    parsed["image_url"] = image_url
+    st.session_state.pending_image_url = image_url
+    st.session_state.scan_panel_open = False
+
+    match = parsed.get("scan_match")
+    if parsed.get("scan_action") == "rate" and match:
+        if not (match.get("image_url") or "").strip():
+            update_bean_image(match["id"], image_url)
+        notes = parsed.get("roaster_notes") or ", ".join(parsed.get("flavor_notes") or [])
+        st.session_state.bean_found_flash = True
+        go_review(match["id"], notes=notes)
+        return
+
+    apply_ocr_form(parsed)
+    st.session_state.pending_tab = "add"
+
+
+def render_scan_cta(lang: str) -> None:
+    st.markdown('<div class="bn-scan-slot"></div>', unsafe_allow_html=True)
+    if st.button(t(lang, "scan_and_rate"), type="primary", use_container_width=True, key="scan_cta"):
+        st.session_state.scan_panel_open = not st.session_state.get("scan_panel_open", False)
+
+    if not st.session_state.get("scan_panel_open"):
+        return
+
+    st.caption(t(lang, "camera_help"))
+    photo = st.camera_input(t(lang, "take_photo"), key="scan_camera")
+    uploaded = st.file_uploader(
+        t(lang, "or_upload"),
+        type=["jpg", "jpeg", "png"],
+        key="scan_upload",
+    )
+    image = photo or uploaded
+    if not image:
+        return
+    digest = hashlib.md5(image.getvalue()).hexdigest()
+    if st.session_state.get("last_scan_digest") == digest:
+        return
+    st.session_state.last_scan_digest = digest
+    process_scan_image(image)
+    st.rerun()
 
 
 def render_exact_match(lang: str, similar: list[dict]) -> None:
@@ -517,6 +684,9 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     bean = profile["bean"]
     community = profile["community"]
     user = profile["user"]
+    photo = resolve_image_path(bean.get("image_url") or "")
+    if photo:
+        st.image(str(photo), width="stretch")
     st.markdown(f'<div class="bn-roaster">{bean["roaster"]}</div>', unsafe_allow_html=True)
     st.markdown(f'<h3 class="bn-name">{bean["name"]}</h3>', unsafe_allow_html=True)
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
@@ -574,18 +744,27 @@ def render_explore(lang: str, filters: dict, query: str = "") -> None:
                     f'<span class="bn-badge">{tag}</span>'
                     for tag in (bean.get("flavor_tags") or [])[:4]
                 )
-                st.markdown(
-                    f"""
-                    <div class="bn-card">
-                        <div class="bn-roaster">{bean['roaster']}</div>
-                        <h3 class="bn-name">{bean['name']}</h3>
-                        <div class="bn-stars">{stars(avg)}</div>
-                        <div class="bn-meta">{bean['origin']} · {bean['process'] or '—'} · {bean['roast_level'] or '—'}</div>
-                        <div>{tags}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                inner = (
+                    f'<div class="bn-roaster">{bean["roaster"]}</div>'
+                    f'<h3 class="bn-name">{bean["name"]}</h3>'
+                    f'<div class="bn-stars">{stars(avg)}</div>'
+                    f'<div class="bn-meta">{bean["origin"]} · {bean["process"] or "—"} · {bean["roast_level"] or "—"}</div>'
+                    f"<div>{tags}</div>"
                 )
+                photo = resolve_image_path(bean.get("image_url") or "")
+                if photo:
+                    st.markdown('<div class="bn-bag-flag"></div>', unsafe_allow_html=True)
+                    st.image(str(photo), width="stretch")
+                    st.markdown(
+                        f'<div class="bn-card bn-card-under-photo">{inner}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f'<div class="bn-card has-photo">{BAG_PLACEHOLDER}'
+                        f'<div class="bn-card-body">{inner}</div></div>',
+                        unsafe_allow_html=True,
+                    )
                 if st.button(t(lang, "details"), key=f"open-{bean['id']}", type="secondary"):
                     st.session_state.detail_bean_id = bean["id"]
                     bean_dialog(bean["id"], lang)
@@ -615,14 +794,24 @@ def render_review(lang: str) -> None:
     community = profile["community"]
     latest = profile["user"]
 
+    if st.session_state.pop("bean_found_flash", False):
+        st.toast(t(lang, "bean_found"), icon="☕")
+        st.markdown(
+            f'<div class="bn-info"><strong>{t(lang, "bean_found")}</strong></div>',
+            unsafe_allow_html=True,
+        )
+
+    photo = resolve_image_path(bean.get("image_url") or "")
+    if photo:
+        st.image(str(photo), width=220)
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
     brew = st.selectbox(t(lang, "brew_method"), BREW_METHODS)
-    rating = st.slider(t(lang, "rating"), 1.0, 5.0, 4.0, 0.1, help=t(lang, "help_rating"))
+    rating = st.slider(t(lang, "rating"), min_value=1.0, max_value=5.0, value=4.0, step=0.5, help=t(lang, "help_rating"))
     c1, c2 = st.columns(2)
-    acidity = c1.slider(t(lang, "acidity"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_acidity"))
-    sweetness = c2.slider(t(lang, "sweetness"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_sweetness"))
-    body = c1.slider(t(lang, "body"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_body"))
-    aftertaste = c2.slider(t(lang, "aftertaste"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_aftertaste"))
+    acidity = c1.slider(t(lang, "acidity"), min_value=1.0, max_value=5.0, value=3.5, step=0.5, help=t(lang, "help_acidity"))
+    sweetness = c2.slider(t(lang, "sweetness"), min_value=1.0, max_value=5.0, value=3.5, step=0.5, help=t(lang, "help_sweetness"))
+    body = c1.slider(t(lang, "body"), min_value=1.0, max_value=5.0, value=3.5, step=0.5, help=t(lang, "help_body"))
+    aftertaste = c2.slider(t(lang, "aftertaste"), min_value=1.0, max_value=5.0, value=3.5, step=0.5, help=t(lang, "help_aftertaste"))
     notes = st.text_area(
         t(lang, "notes"),
         placeholder=t(lang, "notes_ph"),
@@ -663,7 +852,9 @@ def render_add(lang: str) -> None:
             st.error(t(lang, "ocr_missing"))
         else:
             try:
-                apply_ocr_form(scan_label(uploaded.getvalue()))
+                parsed = scan_label(uploaded.getvalue())
+                parsed["image_url"] = save_bean_image(uploaded.getvalue(), uploaded.name)
+                apply_ocr_form(parsed)
                 st.rerun()
             except Exception:
                 st.error(t(lang, "ocr_fail"))
@@ -673,6 +864,15 @@ def render_add(lang: str) -> None:
         st.success(t(lang, "scanned"))
     elif flash == "ocr_empty":
         st.warning(t(lang, "ocr_empty"))
+    elif flash == "ocr_missing":
+        st.error(t(lang, "ocr_missing"))
+    elif flash == "ocr_fail":
+        st.error(t(lang, "ocr_fail"))
+
+    attached = resolve_image_path(pending_image_url())
+    if attached:
+        st.caption(t(lang, "attached_label"))
+        st.image(str(attached), width=180)
 
     form = st.session_state.get("ocr_form") or {}
     name = st.text_input(t(lang, "add_name"), key="add_name")
@@ -720,6 +920,7 @@ def render_add(lang: str) -> None:
             roaster_notes=roaster_notes or ", ".join(flavors),
             flavor_tags=flavors or None,
             skip_fuzzy=force,
+            image_url=pending_image_url() or (form.get("image_url") or ""),
         )
         if result["status"] in {"fuzzy", "exact"}:
             st.session_state.pending_similar = result["similar"]
@@ -751,6 +952,7 @@ def main() -> None:
         f"</div>",
         unsafe_allow_html=True,
     )
+    render_scan_cta(lang)
 
     tab_keys = ["explore", "review", "add"]
     tab_labels = {

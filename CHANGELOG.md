@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.6] - 2026-08-23
+
+- Camera-first mobile flow: `📸 Scan pose & Rate` opens `st.camera_input` / upload, runs OCR + fuzzy match immediately, and jumps to Rate when the match is ≥85% (`Bønne fundet i BeanNote!`) or pre-fills Add Bean with the snapped photo when it is not.
+- Rating sliders (overall, acidity, sweetness, body, aftertaste) snap to half-steps only (`step=0.5`).
+- Bag photos persist on `beans.image_url` and render at the top of Explore cards (`object-fit: cover; height: 160px`) with a coffee-illustration fallback.
+- Mobile CSS cleanup: 10px container padding, thumb-sized nav tabs, and 16px touch dropdowns to avoid overflow and iOS zoom.
+
 ## [1.0.5] - 2026-08-23
 
 - Localized help tooltips on rating sliders (overall, acidity, sweetness, body, aftertaste).

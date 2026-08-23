@@ -13,9 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
+SCAN_MATCH_CUTOFF = 0.85
 FUZZY_CUTOFF = NEAR_MATCH_CUTOFF
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()
@@ -63,6 +64,7 @@ def init_db() -> None:
                 roast_level TEXT DEFAULT '',
                 roaster_notes TEXT DEFAULT '',
                 flavor_tags TEXT DEFAULT '[]',
+                image_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
                 community_sweetness REAL DEFAULT 3.5,
                 community_body REAL DEFAULT 3.3,
@@ -90,7 +92,49 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ratings_bean ON ratings(bean_id);
             """
         )
+        _ensure_columns(conn)
+    get_images_dir()
     _seed_if_empty()
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
+    if "image_url" not in cols:
+        conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
+
+
+def get_images_dir() -> Path:
+    path = get_db_path().parent / "images"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_bean_image(image_bytes: bytes, filename: str = "") -> str:
+    """Persist a snapped/uploaded bag photo next to the DB; return a relative path."""
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+        suffix = ".jpg"
+    if suffix == ".jpeg":
+        suffix = ".jpg"
+    name = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{os.urandom(3).hex()}{suffix}"
+    dest = get_images_dir() / name
+    dest.write_bytes(image_bytes)
+    return f"images/{name}"
+
+
+def resolve_image_path(image_url: str) -> Path | None:
+    if not (image_url or "").strip():
+        return None
+    raw = Path(image_url)
+    if raw.is_file():
+        return raw
+    candidate = get_db_path().parent / image_url
+    return candidate if candidate.is_file() else None
+
+
+def update_bean_image(bean_id: int, image_url: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
 
 
 def _seed_if_empty() -> None:
@@ -240,6 +284,13 @@ def classify_matches(similar: list[dict[str, Any]]) -> str:
     return match_tier(float(similar[0].get("confidence") or 0))
 
 
+def scan_destination(similar: list[dict[str, Any]]) -> str:
+    """Camera-first: jump to Rate when the top match is at least 85%."""
+    if similar and float(similar[0].get("confidence") or 0) >= SCAN_MATCH_CUTOFF:
+        return "rate"
+    return "add"
+
+
 def find_similar_beans(
     name: str,
     roaster: str = "",
@@ -294,16 +345,22 @@ def insert_bean(
     roaster_notes: str = "",
     flavor_tags: list[str] | None = None,
     skip_fuzzy: bool = False,
+    image_url: str = "",
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
+    image_url = (image_url or "").strip()
     if not name or not roaster:
         raise ValueError("name_roaster_required")
 
     similar = find_similar_beans(name, roaster)
     exact = [row for row in similar if row.get("tier") == "exact"]
     if exact:
-        return {"status": "exact", "similar": exact, "bean": exact[0]}
+        bean = exact[0]
+        if image_url and not (bean.get("image_url") or "").strip():
+            update_bean_image(bean["id"], image_url)
+            bean["image_url"] = image_url
+        return {"status": "exact", "similar": exact, "bean": bean}
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
 
@@ -313,8 +370,8 @@ def insert_bean(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
-                flavor_tags, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                flavor_tags, image_url, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -324,6 +381,7 @@ def insert_bean(
                 _normalize(roast_level),
                 (roaster_notes or "").strip(),
                 tags,
+                image_url,
                 _now(),
             ),
         )
@@ -332,7 +390,14 @@ def insert_bean(
                 "SELECT * FROM beans WHERE name = ? AND roaster = ?",
                 (name, roaster),
             ).fetchone()
-            return {"status": "exists", "bean": _row_to_bean(existing)}
+            bean = _row_to_bean(existing)
+            if bean and image_url and not (bean.get("image_url") or "").strip():
+                conn.execute(
+                    "UPDATE beans SET image_url = ? WHERE id = ?",
+                    (image_url, bean["id"]),
+                )
+                bean["image_url"] = image_url
+            return {"status": "exists", "bean": bean}
 
         bean = conn.execute(
             "SELECT * FROM beans WHERE id = ?", (cur.lastrowid,)
