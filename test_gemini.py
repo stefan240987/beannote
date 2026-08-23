@@ -78,6 +78,9 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("prompt asks for acidity_score", '"acidity_score"' in prompt)
         _assert_true("prompt asks for body_score", '"body_score"' in prompt)
         _assert_true("prompt asks for roast_level_score", '"roast_level_score"' in prompt)
+        _assert_true("prompt asks for roaster_acidity", '"roaster_acidity"' in prompt)
+        _assert_true("prompt asks for roaster_body", '"roaster_body"' in prompt)
+        _assert_true("prompt asks for roaster_roast_level", '"roaster_roast_level"' in prompt)
         _assert_true("prompt asks for image_candidates", '"image_candidates"' in prompt)
         _assert_true("prompt includes da key", '"da"' in prompt)
         _assert_true("prompt includes en key", '"en"' in prompt)
@@ -396,23 +399,34 @@ def test_intensity_scores_and_support() -> None:
             "origin": "Kenya",
             "process": "Washed",
             "roast_level": "Lys",
-            "acidity_score": 5,
-            "body_score": 2,
-            "roast_level_score": 1,
+            "roaster_acidity": 5,
+            "roaster_body": 2,
+            "roaster_roast_level": 1,
         },
         lang="da",
     )
     _assert_eq("scan acidity_score", scanned.get("acidity_score"), 5)
     _assert_eq("scan body_score", scanned.get("body_score"), 2)
     _assert_eq("scan roast_level_score", scanned.get("roast_level_score"), 1)
+    _assert_eq("scan roaster_acidity", scanned.get("roaster_acidity"), 5)
+    _assert_eq("scan roaster_body", scanned.get("roaster_body"), 2)
+    _assert_eq("scan roaster_roast_level", scanned.get("roaster_roast_level"), 1)
     _assert_eq("da acidity bar", t("da", "intensity_acidity"), "🍋 Syre")
     _assert_eq("en acidity bar", t("en", "intensity_acidity"), "🍋 Acidity")
     _assert_eq("da flavor profile", t("da", "flavor_profile"), "☕ Smagsprofil")
     _assert_eq("en flavor profile", t("en", "flavor_profile"), "☕ Flavor Profile")
     _assert_eq("da recipe log", t("da", "recipe_log"), "Bryg-log")
     _assert_eq("en recipe log", t("en", "recipe_log"), "Brew log")
-    _assert_eq("da grind value", t("da", "recipe_grind_value"), "⚙️ Kværn: {grind}")
-    _assert_eq("en dose value", t("en", "recipe_dose_value"), "⚖️ {coffee}g / {water}g")
+    _assert_eq("da grind value", t("da", "recipe_grind_value"), "⚙️ {grind}")
+    _assert_eq("en dose value", t("en", "recipe_dose_value"), "⚖️ {coffee}g → {water}g")
+    _assert_eq("da roaster profile", t("da", "roaster_profile"), "Risteriets Profil")
+    _assert_eq("en roaster profile", t("en", "roaster_profile"), "Roaster Profile")
+    _assert_eq("da personal log", t("da", "personal_log"), "Din Smags-Log")
+    _assert_eq("en your tasting", t("en", "your_tasting"), "Your Tasting")
+    _assert_eq("da recommended recipe", t("da", "recommended_recipe"), "Anbefalet opskrift")
+    _assert_eq("en recommended recipe", t("en", "recommended_recipe"), "Recommended Brew")
+    _assert_eq("da roaster acidity", t("da", "roaster_target_acidity"), "🍋 Syre (Risteriets mål)")
+    _assert_eq("en roaster body", t("en", "roaster_target_body"), "☕ Body (Roaster Target)")
     _assert_eq("da sense sweetness", t("da", "sense_sweetness"), "🍯 Sødme")
     _assert_eq("en recipe brew", t("en", "recipe_brew"), "☕ Brew method")
     _assert_eq("da sensory preview", t("da", "sensory_preview"), "Din smagsprofil")

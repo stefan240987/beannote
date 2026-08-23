@@ -447,6 +447,9 @@ class BeanIn(BaseModel):
     acidity_score: Optional[int] = None
     body_score: Optional[int] = None
     roast_level_score: Optional[int] = None
+    roaster_acidity: Optional[int] = None
+    roaster_body: Optional[int] = None
+    roaster_roast_level: Optional[int] = None
     skip_fuzzy: bool = False
 
 
@@ -747,6 +750,9 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             acidity_score=payload.acidity_score,
             body_score=payload.body_score,
             roast_level_score=payload.roast_level_score,
+            roaster_acidity=payload.roaster_acidity,
+            roaster_body=payload.roaster_body,
+            roaster_roast_level=payload.roaster_roast_level,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -789,6 +795,9 @@ def replace_bean(
             acidity_score=payload.acidity_score,
             body_score=payload.body_score,
             roast_level_score=payload.roast_level_score,
+            roaster_acidity=payload.roaster_acidity,
+            roaster_body=payload.roaster_body,
+            roaster_roast_level=payload.roaster_roast_level,
         )
     except ValueError as exc:
         raise _auth_error(str(exc)) from exc
@@ -826,6 +835,7 @@ async def scan(
     except HTTPException:
         raise
     except Exception as exc:
+        print(f"scan failed: {exc}")
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     snapshot_url = save_bean_image(jpeg, filename="scan.jpg")
     raw_candidates = [str(item).strip() for item in (parsed.get("image_candidates") or []) if str(item or "").strip()]

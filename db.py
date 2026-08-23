@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "5.2.1"
+VERSION = "5.3.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -662,6 +662,29 @@ def clamp_intensity_score(value: Any) -> int | None:
     return int(min(5, max(1, round(number))))
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def resolve_roaster_scores(
+    acidity_score: Any = None,
+    body_score: Any = None,
+    roast_level_score: Any = None,
+    roaster_acidity: Any = None,
+    roaster_body: Any = None,
+    roaster_roast_level: Any = None,
+) -> dict[str, Any]:
+    """Prefer official roaster_* aliases, then legacy acidity/body/roast scores."""
+    return {
+        "acidity_score": _first_present(roaster_acidity, acidity_score),
+        "body_score": _first_present(roaster_body, body_score),
+        "roast_level_score": _first_present(roaster_roast_level, roast_level_score),
+    }
+
+
 _ROAST_SCORE_ALIASES = (
     (("medium-mørk", "medium-dark", "medium mørk", "medium dark", "mellemmørk"), 4),
     (("medium-lys", "medium-light", "medium lys", "medium light", "mellemlys"), 2),
@@ -951,6 +974,9 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
         data.get("name") or "",
     )
     data.update(scores)
+    data["roaster_acidity"] = scores["acidity_score"]
+    data["roaster_body"] = scores["body_score"]
+    data["roaster_roast_level"] = scores["roast_level_score"]
     favorite = data.pop("is_favorite", None)
     data["is_favorite"] = bool(is_favorite if favorite is None else favorite)
     return data
@@ -1073,6 +1099,9 @@ def insert_bean(
     acidity_score: Any = None,
     body_score: Any = None,
     roast_level_score: Any = None,
+    roaster_acidity: Any = None,
+    roaster_body: Any = None,
+    roaster_roast_level: Any = None,
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
@@ -1096,10 +1125,18 @@ def insert_bean(
         region_full,
         origin,
     )
-    scores = infer_intensity_scores(
+    incoming_scores = resolve_roaster_scores(
         acidity_score,
         body_score,
         roast_level_score,
+        roaster_acidity,
+        roaster_body,
+        roaster_roast_level,
+    )
+    scores = infer_intensity_scores(
+        incoming_scores["acidity_score"],
+        incoming_scores["body_score"],
+        incoming_scores["roast_level_score"],
         roast_level,
         origin,
         process,
@@ -1244,6 +1281,9 @@ def update_bean(
     acidity_score: Any = None,
     body_score: Any = None,
     roast_level_score: Any = None,
+    roaster_acidity: Any = None,
+    roaster_body: Any = None,
+    roaster_roast_level: Any = None,
 ) -> dict[str, Any] | None:
     """Replace bean masterdata. Callers must enforce admin authorization."""
     existing = get_bean(bean_id)
@@ -1281,10 +1321,18 @@ def update_bean(
     roaster_url = sanitize_roaster_url(roaster_url) or (existing.get("roaster_url") or "")
     story_map = coerce_text_map(story) if story else coerce_text_map(existing.get("story"))
     brew_map = brew.get("brew_map") or coerce_brew_map(existing.get("brew_recommendation"))
+    incoming_scores = resolve_roaster_scores(
+        acidity_score,
+        body_score,
+        roast_level_score,
+        roaster_acidity,
+        roaster_body,
+        roaster_roast_level,
+    )
     scores = infer_intensity_scores(
-        acidity_score if acidity_score is not None else existing.get("acidity_score"),
-        body_score if body_score is not None else existing.get("body_score"),
-        roast_level_score if roast_level_score is not None else existing.get("roast_level_score"),
+        incoming_scores["acidity_score"] if incoming_scores["acidity_score"] is not None else existing.get("acidity_score"),
+        incoming_scores["body_score"] if incoming_scores["body_score"] is not None else existing.get("body_score"),
+        incoming_scores["roast_level_score"] if incoming_scores["roast_level_score"] is not None else existing.get("roast_level_score"),
         roast_level or existing.get("roast_level") or "",
         origin or existing.get("origin") or "",
         process or existing.get("process") or "",
@@ -1567,7 +1615,22 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
     history = []
     if user_id is not None:
         history = [row for row in list_ratings(bean_id) if row.get("user_id") == user_id]
-    return {"bean": bean, "community": community, "user": user, "history": history}
+    roaster_profile = {
+        "acidity": bean.get("roaster_acidity") if bean else None,
+        "body": bean.get("roaster_body") if bean else None,
+        "roast_level": bean.get("roaster_roast_level") if bean else None,
+        "recommended_method": (bean.get("recommended_method") or "") if bean else "",
+        "grind_size": (bean.get("grind_size") or "") if bean else "",
+        "water_temp": (bean.get("water_temp") or "") if bean else "",
+        "brew_ratio": (bean.get("brew_ratio") or "") if bean else "",
+    }
+    return {
+        "bean": bean,
+        "community": community,
+        "user": user,
+        "history": history,
+        "roaster_profile": roaster_profile,
+    }
 
 
 def export_ratings(fmt: str = "csv") -> tuple[str, str, bytes]:

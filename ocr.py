@@ -699,6 +699,13 @@ def _extract_roaster_url(parsed: dict[str, Any]) -> str:
     return ""
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, Any]:
     """Map Gemini/Tesseract fields onto the add-bean widget keys."""
     notes = (parsed.get("official_notes") or parsed.get("roaster_notes") or "").strip()
@@ -742,17 +749,34 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["region_full"] = region
     out["roaster_url"] = _extract_roaster_url(parsed)
     out = refine_label_fields(out, lang=lang)
-    out.update(
-        infer_intensity_scores(
-            parsed.get("acidity_score") if out.get("acidity_score") is None else out.get("acidity_score"),
-            parsed.get("body_score") if out.get("body_score") is None else out.get("body_score"),
-            parsed.get("roast_level_score") if out.get("roast_level_score") is None else out.get("roast_level_score"),
-            out.get("roast_level") or "",
-            out.get("origin") or "",
-            out.get("process") or "",
-            out.get("name") or "",
-        )
+    scores = infer_intensity_scores(
+        _first_present(
+            out.get("roaster_acidity"),
+            parsed.get("roaster_acidity"),
+            out.get("acidity_score"),
+            parsed.get("acidity_score"),
+        ),
+        _first_present(
+            out.get("roaster_body"),
+            parsed.get("roaster_body"),
+            out.get("body_score"),
+            parsed.get("body_score"),
+        ),
+        _first_present(
+            out.get("roaster_roast_level"),
+            parsed.get("roaster_roast_level"),
+            out.get("roast_level_score"),
+            parsed.get("roast_level_score"),
+        ),
+        out.get("roast_level") or "",
+        out.get("origin") or "",
+        out.get("process") or "",
+        out.get("name") or "",
     )
+    out.update(scores)
+    out["roaster_acidity"] = scores["acidity_score"]
+    out["roaster_body"] = scores["body_score"]
+    out["roaster_roast_level"] = scores["roast_level_score"]
     if not isinstance(out.get("flavor_tags"), dict):
         out["flavor_tags"] = flavor_tags_lang_map(out.get("flavor_tags"), out.get("flavor_notes"))
     out["flavor_notes"] = get_localized(out["flavor_tags"], lang) or []
@@ -1057,14 +1081,17 @@ def _gemini_prompt(lang: str = "da") -> str:
         '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
         f'- "process": exactly one of [{processes}] — write this in {story_lang}\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
-        '- "acidity_score": integer 1–5 for perceived acidity / brightness '
+        '- "roaster_acidity": integer 1–5 for the roaster\'s target acidity / brightness '
         "(1 = muted/low, 5 = sparkling citrus or berry). Infer from origin, "
-        "process, roast, and printed tasting notes when the bag has no numbers.\n"
-        '- "body_score": integer 1–5 for body / mouthfeel '
-        "(1 = tea-like, 5 = syrupy or creamy). Infer from roast and process.\n"
-        '- "roast_level_score": integer 1–5 for roast depth '
+        "process, roast, and printed tasting notes when the bag has no numbers. "
+        'Alias: "acidity_score".\n'
+        '- "roaster_body": integer 1–5 for the roaster\'s target body / mouthfeel '
+        "(1 = tea-like, 5 = syrupy or creamy). Infer from roast and process. "
+        'Alias: "body_score".\n'
+        '- "roaster_roast_level": integer 1–5 for the roaster\'s target roast depth '
         "(1 = Light / Lys, 3 = Medium, 5 = Dark / Mørk). "
-        "Map Medium-Light to 2 and Medium-Dark to 4.\n"
+        "Map Medium-Light to 2 and Medium-Dark to 4. "
+        'Alias: "roast_level_score".\n'
         f'- "flavor_tags": language map keyed by {lang_keys}. Same flavors, same order, '
         "translated per key. Schema:\n"
         f"{flavor_lines}\n"
@@ -1105,14 +1132,10 @@ def _gemini_prompt(lang: str = "da") -> str:
         '- "roaster_url": official https homepage of the roaster if printed on the bag '
         "(www.example.com or https://…) or clearly known. Homepage only — never a product "
         "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
-        "WEB SEARCH / GROUNDING: After reading the bag, use the Google Search tool to find "
-        "official high-resolution studio packshots of the detected roaster and bean_name. "
-        "Search the roaster shop and queries such as the product name plus coffee bag packshot. "
-        "Return only real https image URLs discovered via that search — never invent a URL.\n"
-        '- "image_candidates": array of up to 3 distinct public https image URLs '
-        "(jpg/png/webp) of official studio packshots / product-container graphics "
-        "from the roaster shop or CDN (Shopify, Cloudinary, official shop). "
-        "Fewer than 3 is OK. Never return a blurry phone photo or marketplace screenshot.\n"
+        '- "image_candidates": array of up to 3 real public https URLs of official '
+        "high-resolution studio packshots / product-container graphics from the roaster "
+        "shop or CDN (for example Shopify, Cloudinary, official shop). Fewer than 3 is OK. "
+        "Never invent a URL and never return a blurry phone photo.\n"
         '- "product_image_urls": same list as image_candidates (legacy alias).\n'
         '- "product_image_url": first image_candidates URL, or "" if unknown.'
     )
@@ -1345,34 +1368,29 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=key)
+    # Vision OCR must stay JSON-only. Search grounding on this call returns
+    # thought/search parts instead of JSON and 422s the whole scan.
+    client = genai.Client(api_key=key, http_options={"timeout": 45_000})
     image_part = _gemini_image_part(image)
-    tools = _google_search_tools(types)
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.0,
+    )
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
-        use_tools = list(tools)
         for attempt in range(3):
-            config_kwargs: dict[str, Any] = {"temperature": 0.0}
-            if use_tools:
-                config_kwargs["tools"] = use_tools
-            else:
-                config_kwargs["response_mime_type"] = "application/json"
             try:
                 response = client.models.generate_content(
                     model=model_name,
                     contents=[prompt, image_part],
-                    config=types.GenerateContentConfig(**config_kwargs),
+                    config=config,
                 )
                 data = _parse_gemini_json(_response_text(response))
                 return _with_grounded_images(data, response)
             except Exception as exc:
                 last_error = exc
-                message = str(exc)
-                if "404" in message or "NOT_FOUND" in message:
+                if "404" in str(exc) or "NOT_FOUND" in str(exc):
                     break
-                if use_tools and _tools_unsupported(exc):
-                    use_tools = []
-                    continue
                 if _transient_gemini_error(exc) and attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
@@ -1389,28 +1407,17 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     image_blob = {"mime_type": "image/jpeg", "data": _image_jpeg_bytes(image)}
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
-        for tools in (_legacy_google_search_tools(), None):
-            try:
-                kwargs: dict[str, Any] = {}
-                generation_config: dict[str, Any] = {"temperature": 0}
-                if tools:
-                    kwargs["tools"] = tools
-                else:
-                    generation_config["response_mime_type"] = "application/json"
-                model = genai.GenerativeModel(model_name, **kwargs)
-                response = model.generate_content(
-                    [prompt, image_blob],
-                    generation_config=generation_config,
-                )
-                data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
-                return _with_grounded_images(data, response)
-            except Exception as exc:
-                last_error = exc
-                if "404" in str(exc) or "NOT_FOUND" in str(exc):
-                    break
-                if tools and _tools_unsupported(exc):
-                    continue
-                break
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                [prompt, image_blob],
+                generation_config={"response_mime_type": "application/json", "temperature": 0},
+            )
+            data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
+            return _with_grounded_images(data, response)
+        except Exception as exc:
+            last_error = exc
+            continue
     if last_error:
         raise last_error
     return None
@@ -1582,9 +1589,8 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> list[str]
         'If no real official image exists, return {"image_candidates":[],"image_urls":[],"source":""}. '
         "Do not invent URLs."
     )
-    client = genai.Client(api_key=key)
+    client = genai.Client(api_key=key, http_options={"timeout": 12_000})
     tools = _google_search_tools(types)
-    last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
         use_tools = list(tools)
         config_kwargs: dict[str, Any] = {"temperature": 0.1}
@@ -1603,15 +1609,12 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> list[str]
             merged = _with_grounded_images(data if isinstance(data, dict) else {}, response)
             return _collect_image_urls(merged.get("image_candidates"), merged)
         except Exception as exc:
-            last_error = exc
             if "404" in str(exc) or "NOT_FOUND" in str(exc):
                 continue
             if use_tools and _tools_unsupported(exc):
                 tools = []
                 continue
             break
-    if last_error:
-        raise last_error
     return []
 
 

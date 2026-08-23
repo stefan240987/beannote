@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.3.0] - 2026-08-23
+
+- snapshot: v5.3.0 - separated official roaster profile from personal extraction log
+- Bean Detail now shows an Official Roaster Profile card (OCR `roaster_acidity` / `roaster_body` / `roaster_roast_level` plus recommended brew) separately from `✍️ Din Seneste Smagning` and the personal `Bryg-log` recipe cards.
+- Gemini Vision extracts the roaster's 1–5 target sensory parameters alongside printed tasting notes and origin. Section headers (`Risteriets Profil`, `Din Smags-Log`, `Anbefalet opskrift`) translate via `i18nManager`.
+
 ## [5.2.1] - 2026-08-23
 
 - snapshot: v5.2.1 - cleaned up flavor profile UI and streamlined brew log cards
