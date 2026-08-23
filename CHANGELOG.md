@@ -2,6 +2,15 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.0.0] - 2026-08-23
+
+- Replaced Streamlit with a FastAPI backend (`main.py`) and a Tailwind CSS PWA (`static/index.html`) served by Uvicorn on port 8501.
+- Added email/password registration and login plus Google OAuth and Apple Sign-In. Sessions use signed JWTs in HTTP-only cookies, with optional `Authorization: Bearer` tokens.
+- `users` table (`id`, `email`, `username`, `password_hash`, `auth_provider`, `oauth_id`, `created_at`); ratings now store `user_id`.
+- Local/test SQLite is wiped and re-seeded on startup when `ENVIRONMENT=local` or `RESET_DB_ON_START=true`. Production (`ENVIRONMENT=production`) never auto-flushes, so Unraid data stays intact.
+- Camera-first scan uses native `<input capture="environment">`, Gemini 1.5 Flash Vision with EXIF-upright previews, and a 1-click "✅ Godkend & Gem" approval card. Flavor radar is a static 0–5 Chart.js chart.
+- `run_local.sh` and Docker now launch `uvicorn main:app`; health checks use `/api/health`.
+
 ## [1.5.0] - 2026-08-23
 
 - Camera and album uploads are auto-rotated with `PIL.ImageOps.exif_transpose` before Gemini/Tesseract and before any preview, so portrait phone photos stay upright.

@@ -1,0 +1,19 @@
+{
+  "name": "BeanNote",
+  "short_name": "BeanNote",
+  "description": "Din personlige kaffe-journal & rating-ledsager",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf6f0",
+  "theme_color": "#3c2a21",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

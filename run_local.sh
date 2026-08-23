@@ -24,9 +24,11 @@ else
   echo "  brew install tesseract tesseract-lang"
 fi
 
-export ENVIRONMENT="${ENVIRONMENT:-local}"
+export ENVIRONMENT=local
+export RESET_DB_ON_START="${RESET_DB_ON_START:-false}"
 mkdir -p data
 
 echo "BeanNote local · ENVIRONMENT=${ENVIRONMENT} · DB=./data/beannote.db"
 echo "Tesseract: ${TESSERACT_CMD:-not found}"
-exec streamlit run app.py --server.port=8501 --server.headless=true
+echo "Auto-flush: on (local SQLite is wiped on each startup)"
+exec uvicorn main:app --reload --host 0.0.0.0 --port 8501

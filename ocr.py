@@ -272,14 +272,14 @@ def get_gemini_api_key() -> str:
     load_local_env()
     key = (os.getenv("GEMINI_API_KEY") or "").strip()
     if not key:
-        try:
-            import streamlit as st
-
-            secrets = getattr(st, "secrets", None)
-            if secrets is not None:
-                key = str(secrets.get("GEMINI_API_KEY") or "").strip()
-        except Exception:
-            key = ""
+        secrets_path = _project_root() / ".streamlit" / "secrets.toml"
+        key = _parse_env_file(secrets_path).get("GEMINI_API_KEY", "").strip()
+        if not key and secrets_path.is_file():
+            match = re.search(
+                r'(?m)^GEMINI_API_KEY\s*=\s*["\']?([^"\'\n]*)["\']?',
+                secrets_path.read_text(encoding="utf-8"),
+            )
+            key = (match.group(1) if match else "").strip()
     if key:
         os.environ["GEMINI_API_KEY"] = key
     return key

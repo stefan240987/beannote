@@ -5,9 +5,9 @@ alwaysApply: true
 
 # BeanNote
 
-Keep `db.py`, `ocr.py`, `translations.py`, and `app.py` as the only Python modules.
+Keep `db.py`, `ocr.py`, `translations.py`, and `main.py` as the Python modules. UI lives in `static/index.html`.
 
-- Local DB: `./data/beannote.db`. Production DB: `/app/data/beannote.db`.
+- Local DB: `./data/beannote.db` (auto-flush on startup). Production DB: `/app/data/beannote.db` (never auto-flush).
 - Deduplicate with `UNIQUE(name, roaster)` and `difflib.get_close_matches` at 80% before every insert.
 - After user-facing changes: bump `VERSION` in `db.py`, append `CHANGELOG.md`, commit `snapshot: vX.Y.Z - <feature>`.
 - Palette is Espresso `#3c2a21`, Terracotta `#b85c38`, Cream `#faf6f0`.

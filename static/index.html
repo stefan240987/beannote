@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3c2a21">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>BeanNote</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            espresso: "#3c2a21",
+            terracotta: "#b85c38",
+            cream: "#faf6f0",
+            foam: "#f3ebe3",
+            latte: "#e8d8c8",
+            muted: "#8c7a6b",
+          },
+          fontFamily: {
+            display: ["Fraunces", "Georgia", "serif"],
+            sans: ["Outfit", "Avenir Next", "system-ui", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    :root { color-scheme: light; }
+    html, body { background: #faf6f0; }
+    body { padding-bottom: env(safe-area-inset-bottom); }
+    .tabbar { padding-bottom: max(0.4rem, env(safe-area-inset-bottom)); }
+    input, select, textarea, button { font-family: inherit; }
+    .slider { accent-color: #b85c38; }
+  </style>
+</head>
+<body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
+  <div id="app" class="mx-auto min-h-dvh max-w-lg"></div>
+  <script>
+    const TOKEN_KEY = "beannote_token";
+    const LANG_KEY = "beannote_lang";
+    const state = {
+      config: null,
+      user: null,
+      tab: "explore",
+      authMode: "login",
+      beans: [],
+      search: "",
+      selectedId: null,
+      profile: null,
+      scan: null,
+      editScan: false,
+      toast: "",
+      busy: false,
+      rate: { brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3, notes: "" },
+    };
+    let radarChart = null;
+
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const esc = (value) => String(value ?? "")
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+    const t = (key, vars = {}) => {
+      const table = state.config?.strings || {};
+      let text = table[key] || key;
+      Object.entries(vars).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
+      return text;
+    };
+    const token = () => localStorage.getItem(TOKEN_KEY) || "";
+    const mediaSrc = (url) => {
+      if (!url) return "";
+      if (url.startsWith("data:") || url.startsWith("http")) return url;
+      const name = url.split("/").pop();
+      return `/media/${encodeURIComponent(name)}`;
+    };
+
+    async function api(path, options = {}) {
+      const headers = options.headers || {};
+      if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+      if (token()) headers.Authorization = `Bearer ${token()}`;
+      const res = await fetch(path, { credentials: "include", ...options, headers });
+      if (res.status === 204) return null;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.detail || data.message || "error");
+        err.detail = data.detail;
+        throw err;
+      }
+      return data;
+    }
+
+    function toast(message) {
+      state.toast = message;
+      render();
+      setTimeout(() => { if (state.toast === message) { state.toast = ""; render(); } }, 2800);
+    }
+
+    function setAuth(payload) {
+      if (payload?.token) localStorage.setItem(TOKEN_KEY, payload.token);
+      state.user = payload?.user || null;
+    }
+
+    async function boot() {
+      const lang = localStorage.getItem(LANG_KEY) || "da";
+      try {
+        state.config = await api(`/api/config?lang=${lang}`);
+        state.user = state.config.user;
+        if (state.user) await loadBeans();
+      } catch {
+        state.config = { strings: {}, langs: { da: "Dansk" }, providers: {}, brew_methods: [], flavor_notes: [] };
+      }
+      const params = new URLSearchParams(location.search);
+      if (params.get("auth_error")) toast(t("oauth_unavailable"));
+      render();
+      if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+    }
+
+    async function loadBeans() {
+      const q = new URLSearchParams({ search: state.search });
+      state.beans = await api(`/api/beans?${q}`);
+    }
+
+    async function openBean(id, tab = "explore") {
+      state.selectedId = id;
+      state.profile = await api(`/api/beans/${id}`);
+      const user = state.profile.user;
+      if (user) {
+        state.rate = {
+          brew_method: user.brew_method || "V60",
+          rating: user.rating || 4,
+          acidity: user.acidity || 3,
+          sweetness: user.sweetness || 3,
+          body: user.body || 3,
+          aftertaste: user.aftertaste || 3,
+          notes: user.notes || "",
+        };
+      }
+      state.tab = tab;
+      render();
+    }
+
+    function halfSteps(from = 0.5, to = 5) {
+      const out = [];
+      for (let n = from; n <= to + 0.01; n += 0.5) out.push(Number(n.toFixed(1)));
+      return out;
+    }
+
+    function bagFallback() {
+      return `<div class="flex h-44 items-center justify-center bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta">
+        <svg viewBox="0 0 80 64" width="64" height="52" fill="none" aria-hidden="true">
+          <rect x="22" y="10" width="36" height="46" rx="5" fill="#faf6f0"/>
+          <path d="M22 22h36" stroke="#b85c38" stroke-width="3"/>
+          <rect x="32" y="10" width="16" height="6" rx="2" fill="#e8d8c8"/>
+          <circle cx="40" cy="40" r="9" stroke="#3c2a21" stroke-width="2"/>
+        </svg>
+      </div>`;
+    }
+
+    function pills(tags) {
+      return (tags || []).map((tag) =>
+        `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(tag)}</span>`
+      ).join("");
+    }
+
+    function slider(id, label, help, value) {
+      return `<label class="block">
+        <div class="mb-1 flex items-center justify-between text-sm font-medium">
+          <span>${esc(label)}</span><span class="text-terracotta">${value.toFixed(1)}</span>
+        </div>
+        <input id="${id}" class="slider w-full" type="range" min="0.5" max="5" step="0.5" value="${value}">
+        <p class="mt-1 text-xs text-muted">${esc(help)}</p>
+      </label>`;
+    }
+
+    function authView() {
+      const providers = state.config?.providers || {};
+      const signup = state.authMode === "register";
+      return `
+        <section class="flex min-h-dvh flex-col bg-cream px-5 pb-8 pt-12">
+          <div class="rounded-2xl bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta px-5 py-7 text-cream shadow-lg">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/70">BeanNote</p>
+            <h1 class="font-display mt-1 text-3xl font-bold">${t("app_name")}</h1>
+            <p class="mt-1 text-sm text-cream/80">${t("auth_tagline")}</p>
+          </div>
+          <div class="mt-6 space-y-3">
+            <a href="${providers.google ? "/api/auth/google" : "#"}" data-oauth="google" class="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-espresso shadow-sm ring-1 ring-latte ${providers.google ? "" : "opacity-80"}">
+              <svg viewBox="0 0 24 24" class="h-5 w-5" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09Z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23Z"/><path fill="#FBBC05" d="M5.84 14.09A6.97 6.97 0 0 1 5.5 12c0-.72.12-1.42.34-2.09V7.07H2.18A11 11 0 0 0 1 12c0 1.78.43 3.46 1.18 4.93l3.66-2.84Z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53Z"/></svg>
+              ${t("continue_google")}
+            </a>
+            <a href="${providers.apple ? "/api/auth/apple" : "#"}" data-oauth="apple" class="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-espresso px-4 text-sm font-semibold text-cream ${providers.apple ? "" : "opacity-80"}">
+              <svg viewBox="0 0 24 24" class="h-5 w-5 fill-current" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.3 2.9 2.3 1.1 0 1.6-.7 3-.7s1.8.7 3 .7 2-.1 2.9-2.2c.7-1 1-2 1-2.1-.1 0-2.3-.9-2.3-3.4ZM14.7 6.2c.6-.8 1.1-1.8.9-2.9-1 .1-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.8 1.1.1 2.2-.5 2.9-1.4Z"/></svg>
+              ${t("continue_apple")}
+            </a>
+          </div>
+          <div class="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted">
+            <span class="h-px flex-1 bg-latte"></span>${t("or_divider")}<span class="h-px flex-1 bg-latte"></span>
+          </div>
+          <form id="auth-form" class="space-y-3">
+            <p class="text-center text-sm font-semibold">${t("login_email")}</p>
+            ${signup ? `<input name="username" autocomplete="username" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("username"))}">` : ""}
+            <input name="email" type="email" required autocomplete="email" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("email"))}">
+            <input name="password" type="password" required minlength="8" autocomplete="${signup ? "new-password" : "current-password"}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("password"))}">
+            <button class="min-h-12 w-full rounded-xl bg-terracotta text-sm font-semibold text-cream">${signup ? t("register") : t("login")}</button>
+          </form>
+          <button id="toggle-auth" class="mt-4 text-center text-sm text-muted">
+            ${signup ? t("have_account") + " " + t("login") : t("no_account") + " " + t("register")}
+          </button>
+        </section>`;
+    }
+
+    function header() {
+      return `<header class="bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta px-4 pb-4 pt-8 text-cream">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-cream/70">BeanNote</p>
+        <div class="flex items-end justify-between gap-3">
+          <h1 class="font-display text-2xl font-bold">${t("app_name")}</h1>
+          <p class="text-xs text-cream/70">v${esc(state.config?.version || "")}</p>
+        </div>
+      </header>`;
+    }
+
+    function exploreView() {
+      const cards = state.beans.map((bean) => {
+        const photo = mediaSrc(bean.image_url);
+        return `<button data-open-bean="${bean.id}" class="overflow-hidden rounded-2xl bg-white text-left shadow-sm ring-1 ring-latte">
+          ${photo ? `<img src="${photo}" alt="" class="h-44 w-full object-cover">` : bagFallback()}
+          <div class="p-3">
+            <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
+            <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
+            <div class="mt-2 flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+            <p class="mt-2 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
+          </div>
+        </button>`;
+      }).join("");
+      const detail = state.profile?.bean;
+      return `<section class="px-4 pb-28 pt-4">
+        <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("search"))}">
+        <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${t("empty_explore")}</p>`}</div>
+        ${detail ? beanSheet(state.profile) : ""}
+      </section>`;
+    }
+
+    function beanSheet(profile) {
+      const bean = profile.bean;
+      const photo = mediaSrc(bean.image_url);
+      return `<article class="mt-5 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
+        ${photo ? `<img src="${photo}" alt="" class="max-h-64 w-full object-contain bg-foam">` : bagFallback()}
+        <div class="space-y-3 p-4">
+          <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
+          <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin)} · ${esc(bean.process)}</p>
+          <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+          ${bean.story ? `<details><summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary><p class="mt-2 text-sm leading-6 text-espresso/80">${esc(bean.story)}</p></details>` : ""}
+          <canvas id="radar" height="280"></canvas>
+          <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
+        </div>
+      </article>`;
+    }
+
+    function scanView() {
+      const scan = state.scan;
+      if (!scan) {
+        return `<section class="px-4 pb-28 pt-6">
+          <div class="rounded-2xl border-2 border-dashed border-terracotta/50 bg-white p-6 text-center">
+            <h2 class="font-display text-xl font-bold">${t("scan_card_title")}</h2>
+            <p class="mt-1 text-sm text-muted">${t("scan_card_sub")}</p>
+            <label class="mt-5 flex min-h-12 cursor-pointer items-center justify-center rounded-xl bg-terracotta font-semibold text-cream">
+              ${t("scan_pick_image")}
+              <input id="camera-input" type="file" accept="image/*" capture="environment" class="hidden">
+            </label>
+            <label class="mt-3 flex min-h-12 cursor-pointer items-center justify-center rounded-xl bg-foam text-sm font-semibold">
+              ${t("scan_album")}
+              <input id="album-input" type="file" accept="image/*" class="hidden">
+            </label>
+          </div>
+        </section>`;
+      }
+      const preview = scan.preview || mediaSrc(scan.image_url);
+      const similar = scan.similar?.[0];
+      const fields = state.editScan ? scanEditor(scan) : "";
+      return `<section class="px-4 pb-28 pt-4">
+        <article class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
+          ${preview ? `<img src="${preview}" alt="" class="max-h-72 w-full object-contain bg-foam">` : bagFallback()}
+          <div class="space-y-3 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-muted">${t("ai_summary_title")}</p>
+            <h2 class="font-display text-2xl font-bold">${esc(scan.name || t("add_name"))}</h2>
+            <p class="text-sm text-muted">${esc(scan.roaster)} · ${esc(scan.origin)} · ${esc(scan.process)}</p>
+            <div class="flex flex-wrap gap-1">${pills(scan.flavor_tags)}</div>
+            ${scan.story ? `<details><summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary><p class="mt-2 text-sm leading-6">${esc(scan.story)}</p></details>` : ""}
+            ${similar ? `<div class="rounded-xl bg-foam p-3 text-sm">
+              <p class="font-semibold">${t("duplicate_warning")}</p>
+              <p class="mt-1 text-muted">${esc(similar.name)} · ${esc(similar.roaster)} (${Math.round((similar.confidence || 0) * 100)}% ${t("confidence")})</p>
+              <button data-rate-bean="${similar.id}" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-cream">${t("use_existing")}</button>
+            </div>` : ""}
+            <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("approve_save")}</button>
+            <button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>
+            ${fields}
+          </div>
+        </article>
+      </section>`;
+    }
+
+    function scanEditor(scan) {
+      const options = (list, selected) => ["", ...(list || [])].map((item) =>
+        `<option value="${esc(item)}" ${item === selected ? "selected" : ""}>${item || "—"}</option>`
+      ).join("");
+      return `<form id="scan-edit" class="space-y-2 rounded-xl bg-foam p-3">
+        <input name="name" value="${esc(scan.name || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_name"))}">
+        <input name="roaster" value="${esc(scan.roaster || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("add_roaster"))}">
+        <input name="origin" value="${esc(scan.origin || "")}" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3" placeholder="${esc(t("origin"))}">
+        <select name="process" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.processes, scan.process)}</select>
+        <select name="roast_level" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.roast_levels, scan.roast_level)}</select>
+        <textarea name="roaster_notes" class="min-h-20 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("add_roaster_notes"))}">${esc(scan.roaster_notes || "")}</textarea>
+        <textarea name="story" class="min-h-24 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("bean_story"))}">${esc(scan.story || "")}</textarea>
+      </form>`;
+    }
+
+    function rateView() {
+      const beans = state.beans.map((bean) =>
+        `<option value="${bean.id}" ${String(bean.id) === String(state.selectedId) ? "selected" : ""}>${esc(bean.name)} — ${esc(bean.roaster)}</option>`
+      ).join("");
+      const brew = (state.config?.brew_methods || []).map((m) =>
+        `<option ${m === state.rate.brew_method ? "selected" : ""}>${esc(m)}</option>`
+      ).join("");
+      return `<section class="space-y-4 px-4 pb-28 pt-4">
+        <label class="block text-sm font-medium">${t("select_bean")}
+          <select id="rate-bean" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${beans}</select>
+        </label>
+        <label class="block text-sm font-medium">${t("brew_method")}
+          <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${brew}</select>
+        </label>
+        ${slider("rating", t("rating"), t("help_rating"), state.rate.rating)}
+        ${slider("acidity", t("acidity"), t("help_acidity"), state.rate.acidity)}
+        ${slider("sweetness", t("sweetness"), t("help_sweetness"), state.rate.sweetness)}
+        ${slider("body", t("body"), t("help_body"), state.rate.body)}
+        ${slider("aftertaste", t("aftertaste"), t("help_aftertaste"), state.rate.aftertaste)}
+        <textarea id="notes" class="min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("notes_ph"))}">${esc(state.rate.notes)}</textarea>
+        <canvas id="radar" height="280"></canvas>
+        <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("save_rating")}</button>
+      </section>`;
+    }
+
+    function profileView() {
+      const langs = Object.entries(state.config?.langs || {}).map(([code, label]) =>
+        `<option value="${code}" ${code === state.config.lang ? "selected" : ""}>${esc(label)}</option>`
+      ).join("");
+      return `<section class="space-y-4 px-4 pb-28 pt-5">
+        <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+          <p class="text-xs uppercase tracking-wider text-muted">${t("signed_in_as")}</p>
+          <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
+          <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
+        </div>
+        <label class="block text-sm font-medium">${t("language")}
+          <select id="lang" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${langs}</select>
+        </label>
+        <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold">${t("export_csv")}</a>
+        <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("logout")}</button>
+      </section>`;
+    }
+
+    function tabbar() {
+      const tabs = [
+        ["explore", "☕", t("tab_explore")],
+        ["scan", "📸", t("tab_scan")],
+        ["rate", "✍️", t("tab_review")],
+        ["profile", "👤", t("tab_profile")],
+      ];
+      return `<nav class="tabbar fixed inset-x-0 bottom-0 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
+        <div class="grid grid-cols-4">
+          ${tabs.map(([id, icon, label]) => `
+            <button data-tab="${id}" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${state.tab === id ? "text-terracotta" : "text-muted"}">
+              <span class="text-lg">${icon}</span>${esc(label)}
+            </button>`).join("")}
+        </div>
+      </nav>`;
+    }
+
+    function drawRadar() {
+      const canvas = $("#radar");
+      if (!canvas || !window.Chart) return;
+      const community = state.profile?.community || {};
+      const user = {
+        acidity: state.rate.acidity,
+        sweetness: state.rate.sweetness,
+        body: state.rate.body,
+        aftertaste: state.rate.aftertaste,
+      };
+      if (radarChart) radarChart.destroy();
+      radarChart = new Chart(canvas, {
+        type: "radar",
+        data: {
+          labels: [t("acidity"), t("sweetness"), t("body"), t("aftertaste")],
+          datasets: [
+            {
+              label: t("radar_you"),
+              data: [user.acidity, user.sweetness, user.body, user.aftertaste],
+              borderColor: "#b85c38",
+              backgroundColor: "rgba(184,92,56,0.25)",
+              pointBackgroundColor: "#b85c38",
+            },
+            {
+              label: t("radar_community"),
+              data: [community.acidity || 3.4, community.sweetness || 3.5, community.body || 3.3, community.aftertaste || 3.4],
+              borderColor: "#3c2a21",
+              backgroundColor: "rgba(60,42,33,0.12)",
+              pointBackgroundColor: "#3c2a21",
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          plugins: { legend: { labels: { font: { family: "Outfit" } } } },
+          scales: {
+            r: {
+              min: 0,
+              max: 5,
+              ticks: { stepSize: 1, backdropColor: "transparent" },
+              grid: { color: "#e8d8c8" },
+              angleLines: { color: "#e8d8c8" },
+              pointLabels: { font: { family: "Outfit", size: 12 } },
+            },
+          },
+        },
+      });
+    }
+
+    function render() {
+      const root = $("#app");
+      if (!state.config) {
+        root.innerHTML = `<p class="p-8 text-center text-muted">BeanNote…</p>`;
+        return;
+      }
+      if (!state.user) {
+        root.innerHTML = authView();
+        bindAuth();
+        return;
+      }
+      const body = { explore: exploreView, scan: scanView, rate: rateView, profile: profileView }[state.tab]();
+      root.innerHTML = `${header()}${body}${tabbar()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-20 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-30 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
+      bindApp();
+      drawRadar();
+    }
+
+    function bindAuth() {
+      document.querySelectorAll("[data-oauth]").forEach((link) => {
+        link.addEventListener("click", (event) => {
+          const provider = link.dataset.oauth;
+          if (!state.config?.providers?.[provider]) {
+            event.preventDefault();
+            toast(t("oauth_unavailable"));
+          }
+        });
+      });
+      $("#toggle-auth")?.addEventListener("click", () => {
+        state.authMode = state.authMode === "login" ? "register" : "login";
+        render();
+      });
+      $("#auth-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.target);
+        const payload = {
+          email: String(form.get("email") || ""),
+          password: String(form.get("password") || ""),
+          username: String(form.get("username") || ""),
+        };
+        try {
+          const path = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+          const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
+          setAuth(result);
+          await loadBeans();
+          render();
+        } catch (err) {
+          toast(t(err.detail || "invalid_credentials"));
+        }
+      });
+    }
+
+    function readScanForm() {
+      const form = $("#scan-edit");
+      if (!form || !state.scan) return state.scan;
+      const data = new FormData(form);
+      return {
+        ...state.scan,
+        name: data.get("name"),
+        roaster: data.get("roaster"),
+        origin: data.get("origin"),
+        process: data.get("process"),
+        roast_level: data.get("roast_level"),
+        roaster_notes: data.get("roaster_notes"),
+        story: data.get("story"),
+      };
+    }
+
+    async function uploadScan(file) {
+      if (!file) return;
+      state.busy = true;
+      render();
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        state.scan = await api("/api/scan", { method: "POST", body });
+        if (state.scan.scan_action === "rate" && state.scan.scan_match?.id) {
+          toast(t("bean_found"));
+          await openBean(state.scan.scan_match.id, "rate");
+          return;
+        }
+        state.tab = "scan";
+      } catch (err) {
+        toast(t(err.detail || "ocr_fail"));
+      } finally {
+        state.busy = false;
+        render();
+      }
+    }
+
+    function bindApp() {
+      document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+        state.tab = btn.dataset.tab;
+        if (state.tab === "explore" || state.tab === "rate") await loadBeans();
+        render();
+      }));
+      $("#search")?.addEventListener("change", async (event) => {
+        state.search = event.target.value;
+        await loadBeans();
+        render();
+      });
+      document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean))));
+      document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.rateBean), "rate")));
+      $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
+      $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
+      $("#toggle-edit")?.addEventListener("click", () => { state.editScan = !state.editScan; render(); });
+      $("#approve-bean")?.addEventListener("click", async () => {
+        const scan = readScanForm();
+        try {
+          const result = await api("/api/beans", {
+            method: "POST",
+            body: JSON.stringify({
+              name: scan.name,
+              roaster: scan.roaster,
+              origin: scan.origin,
+              process: scan.process,
+              roast_level: scan.roast_level,
+              roaster_notes: scan.roaster_notes,
+              flavor_tags: scan.flavor_tags || [],
+              story: scan.story,
+              image_url: scan.image_url,
+              skip_fuzzy: false,
+            }),
+          });
+          if (result.status === "fuzzy") {
+            state.scan = { ...scan, similar: result.similar };
+            toast(t("duplicate_warning"));
+            render();
+            return;
+          }
+          const bean = result.bean;
+          toast(t(result.status === "created" ? "created" : "exists"));
+          state.scan = null;
+          await loadBeans();
+          if (bean?.id) await openBean(bean.id, "rate");
+          else render();
+        } catch (err) {
+          toast(t(err.detail || "required"));
+        }
+      });
+      ["rating", "acidity", "sweetness", "body", "aftertaste"].forEach((key) => {
+        $(`#${key}`)?.addEventListener("input", (event) => {
+          state.rate[key] = Number(event.target.value);
+          drawRadar();
+          const label = event.target.previousElementSibling?.querySelector("span:last-child");
+          if (label) label.textContent = Number(event.target.value).toFixed(1);
+        });
+      });
+      $("#rate-bean")?.addEventListener("change", (event) => openBean(Number(event.target.value), "rate"));
+      $("#brew")?.addEventListener("change", (event) => { state.rate.brew_method = event.target.value; });
+      $("#notes")?.addEventListener("input", (event) => { state.rate.notes = event.target.value; });
+      $("#save-rating")?.addEventListener("click", async () => {
+        if (!state.selectedId) return toast(t("select_bean"));
+        try {
+          const result = await api("/api/ratings", {
+            method: "POST",
+            body: JSON.stringify({ bean_id: Number(state.selectedId), ...state.rate }),
+          });
+          state.profile = result.profile;
+          toast(t("saved_toast"));
+          render();
+        } catch (err) {
+          toast(t(err.detail || "required"));
+        }
+      });
+      $("#lang")?.addEventListener("change", async (event) => {
+        localStorage.setItem(LANG_KEY, event.target.value);
+        state.config = await api(`/api/config?lang=${event.target.value}`);
+        render();
+      });
+      $("#logout")?.addEventListener("click", async () => {
+        await api("/api/auth/logout", { method: "POST", body: "{}" });
+        localStorage.removeItem(TOKEN_KEY);
+        state.user = null;
+        state.beans = [];
+        render();
+      });
+    }
+
+    boot();
+  </script>
+</body>
+</html>

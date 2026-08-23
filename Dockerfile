@@ -9,8 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=production \
     TZ=Europe/Copenhagen \
     PUID=99 \
-    PGID=100 \
-    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    PGID=100
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
@@ -25,14 +24,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY db.py ocr.py translations.py app.py entrypoint.sh ./
-COPY .streamlit .streamlit
+COPY db.py ocr.py translations.py main.py entrypoint.sh ./
+COPY static ./static
 
 RUN chmod +x /app/entrypoint.sh && mkdir -p /app/data
 
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=25s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8501/_stcore/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8501/api/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

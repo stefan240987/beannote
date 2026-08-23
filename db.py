@@ -13,13 +13,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.5.0"
+import bcrypt
+
+VERSION = "2.0.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
 FUZZY_CUTOFF = NEAR_MATCH_CUTOFF
+BCRYPT_ROUNDS = 12
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()
+RESET_DB_ON_START = os.getenv("RESET_DB_ON_START", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def get_db_path() -> Path:
@@ -51,10 +59,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def should_auto_flush() -> bool:
+    """Wipe the local/test SQLite file on startup. Production on Unraid is never flushed."""
+    if ENVIRONMENT == "production":
+        return False
+    return ENVIRONMENT == "local" or RESET_DB_ON_START
+
+
+def _flush_local_db() -> None:
+    path = get_db_path()
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        if candidate.exists():
+            candidate.unlink()
+
+
 def init_db() -> None:
+    if should_auto_flush():
+        _flush_local_db()
     with connect() as conn:
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                username TEXT DEFAULT '',
+                password_hash TEXT DEFAULT '',
+                auth_provider TEXT NOT NULL DEFAULT 'email',
+                oauth_id TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS beans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -77,6 +111,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS ratings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bean_id INTEGER NOT NULL,
+                user_id INTEGER,
                 brew_method TEXT DEFAULT '',
                 rating REAL NOT NULL,
                 acidity REAL DEFAULT 3.0,
@@ -85,12 +120,15 @@ def init_db() -> None:
                 aftertaste REAL DEFAULT 3.0,
                 notes TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE
+                FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_beans_origin ON beans(origin);
             CREATE INDEX IF NOT EXISTS idx_beans_roast ON beans(roast_level);
             CREATE INDEX IF NOT EXISTS idx_ratings_bean ON ratings(bean_id);
+            CREATE INDEX IF NOT EXISTS idx_ratings_user ON ratings(user_id);
+            CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(auth_provider, oauth_id);
             """
         )
         _ensure_columns(conn)
@@ -99,11 +137,14 @@ def init_db() -> None:
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
-    if "image_url" not in cols:
+    beans = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
+    if "image_url" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
-    if "story" not in cols:
+    if "story" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
+    ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
+    if "user_id" not in ratings:
+        conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
 
 
 def get_images_dir() -> Path:
@@ -488,6 +529,11 @@ def distinct_values(column: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _snap_half(value: float) -> float:
+    snapped = round(float(value) * 2) / 2
+    return min(5.0, max(0.5, snapped))
+
+
 def insert_rating(
     bean_id: int,
     brew_method: str,
@@ -497,23 +543,25 @@ def insert_rating(
     body: float,
     aftertaste: float,
     notes: str = "",
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     with connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO ratings (
-                bean_id, brew_method, rating, acidity, sweetness, body,
+                bean_id, user_id, brew_method, rating, acidity, sweetness, body,
                 aftertaste, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 bean_id,
+                user_id,
                 _normalize(brew_method),
-                float(rating),
-                float(acidity),
-                float(sweetness),
-                float(body),
-                float(aftertaste),
+                _snap_half(rating),
+                _snap_half(acidity),
+                _snap_half(sweetness),
+                _snap_half(body),
+                _snap_half(aftertaste),
                 (notes or "").strip(),
                 _now(),
             ),
@@ -540,7 +588,7 @@ def list_ratings(bean_id: int | None = None) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def get_flavor_profile(bean_id: int) -> dict[str, Any]:
+def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, Any]:
     bean = get_bean(bean_id)
     if not bean:
         return {}
@@ -558,13 +606,23 @@ def get_flavor_profile(bean_id: int) -> dict[str, Any]:
             """,
             (bean_id,),
         ).fetchone()
-        latest = conn.execute(
-            """
-            SELECT * FROM ratings WHERE bean_id = ?
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (bean_id,),
-        ).fetchone()
+        if user_id is not None:
+            latest = conn.execute(
+                """
+                SELECT * FROM ratings
+                WHERE bean_id = ? AND user_id = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (bean_id, user_id),
+            ).fetchone()
+        else:
+            latest = conn.execute(
+                """
+                SELECT * FROM ratings WHERE bean_id = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (bean_id,),
+            ).fetchone()
 
     community = {
         "acidity": stats["acidity"] if stats["rating_count"] else bean["community_acidity"],
@@ -646,3 +704,138 @@ def matching_flavor_tags(roaster_notes: str, user_notes: str) -> dict[str, list[
         if any(tag == u or tag in u or u in tag for u in user if len(u) > 2)
     ]
     return {"roaster": roaster[:12], "user": user[:12], "overlap": overlap[:12]}
+
+
+def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    data = dict(row)
+    data.pop("password_hash", None)
+    return data
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password or not password_hash:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+def get_user(user_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return _public_user(row)
+
+
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    email = _normalize(email).lower()
+    if not email:
+        return None
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_oauth(provider: str, oauth_id: str) -> dict[str, Any] | None:
+    provider = _normalize(provider).lower()
+    oauth_id = (oauth_id or "").strip()
+    if not provider or not oauth_id:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE auth_provider = ? AND oauth_id = ?",
+            (provider, oauth_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_email_user(email: str, password: str, username: str = "") -> dict[str, Any]:
+    email = _normalize(email).lower()
+    username = _normalize(username) or email.split("@")[0]
+    if not email or "@" not in email:
+        raise ValueError("invalid_email")
+    if len(password) < 8:
+        raise ValueError("password_too_short")
+    if get_user_by_email(email):
+        raise ValueError("email_taken")
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO users (
+                email, username, password_hash, auth_provider, oauth_id, created_at
+            ) VALUES (?, ?, ?, 'email', '', ?)
+            """,
+            (email, username, hash_password(password), _now()),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+    user = _public_user(row)
+    if not user:
+        raise ValueError("user_create_failed")
+    return user
+
+
+def authenticate_email(email: str, password: str) -> dict[str, Any] | None:
+    row = get_user_by_email(email)
+    if not row:
+        return None
+    if row.get("auth_provider") not in {"email", ""}:
+        return None
+    if not verify_password(password, row.get("password_hash") or ""):
+        return None
+    return _public_user(row)
+
+
+def upsert_oauth_user(
+    email: str,
+    username: str,
+    provider: str,
+    oauth_id: str,
+) -> dict[str, Any]:
+    provider = _normalize(provider).lower()
+    email = _normalize(email).lower()
+    username = _normalize(username) or (email.split("@")[0] if email else provider)
+    oauth_id = (oauth_id or "").strip()
+    if provider not in {"google", "apple"} or not oauth_id:
+        raise ValueError("invalid_oauth")
+    if not email or "@" not in email:
+        email = f"{provider}-{oauth_id[:24]}@oauth.beannote.local"
+
+    existing = get_user_by_oauth(provider, oauth_id) or get_user_by_email(email)
+    if existing:
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET username = CASE WHEN username = '' THEN ? ELSE username END,
+                    auth_provider = ?,
+                    oauth_id = ?
+                WHERE id = ?
+                """,
+                (username, provider, oauth_id, existing["id"]),
+            )
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (existing["id"],)).fetchone()
+        user = _public_user(row)
+        if not user:
+            raise ValueError("oauth_update_failed")
+        return user
+
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO users (
+                email, username, password_hash, auth_provider, oauth_id, created_at
+            ) VALUES (?, ?, '', ?, ?, ?)
+            """,
+            (email, username, provider, oauth_id, _now()),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+    user = _public_user(row)
+    if not user:
+        raise ValueError("oauth_create_failed")
+    return user
