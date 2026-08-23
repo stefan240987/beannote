@@ -769,7 +769,21 @@ def service_worker() -> FileResponse:
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    headers = {}
+    if ENVIRONMENT != "production":
+        headers["Cache-Control"] = "no-store, max-age=0"
+    return FileResponse(STATIC / "index.html", headers=headers)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8501,
+        reload=ENVIRONMENT != "production",
+    )
 
 
 @app.exception_handler(HTTPException)

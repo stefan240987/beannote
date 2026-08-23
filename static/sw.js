@@ -1,4 +1,4 @@
-const CACHE = "beannote-v2";
+const CACHE = "beannote-v2.6";
 const SHELL = ["/", "/static/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

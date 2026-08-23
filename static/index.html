@@ -43,13 +43,24 @@
     .tabbar { padding-bottom: max(0.4rem, env(safe-area-inset-bottom)); }
     input, select, textarea, button { font-family: inherit; }
     .slider { accent-color: #b85c38; }
-    #origin-map, #world-map { z-index: 1; }
+    #origin-map, #world-map { position: relative; z-index: 1; isolation: isolate; }
+    #origin-map.leaflet-container, #world-map.leaflet-container { background: #f3ebe3; }
+    #world-map { height: calc(100dvh - 10.5rem); }
     .leaflet-container { font-family: inherit; background: #f3ebe3; }
+    .leaflet-control-attribution { font-size: 9px; }
     .coffee-pin { background: transparent !important; border: none !important; font-size: 1.6rem; line-height: 1; }
+    .coffee-pattern {
+      background-color: #3c2a21;
+      background-image:
+        radial-gradient(circle at 18% 28%, rgba(184,92,56,0.38) 0 11%, transparent 12%),
+        radial-gradient(circle at 78% 68%, rgba(250,246,240,0.1) 0 9%, transparent 10%),
+        repeating-linear-gradient(135deg, #3c2a21 0 16px, #4a3328 16px 32px);
+    }
+    body.modal-open { overflow: hidden; }
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
-  <div id="app" class="mx-auto min-h-dvh max-w-lg"></div>
+  <div id="app" class="mx-auto flex min-h-dvh max-w-lg flex-col"></div>
   <script>
     const TOKEN_KEY = "beannote_token";
     const LANG_KEY = "beannote_lang";
@@ -74,6 +85,8 @@
       },
     };
     let radarChart = null;
+    let originMap = null;
+    let worldMap = null;
 
     const $ = (sel, root = document) => root.querySelector(sel);
     const esc = (value) => String(value ?? "")
@@ -167,8 +180,8 @@
       return out;
     }
 
-    function bagFallback() {
-      return `<div class="flex h-44 items-center justify-center bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta">
+    function bagFallback(heightClass = "h-[180px]") {
+      return `<div class="coffee-pattern flex ${heightClass} w-full items-center justify-center">
         <svg viewBox="0 0 80 64" width="64" height="52" fill="none" aria-hidden="true">
           <rect x="22" y="10" width="36" height="46" rx="5" fill="#faf6f0"/>
           <path d="M22 22h36" stroke="#b85c38" stroke-width="3"/>
@@ -180,6 +193,16 @@
 
     function pills(tags) {
       return (tags || []).map((tag) =>
+        `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(tag)}</span>`
+      ).join("");
+    }
+
+    function feedPills(tags) {
+      const clean = (tags || [])
+        .map((tag) => String(tag || "").trim())
+        .filter((tag) => tag && !/[.!?;:]/.test(tag) && tag.split(/\s+/).length <= 2)
+        .slice(0, 3);
+      return clean.map((tag) =>
         `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(tag)}</span>`
       ).join("");
     }
@@ -217,9 +240,11 @@
     }
 
     function originMapBox(source) {
-      if (source?.latitude == null || source?.longitude == null) return "";
+      if (source?.latitude == null || source?.longitude == null) {
+        return `<p class="my-3 text-sm text-muted">${t("no_map_coords")}</p>`;
+      }
       const label = source.region_full || source.origin || source.name || t("map_origin");
-      return `<div id="origin-map" class="h-48 w-full rounded-xl" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
+      return `<div id="origin-map" class="h-44 w-full rounded-xl overflow-hidden my-3" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
     }
 
     function recipeBlock(recipe) {
@@ -328,57 +353,79 @@
 
     function exploreView() {
       const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
+      const mapMode = state.exploreMode === "map";
       const cards = state.beans.map((bean) => {
         const photo = mediaSrc(bean.image_url);
         return `<article class="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
           ${heartBtn(bean, "absolute right-2 top-2 z-10")}
           <button data-open-bean="${bean.id}" class="w-full text-left">
-            ${photo ? `<img src="${photo}" alt="" class="h-44 w-full object-cover">` : bagFallback()}
+            ${photo ? `<img src="${photo}" alt="" class="h-[180px] w-full rounded-t-2xl object-cover">` : bagFallback()}
             <div class="p-3">
               <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
               <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
-              <div class="mt-2 flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
-              <div class="mt-2">${metaBadges(bean)}</div>
-              <p class="mt-2 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
+              <div class="mt-2 flex items-center justify-between gap-2">
+                <div class="flex min-w-0 flex-wrap gap-1">${feedPills(bean.flavor_tags)}</div>
+                <p class="shrink-0 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
+              </div>
             </div>
           </button>
         </article>`;
       }).join("");
-      const detail = state.profile?.bean;
-      const pane = state.exploreMode === "map"
-        ? `<div id="world-map" class="mt-4 h-96 w-full overflow-hidden rounded-xl ring-1 ring-latte"></div>`
-        : `<div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>`;
+      const toolbar = `<div class="grid shrink-0 gap-2">
+        ${segment("filter", [["all", t("filter_all_beans")], ["favorites", t("filter_favorites")]], state.beanFilter)}
+        ${segment("view", [["cards", t("view_cards")], ["map", t("view_map")]], state.exploreMode)}
+      </div>`;
+      if (mapMode) {
+        return `<section class="flex min-h-0 flex-1 flex-col px-4 pb-[4.75rem] pt-[max(0.75rem,env(safe-area-inset-top))]">
+          ${toolbar}
+          <div id="world-map" class="mt-3 min-h-[20rem] w-full flex-1 overflow-hidden rounded-xl ring-1 ring-latte"></div>
+          ${state.profile?.bean ? beanModal(state.profile) : ""}
+        </section>`;
+      }
       return `<section class="px-4 pb-28 pt-4">
         <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("search"))}">
-        <div class="mt-3 grid gap-2">
-          ${segment("filter", [["all", t("filter_all_beans")], ["favorites", t("filter_favorites")]], state.beanFilter)}
-          ${segment("view", [["cards", t("view_cards")], ["map", t("view_map")]], state.exploreMode)}
-        </div>
-        ${pane}
-        ${detail ? beanSheet(state.profile) : ""}
+        <div class="mt-3">${toolbar}</div>
+        <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
+        ${state.profile?.bean ? beanModal(state.profile) : ""}
       </section>`;
     }
 
-    function beanSheet(profile) {
+    function beanModal(profile) {
       const bean = profile.bean;
       const photo = mediaSrc(bean.image_url);
-      return `<article class="mt-5 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
-        <div class="relative">
-          ${photo ? `<img src="${photo}" alt="" class="max-h-64 w-full object-contain bg-foam">` : bagFallback()}
-          ${heartBtn(bean, "absolute right-3 top-3")}
-        </div>
-        <div class="space-y-3 p-4">
-          <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
-          <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin)} · ${esc(bean.process)}</p>
-          <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
-          ${metaBadges(bean)}
-          ${originMapBox(bean)}
-          ${journalBits(bean)}
-          ${recipeBlock(profile.user?.my_recipe)}
-          <canvas id="radar" height="280"></canvas>
-          <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
-        </div>
-      </article>`;
+      const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
+      return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
+        <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+          <button type="button" data-close-modal class="absolute left-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" aria-label="${esc(t("close_detail"))}">✕</button>
+          <div class="relative">
+            ${photo ? `<img src="${photo}" alt="" class="max-h-72 w-full object-cover">` : bagFallback("h-56")}
+            ${heartBtn(bean, "absolute right-3 top-3")}
+          </div>
+          <div class="space-y-5 p-4 pb-8">
+            <section class="space-y-3">
+              <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
+              <p class="text-sm text-muted">${esc(info)}</p>
+              <div class="flex flex-wrap gap-1">${pills(bean.flavor_tags)}</div>
+              ${metaBadges(bean)}
+              ${storyBlock(bean.story)}
+            </section>
+            <section class="space-y-2">
+              ${brewBadge(bean)}
+              ${recipeBlock(profile.user?.my_recipe)}
+            </section>
+            <section>
+              ${originMapBox(bean)}
+            </section>
+            <section>
+              <p class="text-sm font-semibold">${t("community_chart")}</p>
+              <div class="relative mx-auto my-3 h-64 w-full">
+                <canvas id="radar"></canvas>
+              </div>
+            </section>
+            <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
+          </div>
+        </article>
+      </div>`;
     }
 
     function scanView() {
@@ -483,7 +530,9 @@
         ${slider("body", t("body"), t("help_body"), state.rate.body)}
         ${slider("aftertaste", t("aftertaste"), t("help_aftertaste"), state.rate.aftertaste)}
         <textarea id="notes" class="min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("notes_ph"))}">${esc(state.rate.notes)}</textarea>
-        <canvas id="radar" height="280"></canvas>
+        <div class="relative mx-auto h-64 w-full">
+          <canvas id="radar"></canvas>
+        </div>
         <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("save_rating")}</button>
       </section>`;
     }
@@ -515,7 +564,7 @@
         ["rate", "✍️", t("tab_review")],
         ["profile", "👤", t("tab_profile")],
       ];
-      return `<nav class="tabbar fixed inset-x-0 bottom-0 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
+      return `<nav class="tabbar fixed inset-x-0 bottom-0 z-30 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
         <div class="grid grid-cols-4">
           ${tabs.map(([id, icon, label]) => `
             <button data-tab="${id}" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${state.tab === id ? "text-terracotta" : "text-muted"}">
@@ -535,7 +584,10 @@
         body: state.rate.body,
         aftertaste: state.rate.aftertaste,
       };
-      if (radarChart) radarChart.destroy();
+      if (radarChart) {
+        radarChart.destroy();
+        radarChart = null;
+      }
       radarChart = new Chart(canvas, {
         type: "radar",
         data: {
@@ -559,7 +611,9 @@
         },
         options: {
           responsive: true,
+          maintainAspectRatio: false,
           animation: false,
+          events: [],
           plugins: { legend: { labels: { font: { family: "Outfit" } } } },
           scales: {
             r: {
@@ -575,10 +629,11 @@
       });
     }
 
-    function coffeeIcon() {
+    function coffeeIcon(beanId) {
+      const idAttr = beanId != null ? ` data-open-bean="${beanId}"` : "";
       return L.divIcon({
         className: "coffee-pin",
-        html: '<span aria-hidden="true">☕</span>',
+        html: `<span aria-hidden="true"${idAttr}>☕</span>`,
         iconSize: [32, 32],
         iconAnchor: [16, 28],
         popupAnchor: [0, -24],
@@ -592,61 +647,111 @@
       }).addTo(map);
     }
 
+    function destroyMaps() {
+      if (originMap) {
+        originMap.remove();
+        originMap = null;
+      }
+      if (worldMap) {
+        worldMap.remove();
+        worldMap = null;
+      }
+    }
+
+    function refreshMap(map, place) {
+      if (!map) return;
+      const run = () => {
+        map.invalidateSize();
+        if (place) place();
+      };
+      requestAnimationFrame(() => {
+        run();
+        setTimeout(run, 200);
+      });
+    }
+
     function drawMaps() {
       if (!window.L) return;
+      destroyMaps();
       const origin = $("#origin-map");
       if (origin) {
         const lat = Number(origin.dataset.lat);
         const lng = Number(origin.dataset.lng);
         if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          const map = L.map(origin, { scrollWheelZoom: false }).setView([lat, lng], 7);
-          addOsm(map);
+          originMap = L.map(origin, {
+            scrollWheelZoom: false,
+            zoomControl: true,
+          }).setView([lat, lng], 7);
+          addOsm(originMap);
           L.marker([lat, lng], { icon: coffeeIcon() })
-            .addTo(map)
+            .addTo(originMap)
             .bindPopup(origin.dataset.label || t("map_origin"));
-          requestAnimationFrame(() => map.invalidateSize());
+          refreshMap(originMap, () => originMap.setView([lat, lng], 7));
         }
       }
       const world = $("#world-map");
       if (world) {
-        const map = L.map(world, { scrollWheelZoom: false }).setView([8, 20], 2);
-        addOsm(map);
-        const bounds = [];
+        worldMap = L.map(world, { scrollWheelZoom: false, worldCopyJump: true }).setView([20, 0], 2);
+        addOsm(worldMap);
+        const points = [];
         state.beans.forEach((bean) => {
           const lat = Number(bean.latitude);
           const lng = Number(bean.longitude);
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-          const marker = L.marker([lat, lng], { icon: coffeeIcon() }).addTo(map);
-          marker.bindPopup(
-            `<button type="button" class="font-semibold text-terracotta" data-open-bean="${bean.id}">${esc(bean.name)}</button><br>${esc(bean.roaster)}<br>${esc(bean.region_full || bean.origin || "")}`
-          );
-          bounds.push([lat, lng]);
+          const marker = L.marker([lat, lng], { icon: coffeeIcon(bean.id) }).addTo(worldMap);
+          const open = () => openBean(Number(bean.id));
+          marker.on("click", open);
+          marker.getElement()?.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            open();
+          });
+          points.push([lat, lng]);
         });
-        if (bounds.length === 1) map.setView(bounds[0], 6);
-        else if (bounds.length > 1) map.fitBounds(bounds, { padding: [28, 28] });
-        map.on("popupopen", () => {
-          document.querySelectorAll(".leaflet-popup-content [data-open-bean]").forEach((btn) => {
-            btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean)));
+        world.querySelectorAll("[data-open-bean]").forEach((el) => {
+          el.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openBean(Number(el.dataset.openBean));
           });
         });
-        requestAnimationFrame(() => map.invalidateSize());
+        const placeWorld = () => {
+          if (points.length === 1) worldMap.setView(points[0], 5);
+          else if (points.length > 1) worldMap.fitBounds(points, { padding: [36, 36], maxZoom: 4 });
+          else worldMap.setView([20, 0], 2);
+        };
+        refreshMap(worldMap, placeWorld);
       }
     }
 
+    function closeBean() {
+      if (!state.profile && state.selectedId == null) return;
+      state.selectedId = null;
+      state.profile = null;
+      render();
+    }
+
     function render() {
+      destroyMaps();
+      if (radarChart) {
+        radarChart.destroy();
+        radarChart = null;
+      }
       const root = $("#app");
       if (!state.config) {
         root.innerHTML = `<p class="p-8 text-center text-muted">BeanNote…</p>`;
         return;
       }
       document.documentElement.lang = state.config.lang || "da";
+      document.body.classList.toggle("modal-open", !!(state.user && state.tab === "explore" && state.profile?.bean));
       if (!state.user) {
         root.innerHTML = authView();
         bindAuth();
         return;
       }
       const body = { explore: exploreView, scan: scanView, rate: rateView, profile: profileView }[state.tab]();
-      root.innerHTML = `${header()}${body}${tabbar()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-20 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-30 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
+      const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
+      root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
       drawRadar();
       drawMaps();
@@ -781,6 +886,12 @@
       }));
       document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean))));
       document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.rateBean), "rate")));
+      $("[data-modal-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+      document.querySelectorAll("[data-close-modal]").forEach((el) => {
+        el.addEventListener("click", (event) => {
+          if (event.currentTarget === event.target) closeBean();
+        });
+      });
       $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
       $("#toggle-edit")?.addEventListener("click", () => { state.editScan = !state.editScan; render(); });
@@ -881,6 +992,10 @@
         render();
       });
     }
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.profile?.bean && state.tab === "explore") closeBean();
+    });
 
     boot();
   </script>

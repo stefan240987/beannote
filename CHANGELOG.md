@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.6.0] - 2026-08-23
+
+- Explore feed cards are minimal: bag photo (180px, cover), favorite heart, name, roaster · origin, 2–3 flavor badges, and the average star. Leaflet maps, radar charts, recipes, and MASL/varietal metadata no longer render on the card.
+- Bean details open in a dedicated modal: hero image, info + collapsible story, brew recommendations and My Recipe, a contained `h-44` origin map, and a static 0–5 flavor radar.
+- World Map view hides the card grid and shows one full-viewport Leaflet map with ☕ pins; tapping a pin opens that bean’s modal.
+- Local/dev `index.html` is served with `Cache-Control: no-store`, and `python main.py` binds Uvicorn to `0.0.0.0:8501` for phone testing on the same Wi-Fi.
+
 ## [2.5.0] - 2026-08-23
 
 - Local mobile testing: Uvicorn binds `0.0.0.0:8501`, CORS allows all origins, and startup/`run_local.sh` print the LAN URL plus a terminal QR code so a phone on the same Wi-Fi can open BeanNote immediately.
