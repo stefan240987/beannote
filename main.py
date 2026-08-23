@@ -771,15 +771,29 @@ async def scan(
     except Exception as exc:
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     snapshot_url = save_bean_image(jpeg, filename="scan.jpg")
-    official_url = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
-    image_url = snapshot_url
-    if official_url:
-        official_bytes = fetch_official_image_bytes(official_url)
-        if official_bytes:
-            image_url = save_bean_image(official_bytes, filename="official.jpg")
-        else:
-            image_url = official_url
-    parsed["image_url"] = image_url
+    raw_candidates = parsed.get("image_candidates") or []
+    if not raw_candidates:
+        fallback = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
+        raw_candidates = [fallback] if fallback else []
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_candidates:
+        url = str(raw or "").strip()
+        if not url or url in seen:
+            continue
+        official_bytes = fetch_official_image_bytes(url)
+        stored = save_bean_image(official_bytes, filename="official.jpg") if official_bytes else url
+        if stored in seen:
+            continue
+        seen.add(url)
+        seen.add(stored)
+        resolved.append(stored)
+        if len(resolved) >= 3:
+            break
+    parsed["image_candidates"] = resolved
+    parsed["official_image_url"] = resolved[0] if resolved else ""
+    parsed["product_image_url"] = parsed["official_image_url"]
+    parsed["image_url"] = snapshot_url
     parsed["snapshot_url"] = snapshot_url
     parsed["preview"] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
     return parsed

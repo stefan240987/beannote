@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [3.1.0] - 2026-08-23
+
+- Scan approval now includes a horizontal cover picker: `📸 Dit Billede` plus up to 3 official `✨ Studio Billede` candidates. Tap a thumbnail to preview the bean cover; `[ 📸 Brug eget foto ]` resets to the camera snapshot.
+- `ocr.py` returns `image_candidates` (up to 3 high-res roaster/product URLs) alongside the uploaded snapshot. `✅ Godkend & Gem` persists the selected `image_url` on the bean.
+
 ## [3.0.0] - 2026-08-23
 
 - After `✅ Godkend & Gem`, BeanNote shows a confirmation modal instead of jumping to Rate: rate now, or reset into Explore.

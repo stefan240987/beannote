@@ -337,6 +337,20 @@ BELLAROM_BIO_PACKSHOT = (
     "sm:1/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvdWsvMS8xQjMyMTM5Q0FBOTNENkEyQThFRTQyQUI/"
     "yRkU4RTRDRkFGMUQ1RTc2QzI5RjkyQTY1QUYzNTdCQTgwNENFNDQ4LmpwZw.jpg"
 )
+BELLAROM_STUDIO_PACKSHOTS = (
+    BELLAROM_BIO_PACKSHOT,
+    (
+        "https://imgproxy-retcat.assets.schwarz/f1OhW50Mn8XZO0UazOH5-q3DsgQ6GkEiEUQUkE1ax6M/"
+        "sm:1/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvdWsvMS85MkMyQzQ1M0JGMDIwRkVGMUFCNDA0RkJ/"
+        "DNzMzQzg3NjBEQjczNUE5MzMyRjU0N0UxRkQ3N0Y5M0U0NjA1RDNCLmpwZw.jpg"
+    ),
+    (
+        "https://imgproxy-retcat.assets.schwarz/6FSE-Es0NZsyi3hjVhA2KdMqaHmEN1zCIr2mLVnE05U/"
+        "sm:1/exar:1:ce/w:1278/h:959/cz/M6Ly9wcm9kLWNhd/GFsb2ctbWVkaWEvZGUvMS8xRThCRDRDM0JFNENGQUNEOEVBRjdFNkU/"
+        "5OTJCMzNENkM0NTZFODVFMkZFOTBDMEZBNUM3NkY5RTM0MTg5MzY1LmpwZw.jpg"
+    ),
+)
+MAX_IMAGE_CANDIDATES = 3
 LABEL_SUITABLE_BELLAROM = ["Filter", "Espresso", "Mælkedrikke"]
 
 _NEXT_FIELD = (
@@ -1026,9 +1040,10 @@ def _gemini_prompt(lang: str = "da") -> str:
         "for that lot or origin) to fill it. "
         "Never invent a roaster or bean_name if the label does not show them — "
         "use an empty string instead.\n"
-        '- "product_image_url": if you know a real public https URL of an official '
-        "high-resolution studio packshot / product-container graphic from the roaster "
-        "shop or CDN, return it; otherwise return an empty string. "
+        '- "product_image_urls": array of up to 3 real public https URLs of official '
+        "high-resolution studio packshots / product-container graphics from the roaster "
+        "shop or CDN (for example Lidl/Schwarz, Shopify, official shop). "
+        '- "product_image_url": first official packshot URL, or "" if unknown. '
         "Never invent a URL and never return a blurry phone photo."
     )
 
@@ -1451,19 +1466,51 @@ def fetch_official_image_bytes(url: str, timeout: float = 6.0) -> bytes | None:
     return data
 
 
-def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
+def _collect_image_urls(*sources: Any) -> list[str]:
+    """Sanitize and de-dupe https product-image URLs from strings or lists."""
+    seen: set[str] = set()
+    out: list[str] = []
+    pending: list[Any] = list(sources)
+    while pending:
+        source = pending.pop(0)
+        if isinstance(source, (list, tuple, set)):
+            pending[0:0] = list(source)
+            continue
+        if isinstance(source, dict):
+            pending[0:0] = [
+                source.get("image_urls"),
+                source.get("urls"),
+                source.get("product_image_urls"),
+                source.get("image_url"),
+                source.get("url"),
+                source.get("product_image_url"),
+            ]
+            continue
+        clean = sanitize_image_url(str(source or ""))
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+        if len(out) >= MAX_IMAGE_CANDIDATES:
+            break
+    return out
+
+
+def _gemini_product_image_search(name: str, roaster: str, key: str) -> list[str]:
     from google import genai
     from google.genai import types
 
     prompt = (
-        "Find the official high-resolution studio packshot of this coffee bag. "
+        "Find official high-resolution studio packshots of this coffee bag. "
         f'Roaster: "{roaster}". Product name: "{name}". '
-        "Prefer a clean retailer/roaster container graphic (Lidl/Schwarz CDN, Shopify, "
-        "official shop). Never return a blurry phone snapshot or marketplace screenshot. "
+        "Prefer clean retailer/roaster container graphics (Lidl/Schwarz CDN, Shopify, "
+        "official shop). Return up to 3 distinct product shots of the same bag or "
+        "the roaster's official studio photography for that product line. "
+        "Never return a blurry phone snapshot or marketplace screenshot. "
         "Return ONE JSON object only with keys "
-        '{"image_url":"https://...","source":"..."}. '
-        "image_url must be a direct https image (jpg/png/webp), not an HTML search page. "
-        'If no real official image exists, return {"image_url":"","source":""}. '
+        '{"image_urls":["https://..."],"source":"..."}. '
+        "Each image_urls item must be a direct https image (jpg/png/webp), not an HTML page. "
+        'If no real official image exists, return {"image_urls":[],"source":""}. '
         "Do not invent URLs."
     )
     client = genai.Client(api_key=key)
@@ -1484,7 +1531,7 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
                 config=types.GenerateContentConfig(**config_kwargs),
             )
             data = _parse_gemini_json(_response_text(response))
-            return sanitize_image_url(str(data.get("image_url") or data.get("url") or ""))
+            return _collect_image_urls(data)
         except Exception as exc:
             last_error = exc
             if "404" in str(exc) or "NOT_FOUND" in str(exc):
@@ -1495,46 +1542,65 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> str:
             break
     if last_error:
         raise last_error
-    return ""
+    return []
+
+
+def curated_packshot_urls(name: str, roaster: str) -> list[str]:
+    """Known studio packshots used when Gemini would otherwise return a phone photo."""
+    blob = f"{roaster} {name}".lower()
+    if "bellarom" in blob:
+        return list(BELLAROM_STUDIO_PACKSHOTS[:MAX_IMAGE_CANDIDATES])
+    return []
 
 
 def curated_packshot_url(name: str, roaster: str) -> str:
-    """Known studio packshots used when Gemini would otherwise return a phone photo."""
-    blob = f"{roaster} {name}".lower()
-    if "bellarom" in blob and any(
-        token in blob for token in ("bio", "organic", "full-bodied", "full bodied", "aroma")
-    ):
-        return BELLAROM_BIO_PACKSHOT
-    return ""
+    found = curated_packshot_urls(name, roaster)
+    return found[0] if found else ""
+
+
+def find_official_bag_images(
+    name: str,
+    roaster: str,
+    hint_urls: str | list[str] | None = None,
+) -> list[str]:
+    """Return up to 3 official high-res product URLs for the scanned bag."""
+    name = re.sub(r"\s+", " ", (name or "").strip())
+    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
+    curated = curated_packshot_urls(name, roaster)
+    collected = _collect_image_urls(curated, hint_urls)
+    if len(collected) >= MAX_IMAGE_CANDIDATES:
+        return collected[:MAX_IMAGE_CANDIDATES]
+    if not name or not roaster:
+        return collected
+    key = get_gemini_api_key()
+    if not key:
+        return collected
+    try:
+        found = _gemini_product_image_search(name, roaster, key)
+    except Exception:
+        found = []
+    return _collect_image_urls(collected, found)[:MAX_IMAGE_CANDIDATES]
 
 
 def find_official_bag_image(name: str, roaster: str, hint_url: str = "") -> str:
     """Ask Gemini (with web search when available) for a clean official bag photo URL."""
-    name = re.sub(r"\s+", " ", (name or "").strip())
-    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
-    curated = curated_packshot_url(name, roaster)
-    if curated:
-        return curated
-    hinted = sanitize_image_url(hint_url)
-    if hinted:
-        return hinted
-    if not name or not roaster:
-        return ""
-    key = get_gemini_api_key()
-    if not key:
-        return ""
-    try:
-        return _gemini_product_image_search(name, roaster, key) or curated
-    except Exception:
-        return curated
+    found = find_official_bag_images(name, roaster, hint_url)
+    return found[0] if found else ""
 
 
 def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
     out = dict(parsed)
-    hint = str(out.get("product_image_url") or out.get("official_image_url") or "")
-    official = find_official_bag_image(out.get("name") or "", out.get("roaster") or "", hint)
+    hints = _collect_image_urls(
+        out.get("product_image_urls"),
+        out.get("product_image_url"),
+        out.get("official_image_url"),
+        out.get("image_candidates"),
+    )
+    candidates = find_official_bag_images(out.get("name") or "", out.get("roaster") or "", hints)
+    official = candidates[0] if candidates else ""
     out["official_image_url"] = official
     out["product_image_url"] = official
+    out["image_candidates"] = candidates
     return out
 
 

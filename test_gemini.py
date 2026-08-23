@@ -162,6 +162,16 @@ def test_bellarom_suitability_and_packshot() -> None:
     _assert_true("https packshot", url.startswith("https://"))
     _assert_true("not camera snapshot", not url.startswith("images/"))
     _assert_true("schwarz studio host", "assets.schwarz" in url)
+    from ocr import attach_official_bag_image, find_official_bag_images
+    candidates = find_official_bag_images("Bellarom Bio Organic", "Bellarom")
+    _assert_true("up to 3 candidates", 1 <= len(candidates) <= 3)
+    _assert_eq("first candidate is Bio Organic packshot", candidates[0], BELLAROM_BIO_PACKSHOT)
+    _assert_true("all candidates https", all(item.startswith("https://") for item in candidates))
+    attached = attach_official_bag_image({
+        "name": BELLAROM_NAME,
+        "roaster": "Bellarom",
+    })
+    _assert_eq("attached candidates", attached.get("image_candidates"), candidates)
     print("OK  Bellarom suitability tags and studio packshot fallback")
 
 

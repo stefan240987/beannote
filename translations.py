@@ -174,6 +174,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "filter_suitable_espresso": "☕ Espresso",
         "filter_suitable_filter": "☕ Filter",
         "filter_suitable_milk": "🥛 Mælkedrikke",
+        "cover_picker_title": "Vælg coverfoto",
+        "cover_your_photo": "📸 Dit Billede",
+        "cover_studio_photo": "✨ Studio Billede {n}",
+        "cover_use_own": "📸 Brug eget foto",
     },
     "en": {
         "app_name": "BeanNote",
@@ -338,6 +342,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "filter_suitable_espresso": "☕ Espresso",
         "filter_suitable_filter": "☕ Filter",
         "filter_suitable_milk": "🥛 Milk drinks",
+        "cover_picker_title": "Choose cover photo",
+        "cover_your_photo": "📸 Your Photo",
+        "cover_studio_photo": "✨ Studio Photo {n}",
+        "cover_use_own": "📸 Use my photo",
     },
     "de": {
         "app_name": "BeanNote",
@@ -502,6 +510,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "filter_suitable_espresso": "☕ Espresso",
         "filter_suitable_filter": "☕ Filter",
         "filter_suitable_milk": "🥛 Milchgetränke",
+        "cover_picker_title": "Coverfoto wählen",
+        "cover_your_photo": "📸 Dein Bild",
+        "cover_studio_photo": "✨ Studiofoto {n}",
+        "cover_use_own": "📸 Eigenes Foto verwenden",
     },
     "fr": {
         "app_name": "BeanNote",
@@ -666,6 +678,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "filter_suitable_espresso": "☕ Espresso",
         "filter_suitable_filter": "☕ Filtre",
         "filter_suitable_milk": "🥛 Boissons lactées",
+        "cover_picker_title": "Choisir la photo de couverture",
+        "cover_your_photo": "📸 Votre photo",
+        "cover_studio_photo": "✨ Photo studio {n}",
+        "cover_use_own": "📸 Utiliser ma photo",
     },
     "es": {
         "app_name": "BeanNote",
@@ -830,6 +846,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "filter_suitable_espresso": "☕ Espresso",
         "filter_suitable_filter": "☕ Filtro",
         "filter_suitable_milk": "🥛 Bebidas con leche",
+        "cover_picker_title": "Elegir foto de portada",
+        "cover_your_photo": "📸 Tu foto",
+        "cover_studio_photo": "✨ Foto de estudio {n}",
+        "cover_use_own": "📸 Usar mi foto",
     },
 }
 
