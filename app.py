@@ -47,7 +47,7 @@ def inject_css() -> None:
     st.markdown(
         """
         <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
         <style>
         :root {
             --espresso: #3c2a21;
@@ -55,15 +55,21 @@ def inject_css() -> None:
             --cream: #faf6f0;
             --foam: #f3ebe3;
             --latte: #e8d8c8;
+            --ink: #2c221e;
+            --muted: #8c7a6b;
+            --line: #eae3d9;
+            --input-line: #e0d6cc;
+            --chip: #f4ebd9;
+            --amber: #d97706;
         }
-        html, body, [data-testid="stAppViewContainer"] {
-            background: var(--cream);
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+            background: #faf6f0;
             color: var(--espresso);
             font-family: "Outfit", "Avenir Next", sans-serif;
         }
         [data-testid="stHeader"] { background: transparent; }
         #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden; }
-        .block-container { padding-top: 1.2rem; padding-bottom: 4rem; max-width: 1100px; }
+        .block-container { padding-top: 0.75rem; padding-bottom: 3.5rem; max-width: 1100px; }
         h1, h2, h3, .bn-brand {
             font-family: "Fraunces", Georgia, serif;
             color: var(--espresso);
@@ -80,80 +86,207 @@ def inject_css() -> None:
             background: #b85c38;
             color: #faf6f0 !important;
             border: 0;
-            border-radius: 12px;
-            min-height: 44px;
+            border-radius: 8px;
+            min-height: 40px;
+            font-weight: 600;
         }
         .bn-hero {
-            background: linear-gradient(135deg, #3c2a21 0%, #5a3c2e 58%, #b85c38 140%);
+            background: linear-gradient(135deg, #3c2a21 0%, #4a3328 72%, #b85c38 155%);
             color: #faf6f0;
-            border-radius: 22px;
-            padding: 1.4rem 1.6rem 1.3rem;
-            margin-bottom: 1.1rem;
-            box-shadow: 0 14px 40px rgba(60, 42, 33, 0.18);
+            border-radius: 14px;
+            padding: 0.85rem 1.05rem 0.8rem;
+            margin-bottom: 0.65rem;
+            box-shadow: 0 8px 20px rgba(60, 42, 33, 0.12);
         }
-        .bn-hero h1 { color: #faf6f0; margin: 0 0 0.2rem; font-size: 2.1rem; }
-        .bn-hero p { margin: 0; opacity: 0.88; font-size: 1.02rem; }
+        .bn-kicker {
+            font-family: "Outfit", sans-serif;
+            font-size: 11px;
+            letter-spacing: 1.4px;
+            text-transform: uppercase;
+            font-weight: 600;
+            opacity: 0.68;
+            margin: 0 0 0.15rem;
+        }
+        .bn-hero h1 {
+            color: #faf6f0;
+            margin: 0 0 0.15rem;
+            font-size: 1.45rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+        .bn-hero p { margin: 0; opacity: 0.78; font-size: 0.86rem; font-weight: 400; }
         .bn-card {
             background: #fffdf9;
-            border: 1px solid #eadfd3;
-            border-radius: 18px;
-            padding: 1rem 1.05rem 0.85rem;
-            box-shadow: 0 8px 24px rgba(60, 42, 33, 0.06);
-            min-height: 210px;
+            border: 1px solid #eae3d9;
+            border-radius: 12px;
+            padding: 0.75rem 0.85rem 0.65rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
         }
-        .bn-card h3 { margin: 0.15rem 0 0.1rem; font-size: 1.25rem; }
-        .bn-meta { color: #7a5a48; font-size: 0.92rem; margin-bottom: 0.45rem; }
-        .bn-stars { color: #b85c38; font-size: 1.05rem; letter-spacing: 0.04em; }
+        .bn-roaster {
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: #8c7a6b;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-family: "Outfit", sans-serif;
+        }
+        .bn-card h3, .bn-name {
+            font-family: "Outfit", "Avenir Next", sans-serif;
+            margin: 0.18rem 0 0.2rem;
+            font-size: 16px;
+            font-weight: 700;
+            color: #2c221e;
+            letter-spacing: -0.01em;
+        }
+        .bn-meta { color: #8c7a6b; font-size: 12px; margin: 0.15rem 0 0.4rem; }
+        .bn-stars {
+            color: #d97706;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0;
+            font-family: "Outfit", sans-serif;
+        }
         .bn-badge {
             display: inline-block;
-            background: #f3ebe3;
+            background-color: #f4ebd9;
             color: #3c2a21;
-            border-radius: 999px;
-            padding: 0.18rem 0.62rem;
+            border-radius: 16px;
+            padding: 4px 8px;
             margin: 0.12rem 0.22rem 0.12rem 0;
-            font-size: 0.78rem;
+            font-size: 11px;
             font-weight: 500;
         }
         .bn-badge.match { background: #b85c38; color: #faf6f0; }
         .bn-warn {
             background: #fff4e8;
             border: 1px solid #e2b089;
-            border-radius: 14px;
-            padding: 0.85rem 1rem;
-            margin: 0.6rem 0 1rem;
+            border-radius: 12px;
+            padding: 0.7rem 0.85rem;
+            margin: 0.55rem 0 0.9rem;
         }
-        .stButton button, .stDownloadButton button {
+        .stButton button, .stDownloadButton button,
+        button[data-testid="stBaseButton-primary"] {
             background: #b85c38;
             color: #faf6f0;
             border: 0;
-            border-radius: 12px;
+            border-radius: 8px;
             font-weight: 600;
-            min-height: 46px;
-            padding: 0.55rem 1.1rem;
+            min-height: 40px;
+            padding: 0.45rem 1rem;
+            box-shadow: none !important;
+            outline: none !important;
         }
-        .stButton button:hover { background: #9a4b2d; color: #fff; }
-        [data-testid="stSlider"] { padding-top: 0.35rem; padding-bottom: 0.55rem; }
+        .stButton button:hover, .stDownloadButton button:hover,
+        button[data-testid="stBaseButton-primary"]:hover {
+            background: #9a4b2d;
+            color: #fff;
+        }
+        .stButton button:focus, .stButton button:focus-visible,
+        .stDownloadButton button:focus, .stDownloadButton button:focus-visible,
+        .stButton button:active {
+            outline: none !important;
+            box-shadow: none !important;
+        }
+        button[data-testid="stBaseButton-secondary"] {
+            background: transparent;
+            border: 1px solid #b85c38;
+            color: #b85c38;
+            min-height: 34px;
+            padding: 0.3rem 0.85rem;
+            font-size: 13px;
+            width: auto;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+        button[data-testid="stBaseButton-secondary"]:hover {
+            background: #b85c38;
+            color: #fff;
+        }
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input,
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        [data-testid="stFileUploader"] section {
+            border-radius: 8px !important;
+            border: 1px solid #e0d6cc !important;
+            background: #fff !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stTextInput"] input {
+            min-height: 42px;
+            padding: 0.5rem 0.85rem;
+        }
+        [data-testid="stTextInput"] input::placeholder,
+        [data-testid="stTextArea"] textarea::placeholder {
+            color: #8c7a6b !important;
+            opacity: 0.72;
+        }
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stTextArea"] textarea:focus {
+            border-color: #b85c38 !important;
+            box-shadow: 0 0 0 2px rgba(184, 92, 56, 0.12) !important;
+        }
+        .bn-search-dock { height: 0; margin: 0; }
+        [data-testid="stSlider"] { padding-top: 0.3rem; padding-bottom: 0.45rem; }
         [data-baseweb="slider"] { touch-action: manipulation; }
-        div[data-testid="stTabs"] button { font-weight: 600; }
+        div[data-testid="stButtonGroup"] {
+            background: #efe6dc;
+            border-radius: 10px;
+            padding: 3px;
+            gap: 2px;
+            width: 100%;
+        }
+        div[data-testid="stButtonGroup"] button {
+            flex: 1 1 0;
+            background: transparent !important;
+            color: #8c7a6b !important;
+            border: 0 !important;
+            border-radius: 8px !important;
+            box-shadow: none !important;
+            min-height: 36px;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 0.35rem 0.5rem;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+        div[data-testid="stButtonGroup"] button[kind="segmented_controlActive"],
+        div[data-testid="stButtonGroup"] button[data-testid="stBaseButton-segmented_controlActive"],
+        div[data-testid="stButtonGroup"] button[aria-pressed="true"],
+        div[data-testid="stButtonGroup"] button[data-active="true"] {
+            background: #b85c38 !important;
+            color: #fff !important;
+        }
         div[data-testid="stRadio"] > label { display: none; }
         div[data-testid="stRadio"] [role="radiogroup"] {
-            gap: 0.4rem;
-            flex-wrap: wrap;
+            background: #efe6dc;
+            border-radius: 10px;
+            padding: 3px;
+            gap: 2px;
+            flex-wrap: nowrap;
         }
         div[data-testid="stRadio"] [role="radiogroup"] label {
-            background: #fffdf9;
-            border: 1px solid #eadfd3;
-            border-radius: 12px;
-            padding: 0.45rem 0.85rem;
-            min-height: 44px;
+            background: transparent;
+            border: 0;
+            border-radius: 8px;
+            padding: 0.4rem 0.7rem;
+            min-height: 36px;
             font-weight: 600;
+            font-size: 13px;
+            color: #8c7a6b;
+            flex: 1 1 0;
+            justify-content: center;
+        }
+        div[data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {
+            background: #b85c38;
+            color: #fff;
         }
         @media (max-width: 768px) {
             .block-container { padding-left: 0.7rem; padding-right: 0.7rem; }
-            .bn-hero { padding: 1.1rem 1rem; border-radius: 16px; }
-            .bn-hero h1 { font-size: 1.65rem; }
-            .stButton button, .stDownloadButton button { width: 100%; min-height: 48px; }
-            [data-testid="stSlider"] { padding-bottom: 0.9rem; }
+            .bn-hero { padding: 0.75rem 0.9rem; border-radius: 12px; }
+            .bn-hero h1 { font-size: 1.35rem; }
+            .stButton button, .stDownloadButton button,
+            button[data-testid="stBaseButton-primary"] { width: 100%; min-height: 44px; }
+            button[data-testid="stBaseButton-secondary"] { width: auto; min-height: 34px; }
+            [data-testid="stSlider"] { padding-bottom: 0.85rem; }
             [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
         }
         </style>
@@ -164,9 +297,8 @@ def inject_css() -> None:
 
 def stars(value: float | None) -> str:
     if not value:
-        return "☆☆☆☆☆"
-    filled = max(0, min(5, int(round(value))))
-    return "★" * filled + "☆" * (5 - filled)
+        return "★ —"
+    return f"★ {value:.1f}"
 
 
 def flavor_radar(
@@ -257,7 +389,7 @@ def render_duplicate_warning(lang: str, similar: list[dict]) -> None:
         if cols[1].button(
             t(lang, "use_existing"),
             key=f"use-{match['id']}-{match.get('confidence')}",
-            use_container_width=True,
+            type="secondary",
         ):
             go_review(match["id"])
             st.rerun()
@@ -303,11 +435,13 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     bean = profile["bean"]
     community = profile["community"]
     user = profile["user"]
-    st.markdown(f"### {bean['name']}")
-    st.caption(f"{bean['roaster']} · {bean['origin']} · {bean['process']} · {bean['roast_level']}")
+    st.markdown(f'<div class="bn-roaster">{bean["roaster"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<h3 class="bn-name">{bean["name"]}</h3>', unsafe_allow_html=True)
+    st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
     avg = community.get("avg_rating") or 0
     st.markdown(
-        f'<div class="bn-stars">{stars(avg)} · {avg:.1f} · {community["rating_count"]} {t(lang, "reviews")}</div>',
+        f'<div class="bn-stars">{stars(avg)}</div>'
+        f'<div class="bn-meta">{community["rating_count"]} {t(lang, "reviews")}</div>',
         unsafe_allow_html=True,
     )
     tags = bean.get("flavor_tags") or []
@@ -318,7 +452,7 @@ def bean_dialog(bean_id: int, lang: str) -> None:
         use_container_width=True,
     )
     compare_notes(lang, bean.get("roaster_notes") or "", (user or {}).get("notes") or "")
-    if st.button(t(lang, "tab_review"), use_container_width=True):
+    if st.button(t(lang, "tab_review"), type="primary", use_container_width=True):
         go_review(bean_id)
         st.rerun()
 
@@ -338,8 +472,7 @@ def compare_notes(lang: str, roaster_notes: str, user_notes: str) -> None:
         st.caption(t(lang, "no_match_notes"))
 
 
-def render_explore(lang: str, filters: dict) -> None:
-    query = st.text_input(t(lang, "search"), placeholder=t(lang, "search"))
+def render_explore(lang: str, filters: dict, query: str = "") -> None:
     beans = list_beans(
         search=query,
         origin=filters["origin"],
@@ -362,16 +495,16 @@ def render_explore(lang: str, filters: dict) -> None:
                 st.markdown(
                     f"""
                     <div class="bn-card">
-                        <div class="bn-meta">{bean['roaster']}</div>
-                        <h3>{bean['name']}</h3>
-                        <div class="bn-stars">{stars(avg)} {f'{avg:.1f}' if avg else '—'}</div>
+                        <div class="bn-roaster">{bean['roaster']}</div>
+                        <h3 class="bn-name">{bean['name']}</h3>
+                        <div class="bn-stars">{stars(avg)}</div>
                         <div class="bn-meta">{bean['origin']} · {bean['process'] or '—'} · {bean['roast_level'] or '—'}</div>
                         <div>{tags}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-                if st.button(t(lang, "details"), key=f"open-{bean['id']}", use_container_width=True):
+                if st.button(t(lang, "details"), key=f"open-{bean['id']}", type="secondary"):
                     st.session_state.detail_bean_id = bean["id"]
                     bean_dialog(bean["id"], lang)
 
@@ -432,7 +565,7 @@ def render_add(lang: str) -> None:
         type=["jpg", "jpeg", "png"],
         help=t(lang, "upload_help"),
     )
-    if uploaded and st.button(t(lang, "scan"), use_container_width=True):
+    if uploaded and st.button(t(lang, "scan"), type="primary", use_container_width=True):
         if not configure_tesseract():
             st.error(t(lang, "ocr_missing"))
         else:
@@ -513,7 +646,11 @@ def main() -> None:
     lang = filters["lang"]
 
     st.markdown(
-        f'<div class="bn-hero"><h1>☕ {t(lang, "app_name")}</h1><p>{t(lang, "tagline")}</p></div>',
+        f'<div class="bn-hero">'
+        f'<div class="bn-kicker">☕ {t(lang, "app_name")}</div>'
+        f'<h1>{t(lang, "app_name")}</h1>'
+        f'<p>{t(lang, "tagline")}</p>'
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -525,16 +662,22 @@ def main() -> None:
     }
     if st.session_state.get("active_tab") not in tab_keys:
         st.session_state.active_tab = "explore"
-    current = st.radio(
+    current = st.segmented_control(
         "nav",
         options=tab_keys,
         format_func=lambda key: tab_labels[key],
         key="active_tab",
-        horizontal=True,
         label_visibility="collapsed",
-    )
+        width="stretch",
+    ) or "explore"
     if current == "explore":
-        render_explore(lang, filters)
+        st.markdown('<div class="bn-search-dock"></div>', unsafe_allow_html=True)
+        query = st.text_input(
+            t(lang, "search"),
+            placeholder=t(lang, "search"),
+            label_visibility="collapsed",
+        )
+        render_explore(lang, filters, query)
     elif current == "review":
         render_review(lang)
     else:

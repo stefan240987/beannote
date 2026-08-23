@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.1] - 2026-08-23
+
+- UI overhaul: compact elevated cards, ghost card actions, iOS-style segmented nav, and a slimmer header with embedded search.
+- Flavor tags as soft pills and compact amber `★ 4.0` scores.
+- Streamlit chrome overrides for cream canvas, rounded inputs, and primary buttons without default focus rings.
+
 ## [1.0.0] - 2026-08-23
 
 - Initial BeanNote release: Explore, Rate, and Add Bean + OCR tabs.
