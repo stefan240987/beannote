@@ -42,6 +42,10 @@ BREW_METHODS = [
 ]
 ROAST_LEVELS = ["Lys", "Medium", "Medium-Dark", "Mørk", "Light", "Dark"]
 PROCESSES = ["Washed", "Natural", "Honey", "Anaerobic"]
+RADAR_CHART_CONFIG = {
+    "staticPlot": True,
+    "displayModeBar": False,
+}
 BAG_PLACEHOLDER = """
 <div class="bn-card-fallback" aria-hidden="true">
   <svg viewBox="0 0 80 64" width="64" height="52" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -232,6 +236,8 @@ def inject_css() -> None:
         .svg-container {
             max-width: 100% !important;
             overflow: hidden !important;
+            touch-action: none !important;
+            user-select: none !important;
         }
         .bn-scan-slot { margin: 0 0 0.7rem; }
         .bn-roaster {
@@ -533,6 +539,8 @@ def flavor_radar(
         margin=dict(l=8, r=8, t=4, b=22),
         height=260,
         autosize=True,
+        dragmode=False,
+        hovermode=False,
     )
     return fig
 
@@ -812,7 +820,7 @@ def bean_dialog(bean_id: int, lang: str) -> None:
     st.plotly_chart(
         flavor_radar(user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
         use_container_width=True,
-        config={"displayModeBar": False, "responsive": True},
+        config=RADAR_CHART_CONFIG,
     )
     compare_notes(
         lang,
@@ -928,7 +936,7 @@ def render_review(lang: str) -> None:
     st.plotly_chart(
         flavor_radar(live_user, community, labels, t(lang, "radar_you"), t(lang, "radar_community")),
         use_container_width=True,
-        config={"displayModeBar": False, "responsive": True},
+        config=RADAR_CHART_CONFIG,
     )
     compare_notes(
         lang,

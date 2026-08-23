@@ -2,6 +2,10 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.8] - 2026-08-23
+
+- Plotly flavor radar is fully static (`staticPlot`, no mode bar) so it cannot be dragged, zoomed, or pinched on desktop or touch.
+
 ## [1.0.7] - 2026-08-23
 
 - Flavor pills are official 1–2 word descriptors only (`Mørk chokolade`, `Karamel`, `Blåbær`, `Citrus`); overlapping generics such as `Chokolade` are dropped when a more specific tag is present.
