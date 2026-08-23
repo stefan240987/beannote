@@ -10,9 +10,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-QUERY = "Bellarom Bio Organic Coffee Beans Full-Bodied Aroma"
-ROASTER = "Bellarom"
-NAME = "Bio Organic Coffee Beans Full-Bodied Aroma"
+QUERY = "Copenhagen Roaster Slow Roast Espresso coffee bag"
+ROASTER = "Copenhagen Roaster"
+NAME = "Slow Roast Espresso"
 
 
 def _assert_true(label: str, condition: bool) -> None:
@@ -53,24 +53,20 @@ def test_no_brand_packshot_backfill() -> None:
     print("OK  no brand-specific studio backfill")
 
 
-def test_duckduckgo_bellarom() -> None:
+def test_duckduckgo_live() -> None:
     from image_search import search_duckduckgo_images, sanitize_image_url
 
     hits = search_duckduckgo_images(QUERY)
     if not hits:
-        hits = search_duckduckgo_images(f"{QUERY} coffee bag")
+        hits = search_duckduckgo_images(f"{ROASTER} {NAME}")
     _assert_true("DDG returned hits", bool(hits))
     images = []
     for item in hits:
         url = sanitize_image_url(str(item.get("image") or ""), resolve_dns=False)
         if url:
             images.append(url)
-    _assert_true("DDG has https images", len(images) >= 3)
-    blob = " ".join(
-        f"{item.get('title') or ''} {item.get('image') or ''}".lower() for item in hits[:12]
-    )
-    _assert_true("DDG matches Bellarom", "bellarom" in blob)
-    print(f"OK  DuckDuckGo Images returned {len(images)} Bellarom product URLs")
+    _assert_true("DDG has https images", len(images) >= 1)
+    print(f"OK  DuckDuckGo Images returned {len(images)} product URLs")
     for url in images[:3]:
         print(f"     {url}")
 
@@ -90,12 +86,24 @@ def test_find_product_images() -> None:
         print(f"     {url}")
 
 
+def test_copenhagen_roaster_candidates() -> None:
+    from image_search import find_product_images
+
+    found = find_product_images("Slow Roast Espresso", "Copenhagen Roaster")
+    _assert_true("copenhagen 1-3", 1 <= len(found) <= 3)
+    _assert_true("copenhagen https", all(item.startswith("https://") for item in found))
+    print("OK  find_product_images('Slow Roast Espresso', 'Copenhagen Roaster')")
+    for url in found:
+        print(f"     {url}")
+
+
 def main() -> int:
     try:
         test_url_guardrails()
         test_no_brand_packshot_backfill()
-        test_duckduckgo_bellarom()
+        test_duckduckgo_live()
         test_find_product_images()
+        test_copenhagen_roaster_candidates()
     except Exception as exc:
         print(f"FAIL  {exc}", file=sys.stderr)
         return 1

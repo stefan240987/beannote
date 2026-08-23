@@ -1484,7 +1484,7 @@ def find_official_bag_images(
     collected = find_product_images(name, roaster, hint_urls)
     if len(collected) >= MAX_IMAGE_CANDIDATES:
         return collected[:MAX_IMAGE_CANDIDATES]
-    if not (name or "").strip() or not (roaster or "").strip():
+    if not (name or "").strip() and not (roaster or "").strip():
         return collected
     key = get_gemini_api_key()
     if not key:
@@ -1510,7 +1510,9 @@ def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
         out.get("official_image_url"),
         out.get("image_candidates"),
     )
-    candidates = find_official_bag_images(out.get("name") or "", out.get("roaster") or "", hints)
+    name = (out.get("name") or out.get("bean_name") or "").strip()
+    roaster = (out.get("roaster") or "").strip()
+    candidates = find_official_bag_images(name, roaster, hints)
     official = candidates[0] if candidates else ""
     out["official_image_url"] = official
     out["product_image_url"] = official

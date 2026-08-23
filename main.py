@@ -48,6 +48,7 @@ from ocr import (
     encode_scan_jpeg,
     ensure_local_env,
     fetch_official_image_bytes,
+    find_product_images,
     flavor_i18n_table,
     flavor_notes_for,
     suitable_for_catalog,
@@ -827,7 +828,18 @@ async def scan(
     except Exception as exc:
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     snapshot_url = save_bean_image(jpeg, filename="scan.jpg")
-    raw_candidates = parsed.get("image_candidates") or []
+    raw_candidates = [str(item).strip() for item in (parsed.get("image_candidates") or []) if str(item or "").strip()]
+    if len(raw_candidates) < 3:
+        extra = find_product_images(
+            parsed.get("name") or parsed.get("bean_name") or "",
+            parsed.get("roaster") or "",
+            parsed.get("product_image_urls") or parsed.get("product_image_url") or raw_candidates,
+        )
+        for url in extra:
+            if url and url not in raw_candidates:
+                raw_candidates.append(url)
+            if len(raw_candidates) >= 3:
+                break
     if not raw_candidates:
         fallback = (parsed.get("official_image_url") or parsed.get("product_image_url") or "").strip()
         raw_candidates = [fallback] if fallback else []

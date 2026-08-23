@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.0.1] - 2026-08-23
+
+- snapshot: v5.0.1 - restored dynamic multi-image candidate search
+- Live DuckDuckGo (Bing fallback) image search is brand-agnostic again: extracted `roaster` + `bean_name` yield up to 3 `image_candidates` for the scan carousel. Candidate URLs are no longer dropped by DNS sanitizing before the picker; `POST /api/scan` backfills the array if the first pass is thin.
+
 ## [5.0.0] - 2026-08-23
 
 - snapshot: v5.0.0 - generic OCR refactor and coffee bag image framing polish
