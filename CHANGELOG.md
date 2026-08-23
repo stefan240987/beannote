@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.3] - 2026-08-23
+
+- Advanced Danish label OCR: roaster lines (`ROASTER`, `COFFEE`, `MIKRORISTERI`, `BREW`, `EST.`) vs standalone bean headers (`Crema`, `Slow Roast`).
+- Parse `OPRINDELSE`/`ORIGIN` (e.g. Brasilien & Etiopien → Brazil / Ethiopia), `FORARBEJDNING`/`PROCESS`, and ristningsgrad (`Lys` / `Medium` / `Mørk`).
+- Extract `Noter af` / `Smag af` / `Tasting notes` and pre-select matching smagsnoter in the add-bean multiselect.
+
 ## [1.0.2] - 2026-08-23
 
 - Fix OCR scan: write parsed fields into Streamlit widget keys and rerun so the add-bean form actually fills.

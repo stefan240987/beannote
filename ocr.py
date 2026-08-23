@@ -1,4 +1,4 @@
-"""Local Tesseract OCR + regex parser for coffee bag labels."""
+"""Local Tesseract OCR + regex parser for Danish coffee bag labels."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from db import find_similar_beans
 
 ORIGINS = [
     "Ethiopia", "Etiopien", "Colombia", "Kenya", "Brazil", "Brasilien",
-    "Guatemala", "Costa Rica", "Rwanda", "Burundi", "Yemen", "Peru",
-    "Honduras", "El Salvador", "Panama", "Indonesia", "India", "Mexico",
-    "Tanzania", "Uganda", "Nicaragua", "Bolivia",
+    "Guatemala", "Costa Rica", "Rwanda", "Burundi", "Yemen", "Jemen",
+    "Peru", "Honduras", "El Salvador", "Panama", "Indonesia", "Indonesien",
+    "India", "Indien", "Mexico", "Tanzania", "Uganda", "Nicaragua", "Bolivia",
 ]
 
 ORIGIN_CANON = {
@@ -25,27 +25,122 @@ ORIGIN_CANON = {
     "ethiopia": "Ethiopia",
     "brasilien": "Brazil",
     "brazil": "Brazil",
+    "jemen": "Yemen",
+    "yemen": "Yemen",
+    "indonesien": "Indonesia",
+    "indonesia": "Indonesia",
+    "indien": "India",
+    "india": "India",
 }
 
 PROCESS_MAP = {
-    "Washed": ["washed", "vasket", "wet process", "fully washed", "wet"],
+    "Washed": ["washed", "vasket", "wet process", "fully washed"],
     "Natural": ["natural", "naturlig", "dry process", "tørret"],
     "Honey": ["honey", "honning", "pulped natural"],
     "Anaerobic": ["anaerobic", "anaerob", "carbonic"],
 }
 
+# Stored / selectbox values: Lys, Medium, Mørk (plus Medium-Dark).
 ROAST_MAP = {
-    "Light": ["light", "lys", "nordic", "filter"],
-    "Medium": ["medium", "mellem"],
-    "Medium-Dark": ["medium-dark", "medium dark", "city+"],
-    "Dark": ["dark", "mørk", "espresso roast", "french"],
+    "Medium": ["mellemristet", "mellemristede", "medium"],
+    "Lys": ["lysristet", "lysristede", "light"],
+    "Mørk": ["mørkristet", "mørkriste", "mørkpistet", "morkristet", "dark"],
 }
 
 KNOWN_ROASTERS = [
-    "Prolog Coffee", "Prolog", "La Cabra", "The Coffee Collective",
-    "Coffee Collective", "April Coffee", "April", "The Barn",
-    "Coffee Mind", "Just Coffee", "Democratic Coffee", "Coffee Collective",
+    "Copenhagen Roaster",
+    "The Coffee Collective",
+    "Coffee Collective",
+    "Prolog Coffee",
+    "April Coffee",
+    "La Cabra",
+    "The Barn",
+    "Coffee Mind",
+    "Just Coffee",
+    "Democratic Coffee",
+    "Original Coffee",
+    "Andersen & Maillard",
 ]
+
+ROASTER_MARKERS = re.compile(
+    r"\b(roaster|coffee|mikroristeri|kafferisteri|risteri|brew|collective|est\.?)\b",
+    re.IGNORECASE,
+)
+
+FIELD_LABELS = re.compile(
+    r"^(oprindelse|origin|forarbejdning|process|proces|ristningsgrad|"
+    r"roast(?:\s*level)?|ristning|variety|varietal|sort|højde|altitude|"
+    r"vægt|net\s*wt|noter|smagsnoter|tasting\s*notes?|smag(?:\s*af)?|"
+    r"brew\s*method|bryg(?:gemetode)?|region|gård|farm|producer|"
+    r"høst|harvest|højde over havet)$",
+    re.IGNORECASE,
+)
+
+NOISE_LINE = re.compile(
+    r"^(www\.|https?://|\d+\s*(g|kg|ml|%|gram)|net\s*wt|best\s*before|"
+    r"holdbar|e\s*\d{3,}|est\.?\s*\d{2,4}|©|scan|batch)$",
+    re.IGNORECASE,
+)
+
+NOTES_LEAD = re.compile(
+    r"(?:noter\s+af|smag\s+af|tasting\s+notes?|smagsnoter|notes?)\s*[:.\-]?\s*(.+)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+FLAVOR_NOTES = [
+    "Mørk chokolade",
+    "Chokolade",
+    "Karamel",
+    "Blåbær",
+    "Citrus",
+    "Nødder",
+    "Nøddet",
+    "Honning",
+    "Jasmin",
+    "Fersken",
+    "Bergamot",
+    "Kakao",
+    "Æble",
+    "Vanilje",
+    "Tørret frugt",
+    "Blomstret",
+    "Vinøs",
+    "Hasselnød",
+    "Solbær",
+    "Jordbær",
+    "Grapefrugt",
+    "Tropisk",
+]
+
+FLAVOR_ALIASES: dict[str, list[str]] = {
+    "Mørk chokolade": ["mørk chokolade", "dark chocolate", "mork chokolade"],
+    "Chokolade": ["chokolade", "chocolate"],
+    "Karamel": ["karamel", "caramel", "karameliseret"],
+    "Blåbær": ["blåbær", "blaabaer", "blueberry", "blueberries"],
+    "Citrus": ["citrus", "citron", "lemon", "lime"],
+    "Nødder": ["nødder", "nuts"],
+    "Nøddet": ["nøddet", "nutty"],
+    "Honning": ["honning", "honey"],
+    "Jasmin": ["jasmin", "jasmine"],
+    "Fersken": ["fersken", "peach"],
+    "Bergamot": ["bergamot", "bergamotte"],
+    "Kakao": ["kakao", "cocoa"],
+    "Æble": ["æble", "apple"],
+    "Vanilje": ["vanilje", "vanilla"],
+    "Tørret frugt": ["tørret frugt", "dried fruit", "tørrede frugter"],
+    "Blomstret": ["blomstret", "floral", "florals"],
+    "Vinøs": ["vinøs", "wine", "vin"],
+    "Hasselnød": ["hasselnød", "hazelnut", "hassel"],
+    "Solbær": ["solbær", "blackcurrant"],
+    "Jordbær": ["jordbær", "strawberry"],
+    "Grapefrugt": ["grapefrugt", "grapefruit"],
+    "Tropisk": ["tropisk", "tropical"],
+}
+
+_NEXT_FIELD = (
+    r"oprindelse|origin|forarbejdning|process|proces|ristningsgrad|"
+    r"roast|ristning|noter|smag|tasting|variety|varietal"
+)
 
 
 def configure_tesseract() -> str | None:
@@ -98,11 +193,12 @@ def parse_label(text: str) -> dict[str, Any]:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     blob = " ".join(lines)
 
-    origin = _find_origin(blob)
-    process = _find_mapped(blob, PROCESS_MAP)
-    roast_level = _find_mapped(blob, ROAST_MAP)
+    origin = _find_origin(lines, blob)
+    process = _find_process(lines, blob)
+    roast_level = _find_roast(lines, blob)
     roaster = _find_roaster(lines, blob)
     name = _find_bean_name(lines, roaster, origin)
+    notes_text, flavors = _find_notes(blob)
 
     return {
         "name": name,
@@ -110,7 +206,8 @@ def parse_label(text: str) -> dict[str, Any]:
         "origin": origin,
         "process": process,
         "roast_level": roast_level,
-        "roaster_notes": _guess_notes(blob),
+        "roaster_notes": notes_text,
+        "flavor_notes": flavors,
         "raw_text": text,
     }
 
@@ -123,65 +220,200 @@ def scan_label(image_bytes: bytes) -> dict[str, Any]:
     return parsed
 
 
-def _find_origin(blob: str) -> str:
-    for origin in ORIGINS:
-        if re.search(rf"\b{re.escape(origin)}\b", blob, re.IGNORECASE):
-            return ORIGIN_CANON.get(origin.lower(), origin)
-    return ""
+def _pretty(value: str) -> str:
+    compact = re.sub(r"\s+", " ", value).strip(" -:.,")
+    if not compact:
+        return ""
+    if compact.isupper() or compact.islower():
+        small = {"the", "of", "and", "og", "&"}
+        parts: list[str] = []
+        for i, word in enumerate(compact.split()):
+            low = word.lower()
+            if i and low in small:
+                parts.append(low)
+            elif low == "est.":
+                parts.append("Est.")
+            else:
+                parts.append(low[:1].upper() + low[1:])
+        return " ".join(parts)
+    return compact
 
 
-def _find_mapped(blob: str, mapping: dict[str, list[str]]) -> str:
-    lowered = blob.lower()
+def _value_after_label(lines: list[str], blob: str, labels: tuple[str, ...]) -> str:
+    label_alt = "|".join(re.escape(label) for label in labels)
+    for index, line in enumerate(lines):
+        if re.fullmatch(rf"(?i)(?:{label_alt})\s*[:.\-]?\s*", line):
+            nxt = lines[index + 1] if index + 1 < len(lines) else ""
+            if nxt and not FIELD_LABELS.match(nxt):
+                return nxt.strip()
+            continue
+        match = re.match(rf"(?i)(?:{label_alt})\s*[:.\-]?\s+(.+)", line)
+        if match:
+            return match.group(1).strip()
+    match = re.search(
+        rf"(?i)(?:{label_alt})\s*[:.\-]?\s+(.+?)(?=\s+(?:{_NEXT_FIELD})\b|$)",
+        blob,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _countries_in(text: str) -> list[str]:
+    hits: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for origin in sorted(ORIGINS, key=len, reverse=True):
+        match = re.search(rf"\b{re.escape(origin)}\b", text, re.IGNORECASE)
+        if not match:
+            continue
+        canon = ORIGIN_CANON.get(origin.lower(), origin)
+        if canon not in seen:
+            seen.add(canon)
+            hits.append((match.start(), canon))
+    hits.sort(key=lambda item: item[0])
+    return [name for _, name in hits]
+
+
+def _find_origin(lines: list[str], blob: str) -> str:
+    labeled = _value_after_label(lines, blob, ("oprindelse", "origin"))
+    countries = _countries_in(labeled) if labeled else _countries_in(blob)
+    return " / ".join(countries)
+
+
+def _map_aliases(text: str, mapping: dict[str, list[str]]) -> str:
+    lowered = text.lower()
     for label, aliases in mapping.items():
         if any(re.search(rf"\b{re.escape(alias)}\b", lowered) for alias in aliases):
             return label
     return ""
 
 
+def _without_notes(blob: str) -> str:
+    match = NOTES_LEAD.search(blob)
+    return blob[: match.start()] if match else blob
+
+
+def _find_process(lines: list[str], blob: str) -> str:
+    labeled = _value_after_label(lines, blob, ("forarbejdning", "process", "proces"))
+    if labeled:
+        return _map_aliases(labeled, PROCESS_MAP)
+    return _map_aliases(_without_notes(blob), PROCESS_MAP)
+
+
+def _find_roast(lines: list[str], blob: str) -> str:
+    labeled = _value_after_label(lines, blob, ("ristningsgrad", "roast level", "roast", "ristning"))
+    if labeled:
+        hit = _map_aliases(labeled, ROAST_MAP)
+        if hit:
+            return hit
+    compounds = {
+        "Medium": ["mellemristet", "mellemristede"],
+        "Lys": ["lysristet", "lysristede"],
+        "Mørk": ["mørkristet", "mørkriste", "mørkpistet", "morkristet"],
+    }
+    hit = _map_aliases(blob, compounds)
+    if hit:
+        return hit
+    english = {"Medium": ["medium"], "Lys": ["light"], "Mørk": ["dark"]}
+    return _map_aliases(_without_notes(blob), english)
+
+
+def _is_year_est(line: str) -> bool:
+    return bool(re.search(r"(?i)^est\.?\s*\d{2,4}$", line.strip()))
+
+
+def _is_roaster_line(line: str) -> bool:
+    if FIELD_LABELS.match(line) or _is_year_est(line):
+        return False
+    return bool(ROASTER_MARKERS.search(line))
+
+
 def _find_roaster(lines: list[str], blob: str) -> str:
     for known in KNOWN_ROASTERS:
         if re.search(rf"\b{re.escape(known)}\b", blob, re.IGNORECASE):
-            return "Prolog Coffee" if known.lower() == "prolog" else (
-                "April Coffee" if known.lower() == "april" else (
-                    "The Coffee Collective" if known.lower() in {"coffee collective"} else known
-                )
-            )
-    match = re.search(r"(?:roaster|risteri|kafferisteri)\s*[:\-]\s*(.+)", blob, re.IGNORECASE)
-    if match:
-        return match.group(1).split(",")[0].strip()[:60]
-    if lines:
-        first = lines[0]
-        if 2 <= len(first.split()) <= 5 and len(first) <= 40:
-            return first
+            if known.lower() == "coffee collective":
+                return "The Coffee Collective"
+            return known
+
+    labeled = _value_after_label(lines, blob, ("roaster", "risteri", "kafferisteri", "mikroristeri"))
+    if labeled and not FIELD_LABELS.match(labeled):
+        return _pretty(labeled.split(",")[0])[:60]
+
+    for index, line in enumerate(lines):
+        if not _is_roaster_line(line):
+            continue
+        if _is_year_est(line):
+            continue
+        words = line.split()
+        if len(words) == 1 and words[0].lower() in {"roaster", "coffee", "brew", "mikroristeri", "risteri"}:
+            prev = lines[index - 1] if index else ""
+            if prev and not FIELD_LABELS.match(prev) and not NOISE_LINE.match(prev):
+                return _pretty(f"{prev} {line}")[:60]
+            nxt = lines[index + 1] if index + 1 < len(lines) else ""
+            if nxt and _is_roaster_line(nxt) and not _is_year_est(nxt):
+                return _pretty(f"{line} {nxt}")[:60]
+        cleaned = re.sub(r"(?i)\best\.?\s*\d{2,4}\b", "", line).strip(" -")
+        if cleaned:
+            return _pretty(cleaned)[:60]
     return ""
+
+
+def _looks_like_spec(line: str) -> bool:
+    if _countries_in(line) and len(line.split()) <= 5:
+        return True
+    if _map_aliases(line, PROCESS_MAP) and len(line.split()) <= 3:
+        return True
+    if _map_aliases(line, ROAST_MAP) and len(line.split()) <= 3:
+        return True
+    return False
 
 
 def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
     skip = {roaster.lower(), origin.lower(), "coffee", "kaffe", "specialty"}
+    for part in origin.split(" / "):
+        if part:
+            skip.add(part.lower())
+    for known in KNOWN_ROASTERS:
+        skip.add(known.lower())
+    roaster_words = set(roaster.lower().split())
+
     for line in lines:
         lowered = line.lower()
-        if lowered in skip or lowered.startswith(("www", "http", "net wt", "250", "1 kg")):
+        line_words = set(lowered.split())
+        if lowered in skip or _is_roaster_line(line) or _is_year_est(line):
             continue
-        if re.search(r"\b(ethiopia|colombia|kenya|washed|natural|vasket)\b", lowered):
-            if 2 <= len(line.split()) <= 6 and not _find_origin(line) == line:
-                return line[:80]
+        if roaster_words and line_words and line_words <= roaster_words:
             continue
-        if 1 <= len(line.split()) <= 6 and 3 <= len(line) <= 60:
-            return line[:80]
-    return lines[1][:80] if len(lines) > 1 else (lines[0][:80] if lines else "")
+        if FIELD_LABELS.match(line) or NOISE_LINE.match(line) or _looks_like_spec(line):
+            continue
+        if lowered.startswith(("www", "http", "net wt")):
+            continue
+        words = line.split()
+        if 1 <= len(words) <= 4 and 3 <= len(line) <= 40:
+            return _pretty(line)[:80]
+    return ""
 
 
-def _guess_notes(blob: str) -> str:
-    match = re.search(
-        r"(?:notes?|smagsnoter|tasting)\s*[:\-]\s*(.+)",
-        blob,
-        re.IGNORECASE,
-    )
+def _match_flavors(text: str) -> list[str]:
+    lowered = text.lower()
+    hits: list[str] = []
+    consumed = lowered
+    for option in sorted(FLAVOR_NOTES, key=len, reverse=True):
+        aliases = sorted(FLAVOR_ALIASES.get(option, [option.lower()]), key=len, reverse=True)
+        if any(re.search(rf"\b{re.escape(alias)}\b", consumed) for alias in aliases):
+            hits.append(option)
+            for alias in aliases:
+                consumed = re.sub(rf"\b{re.escape(alias)}\b", " ", consumed)
+    order = {name: index for index, name in enumerate(FLAVOR_NOTES)}
+    hits.sort(key=lambda name: order[name])
+    return hits
+
+
+def _find_notes(blob: str) -> tuple[str, list[str]]:
+    match = NOTES_LEAD.search(blob)
+    snippet = ""
     if match:
-        return match.group(1).strip()[:180]
-    flavors = re.findall(
-        r"\b(jasmine|peach|bergamot|citrus|chocolate|caramel|berry|floral|cocoa|honey|apple)\b",
-        blob,
-        re.IGNORECASE,
-    )
-    return ", ".join(dict.fromkeys(f.lower() for f in flavors))
+        snippet = re.split(rf"(?i)\s+(?:{_NEXT_FIELD})\b", match.group(1), maxsplit=1)[0]
+        snippet = re.sub(r"\s+", " ", snippet).strip(" -:.,")[:180]
+    flavors = _match_flavors(snippet or blob)
+    if not snippet and flavors:
+        snippet = ", ".join(flavors)
+    return snippet, flavors

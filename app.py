@@ -32,7 +32,7 @@ BREW_METHODS = [
     "Moka",
     "Cold Brew",
 ]
-ROAST_LEVELS = ["Light", "Medium", "Medium-Dark", "Dark"]
+ROAST_LEVELS = ["Lys", "Medium", "Medium-Dark", "Mørk", "Light", "Dark"]
 PROCESSES = ["Washed", "Natural", "Honey", "Anaerobic"]
 
 st.set_page_config(
@@ -382,6 +382,7 @@ def apply_ocr_form(parsed: dict) -> None:
     st.session_state.add_process = parsed.get("process") or ""
     st.session_state.add_roast = parsed.get("roast_level") or ""
     st.session_state.add_notes = parsed.get("roaster_notes") or ""
+    st.session_state.add_flavors = parsed.get("flavor_notes") or []
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
     st.session_state.ocr_flash = "scanned" if filled else "ocr_empty"
 
@@ -395,6 +396,7 @@ def clear_ocr_form() -> None:
     st.session_state.add_process = ""
     st.session_state.add_roast = ""
     st.session_state.add_notes = ""
+    st.session_state.add_flavors = []
 
 
 def render_duplicate_warning(lang: str, similar: list[dict]) -> None:
@@ -583,7 +585,7 @@ def render_review(lang: str) -> None:
 
 
 def render_add(lang: str) -> None:
-    from ocr import configure_tesseract, scan_label
+    from ocr import FLAVOR_NOTES, configure_tesseract, scan_label
 
     uploaded = st.file_uploader(
         t(lang, "upload"),
@@ -613,6 +615,7 @@ def render_add(lang: str) -> None:
     origin = c1.text_input(t(lang, "origin"), key="add_origin")
     process = c2.selectbox(t(lang, "add_process"), [""] + PROCESSES, key="add_process")
     roast = c3.selectbox(t(lang, "add_roast"), [""] + ROAST_LEVELS, key="add_roast")
+    flavors = st.multiselect(t(lang, "add_flavor_notes"), FLAVOR_NOTES, key="add_flavors")
     roaster_notes = st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
     if "raw_text" in form:
         with st.expander(t(lang, "raw_ocr")):
@@ -637,7 +640,8 @@ def render_add(lang: str) -> None:
             origin=origin,
             process=process,
             roast_level=roast,
-            roaster_notes=roaster_notes,
+            roaster_notes=roaster_notes or ", ".join(flavors),
+            flavor_tags=flavors or None,
             skip_fuzzy=force,
         )
         if result["status"] == "fuzzy":
