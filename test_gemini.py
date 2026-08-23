@@ -77,13 +77,90 @@ def test_prompt_locks_name_and_lang() -> None:
     for prompt in (da, en):
         _assert_true("prompt names Slow Roast Espresso", "Slow Roast Espresso" in prompt)
         _assert_true("prompt forbids Slow Roast Crema", "Never return \"Slow Roast Crema\"" in prompt)
-    _assert_true("da flavors", "Mørk chokolade" in da)
-    _assert_true("en flavors", "Dark chocolate" in en)
-    _assert_true("da brew", "18g kaffe til 36g espresso" in da)
-    _assert_true("en brew", "18g coffee to 36g espresso" in en)
+        _assert_true("prompt asks for story map", '"story": language map' in prompt)
+        _assert_true("prompt asks for flavor map", '"flavor_tags": language map' in prompt)
+        _assert_true("prompt asks for brew map", '"brew_recommendation": language map' in prompt)
+        _assert_true("prompt includes da key", '"da"' in prompt)
+        _assert_true("prompt includes en key", '"en"' in prompt)
+        _assert_true("da flavors in map prompt", "Mørk chokolade" in prompt)
+        _assert_true("en flavors in map prompt", "Dark chocolate" in prompt)
+        _assert_true("da brew in map prompt", "18g kaffe til 36g espresso" in prompt)
+        _assert_true("en brew in map prompt", "18g coffee to 36g espresso" in prompt)
     _assert_true("da suitable_for", "Mælkedrikke" in da)
     _assert_true("en suitable_for", "Milk drinks" in en)
-    print("OK  Gemini prompt locks bean name and localizes flavor/brew copy")
+    print("OK  Gemini prompt locks bean name and asks for JSON language maps")
+
+
+def test_get_localized_fallback() -> None:
+    from db import get_localized
+
+    story = {"da": "Høstet i Yirgacheffe.", "en": "Harvested in Yirgacheffe."}
+    _assert_eq("da story", get_localized(story, "da"), "Høstet i Yirgacheffe.")
+    _assert_eq("en story", get_localized(story, "en"), "Harvested in Yirgacheffe.")
+    _assert_eq("missing de falls back to en", get_localized({"en": "Hello"}, "de"), "Hello")
+    _assert_eq("legacy string", get_localized("Plain story", "da"), "Plain story")
+    tags = {"da": ["Karamel"], "en": ["Caramel"]}
+    _assert_eq("da tags", get_localized(tags, "da"), ["Karamel"])
+    _assert_eq("en tags", get_localized(tags, "en"), ["Caramel"])
+    brew = {
+        "da": {"brew_ratio": "18g kaffe til 36g espresso"},
+        "en": {"brew_ratio": "18g coffee to 36g espresso"},
+    }
+    _assert_eq("en brew ratio", get_localized(brew, "en")["brew_ratio"], "18g coffee to 36g espresso")
+    print("OK  get_localized falls back across JSON language maps")
+
+
+def test_normalize_builds_language_maps() -> None:
+    from db import get_localized
+    from ocr import normalize_scan_fields
+
+    raw = {
+        "bean_name": "Slow Roast Espresso",
+        "roaster": "Copenhagen Roaster",
+        "origin": "Brasilien & Etiopien",
+        "process": "Natural",
+        "official_notes": "Noter af mørk chokolade, karamel, blåbær og citrus",
+        "flavor_tags": {"da": ["Mørk chokolade", "Karamel"], "en": ["Dark chocolate", "Caramel"]},
+        "story": {
+            "da": "Høstet i 1.900 meters højde i Yirgacheffe-regionen.",
+            "en": "Harvested at 1,900 meters in the Yirgacheffe region.",
+        },
+        "brew_recommendation": {
+            "da": {
+                "recommended_method": "Espresso",
+                "grind_size": "Fin",
+                "water_temp": "92-94°C",
+                "brew_ratio": "18g kaffe til 36g espresso",
+            },
+            "en": {
+                "recommended_method": "Espresso",
+                "grind_size": "Fine",
+                "water_temp": "92-94°C",
+                "brew_ratio": "18g coffee to 36g espresso",
+            },
+        },
+    }
+    out = normalize_scan_fields(dict(raw), lang="da")
+    _assert_true("story is map", isinstance(out.get("story"), dict))
+    _assert_true("flavor_tags is map", isinstance(out.get("flavor_tags"), dict))
+    _assert_true("brew is map", isinstance(out.get("brew_recommendation"), dict))
+    _assert_true("story has da", bool(out["story"].get("da")))
+    _assert_true("story has en", bool(out["story"].get("en")))
+    _assert_eq("da flavors from map", get_localized(out["flavor_tags"], "da"), EXPECTED_BY_LANG["da"]["flavor_tags"])
+    _assert_eq("en flavors from map", get_localized(out["flavor_tags"], "en"), EXPECTED_BY_LANG["en"]["flavor_tags"])
+    wrapped = normalize_scan_fields(
+        {
+            "bean_name": "Test Bean",
+            "roaster": "Test Roaster",
+            "story": "Harvested by smallholders on the hillside.",
+            "flavor_tags": ["Caramel", "Citrus"],
+        },
+        lang="en",
+    )
+    _assert_eq("string story wraps under en", wrapped["story"].get("en"), "Harvested by smallholders on the hillside.")
+    _assert_true("wrapped flavors da", "Karamel" in (wrapped["flavor_tags"].get("da") or []))
+    _assert_true("wrapped flavors en", "Caramel" in (wrapped["flavor_tags"].get("en") or []))
+    print("OK  normalize_scan_fields stores story/flavor_tags/brew as language maps")
 
 
 def test_dynamic_tag_i18n() -> None:
@@ -179,8 +256,14 @@ def test_bellarom_suitability_and_packshot() -> None:
     print("OK  Bellarom suitability tags and studio packshot fallback")
 
 
-def _profile(parsed: dict) -> dict:
-    brew = parsed.get("brew_recommendation") or {}
+def _profile(parsed: dict, lang: str = "da") -> dict:
+    from db import get_localized
+
+    brew = get_localized(parsed.get("brew_recommendation") or {}, lang) or {}
+    if not isinstance(brew, dict):
+        brew = {}
+    story = get_localized(parsed.get("story") or "", lang) or ""
+    tags = get_localized(parsed.get("flavor_tags") or parsed.get("flavor_notes") or [], lang) or []
     return {
         "roaster": parsed.get("roaster"),
         "name": parsed.get("name") or parsed.get("bean_name"),
@@ -188,9 +271,12 @@ def _profile(parsed: dict) -> dict:
         "altitude": parsed.get("altitude"),
         "varietal": parsed.get("varietal"),
         "process": parsed.get("process"),
-        "flavor_tags": parsed.get("flavor_tags") or parsed.get("flavor_notes") or [],
-        "story": parsed.get("story") or "",
+        "flavor_tags": tags if isinstance(tags, list) else [],
+        "story": story if isinstance(story, str) else "",
         "brew_ratio": parsed.get("brew_ratio") or brew.get("brew_ratio") or "",
+        "story_map": parsed.get("story") if isinstance(parsed.get("story"), dict) else {},
+        "flavor_map": parsed.get("flavor_tags") if isinstance(parsed.get("flavor_tags"), dict) else {},
+        "brew_map": parsed.get("brew_recommendation") if isinstance(parsed.get("brew_recommendation"), dict) else {},
     }
 
 
@@ -210,10 +296,12 @@ def test_label_extraction(lang: str) -> None:
     if parsed.get("scan_source") != "gemini":
         raise RuntimeError(f"Unexpected scan_source: {parsed.get('scan_source')!r}")
 
-    profile = _profile(parsed)
+    profile = _profile(parsed, lang)
     print(f"Gemini coffee profile lang={lang}")
-    print(json.dumps({k: v for k, v in profile.items() if k != "story"}, ensure_ascii=False, indent=2))
+    print(json.dumps({k: v for k, v in profile.items() if k not in {"story", "story_map", "flavor_map", "brew_map"}}, ensure_ascii=False, indent=2))
     print("story:", profile["story"])
+    print("story_map keys:", sorted(profile["story_map"]))
+    print("flavor_map keys:", sorted(profile["flavor_map"]))
 
     for key, expected in EXPECTED_CORE.items():
         _assert_eq(f"{lang} {key}", profile[key], expected)
@@ -221,6 +309,12 @@ def test_label_extraction(lang: str) -> None:
     _assert_eq(f"{lang} origin", profile["origin"], expect["origin"])
     _assert_eq(f"{lang} process", profile["process"], expect["process"])
     _assert_eq(f"{lang} flavor_tags", profile["flavor_tags"], expect["flavor_tags"])
+    _assert_true(f"{lang} story map da", bool(str(profile["story_map"].get("da") or "").strip()))
+    _assert_true(f"{lang} story map en", bool(str(profile["story_map"].get("en") or "").strip()))
+    _assert_true(f"{lang} flavor map da", bool(profile["flavor_map"].get("da")))
+    _assert_true(f"{lang} flavor map en", bool(profile["flavor_map"].get("en")))
+    _assert_true(f"{lang} brew map da", bool(profile["brew_map"].get("da")))
+    _assert_true(f"{lang} brew map en", bool(profile["brew_map"].get("en")))
 
     story = profile["story"].strip()
     _assert_true(f"{lang} story present", bool(story))
@@ -273,6 +367,8 @@ def main() -> int:
     try:
         test_parse_gemini_json()
         test_prompt_locks_name_and_lang()
+        test_get_localized_fallback()
+        test_normalize_builds_language_maps()
         test_dynamic_tag_i18n()
         test_refine_and_flavor_i18n()
         test_bellarom_suitability_and_packshot()

@@ -15,7 +15,10 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "3.3.0"
+from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
+
+VERSION = "3.6.0"
+_BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -61,6 +64,227 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _has_localized_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict)):
+        return bool(value)
+    return True
+
+
+def _maybe_json(raw: Any) -> Any:
+    if isinstance(raw, (dict, list)):
+        return raw
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if text[0] in "{[":
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+def _is_flat_brew(obj: Any) -> bool:
+    return isinstance(obj, dict) and any(key in obj for key in _BREW_KEYS)
+
+
+def _is_lang_map(obj: Any) -> bool:
+    if not isinstance(obj, dict) or not obj:
+        return False
+    if _is_flat_brew(obj) and not any(
+        isinstance(val, dict) and _is_flat_brew(val) for val in obj.values()
+    ):
+        return False
+    return True
+
+
+def get_localized(json_obj: Any, active_lang: str | None, fallback_lang: str = FALLBACK_LANG) -> Any:
+    """Pick a value from a language map. Falls back to fallbackLang, then any remaining key.
+
+    Accepts a dict, a JSON string, a legacy plain string, or a legacy list.
+    """
+    parsed = _maybe_json(json_obj)
+    if parsed is None:
+        return "" if json_obj in (None, "") else json_obj
+    if isinstance(parsed, list):
+        return parsed
+    if not isinstance(parsed, dict):
+        return parsed
+    if not _is_lang_map(parsed):
+        return parsed
+    lang = normalize_lang(active_lang, fallback_lang)
+    fallback = normalize_lang(fallback_lang)
+    for code in (lang, fallback, *SUPPORTED_LANGUAGES):
+        value = parsed.get(code)
+        if _has_localized_value(value):
+            return value
+    for value in parsed.values():
+        if _has_localized_value(value):
+            return value
+    return ""
+
+
+def coerce_text_map(value: Any, lang: str | None = None) -> dict[str, str]:
+    parsed = _maybe_json(value)
+    if isinstance(parsed, dict) and _is_lang_map(parsed):
+        out: dict[str, str] = {}
+        for key, item in parsed.items():
+            text = str(item or "").strip()
+            if text:
+                out[str(key).lower().strip()] = text
+        return out
+    text = str(parsed or "").strip() if parsed is not None else ""
+    if isinstance(parsed, dict):
+        text = ""
+    if not text:
+        return {}
+    return {normalize_lang(lang): text}
+
+
+def coerce_list_map(value: Any, lang: str | None = None) -> dict[str, list[str]]:
+    parsed = _maybe_json(value)
+    if isinstance(parsed, dict) and _is_lang_map(parsed):
+        out: dict[str, list[str]] = {}
+        for key, item in parsed.items():
+            if isinstance(item, list):
+                tags = [str(tag).strip() for tag in item if str(tag).strip()]
+            elif isinstance(item, str) and item.strip():
+                tags = [part.strip() for part in item.split(",") if part.strip()]
+            else:
+                tags = []
+            if tags:
+                out[str(key).lower().strip()] = tags
+        return _complete_flavor_map(out)
+    if isinstance(parsed, list):
+        tags = [str(item).strip() for item in parsed if str(item).strip()]
+        return _complete_flavor_map({normalize_lang(lang): tags} if tags else {})
+    if isinstance(parsed, str) and parsed.strip():
+        tags = [part.strip() for part in parsed.split(",") if part.strip()]
+        return _complete_flavor_map({normalize_lang(lang): tags} if tags else {})
+    return {}
+
+
+def coerce_brew_map(
+    value: Any,
+    extra: dict[str, Any] | None = None,
+    lang: str | None = None,
+) -> dict[str, dict[str, str]]:
+    parsed = _maybe_json(value)
+    extra = extra or {}
+    if isinstance(parsed, dict) and any(
+        isinstance(item, dict) and _is_flat_brew(item) for item in parsed.values()
+    ):
+        out: dict[str, dict[str, str]] = {}
+        for key, item in parsed.items():
+            if isinstance(item, dict):
+                cleaned = _clean_brew_obj(item)
+                if any(cleaned.values()):
+                    out[str(key).lower().strip()] = cleaned
+        return _complete_brew_map(out)
+    flat = _clean_brew_obj(parsed if isinstance(parsed, dict) else {})
+    if not any(flat.values()):
+        flat = _clean_brew_obj(extra)
+    if not any(flat.values()):
+        return {}
+    return _complete_brew_map({normalize_lang(lang): flat})
+
+
+def _clean_brew_obj(obj: dict[str, Any]) -> dict[str, str]:
+    return {key: str(obj.get(key) or "").strip() for key in _BREW_KEYS}
+
+
+def _complete_flavor_map(raw: dict[str, list[str]]) -> dict[str, list[str]]:
+    if not raw:
+        return {}
+    try:
+        from ocr import flavor_tags_lang_map
+
+        merged: list[str] = []
+        for tags in raw.values():
+            merged.extend(tags)
+        completed = flavor_tags_lang_map(merged)
+        if completed:
+            for code, tags in raw.items():
+                if code not in completed and tags:
+                    completed[code] = tags
+            return completed
+    except Exception:
+        pass
+    out = dict(raw)
+    seed = next((tags for tags in raw.values() if tags), [])
+    for code in SUPPORTED_LANGUAGES:
+        out.setdefault(code, list(seed))
+    return {code: tags for code, tags in out.items() if tags}
+
+
+def _complete_brew_map(raw: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    if not raw:
+        return {}
+    try:
+        from ocr import brew_recommendation_lang_map
+
+        completed = brew_recommendation_lang_map(raw)
+        if completed:
+            for code, brew in raw.items():
+                if code not in completed and any(brew.values()):
+                    completed[code] = brew
+            return completed
+    except Exception:
+        pass
+    out = dict(raw)
+    seed = next((brew for brew in raw.values() if any(brew.values())), {})
+    for code in SUPPORTED_LANGUAGES:
+        out.setdefault(code, dict(seed))
+    return {code: brew for code, brew in out.items() if any(brew.values())}
+
+
+def _dump_lang_map(value: dict[str, Any]) -> str:
+    return json.dumps(value or {}, ensure_ascii=False)
+
+
+def _story_blank(story: Any) -> bool:
+    if isinstance(story, dict):
+        return not any(str(item or "").strip() for item in story.values())
+    text = get_localized(story, FALLBACK_LANG)
+    return not str(text or "").strip()
+
+
+def merge_text_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, str]:
+    merged = dict(coerce_text_map(existing, lang))
+    for code, text in coerce_text_map(incoming, lang).items():
+        if text and not (merged.get(code) or "").strip():
+            merged[code] = text
+    return merged
+
+
+def merge_list_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, list[str]]:
+    current = coerce_list_map(existing, lang)
+    extra = coerce_list_map(incoming, lang)
+    if current:
+        for code, tags in extra.items():
+            if tags and not current.get(code):
+                current[code] = tags
+        return current
+    return extra
+
+
+def merge_brew_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, dict[str, str]]:
+    current = coerce_brew_map(existing, lang=lang)
+    extra = coerce_brew_map(incoming, lang=lang)
+    if current:
+        for code, brew in extra.items():
+            if any(brew.values()) and not any((current.get(code) or {}).values()):
+                current[code] = brew
+        return current
+    return extra
 
 
 def should_auto_flush() -> bool:
@@ -128,9 +352,9 @@ def init_db() -> None:
                 process TEXT DEFAULT '',
                 roast_level TEXT DEFAULT '',
                 roaster_notes TEXT DEFAULT '',
-                flavor_tags TEXT DEFAULT '[]',
+                flavor_tags TEXT DEFAULT '{}',
                 suitable_for TEXT DEFAULT '[]',
-                story TEXT DEFAULT '',
+                story TEXT DEFAULT '{}',
                 image_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
                 community_sweetness REAL DEFAULT 3.5,
@@ -140,6 +364,7 @@ def init_db() -> None:
                 grind_size TEXT DEFAULT '',
                 water_temp TEXT DEFAULT '',
                 brew_ratio TEXT DEFAULT '',
+                brew_recommendation TEXT DEFAULT '{}',
                 roast_date TEXT DEFAULT '',
                 altitude TEXT DEFAULT '',
                 varietal TEXT DEFAULT '',
@@ -188,6 +413,7 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn)
+        _migrate_localized_json(conn)
         if should_auto_flush():
             _wipe_all_tables(conn)
     get_images_dir()
@@ -201,6 +427,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE beans ADD COLUMN story TEXT DEFAULT ''")
     if "suitable_for" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN suitable_for TEXT DEFAULT '[]'")
+    if "brew_recommendation" not in beans:
+        conn.execute("ALTER TABLE beans ADD COLUMN brew_recommendation TEXT DEFAULT '{}'")
     for column in (
         "recommended_method",
         "grind_size",
@@ -228,6 +456,42 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for column in ("coffee_grams", "water_grams"):
         if column not in ratings:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} REAL")
+
+
+def _migrate_localized_json(conn: sqlite3.Connection) -> None:
+    """Rewrite legacy plain-string story / array flavor_tags / flat brew columns into lang maps."""
+    rows = conn.execute(
+        """
+        SELECT id, story, flavor_tags, brew_recommendation, recommended_method,
+               grind_size, water_temp, brew_ratio
+        FROM beans
+        """
+    ).fetchall()
+    for row in rows:
+        story_map = coerce_text_map(row["story"])
+        flavor_map = coerce_list_map(row["flavor_tags"])
+        brew_map = coerce_brew_map(
+            row["brew_recommendation"],
+            {
+                "recommended_method": row["recommended_method"],
+                "grind_size": row["grind_size"],
+                "water_temp": row["water_temp"],
+                "brew_ratio": row["brew_ratio"],
+            },
+        )
+        conn.execute(
+            """
+            UPDATE beans
+            SET story = ?, flavor_tags = ?, brew_recommendation = ?
+            WHERE id = ?
+            """,
+            (
+                _dump_lang_map(story_map),
+                _dump_lang_map(flavor_map),
+                _dump_lang_map(brew_map),
+                row["id"],
+            ),
+        )
 
 
 def get_images_dir() -> Path:
@@ -264,14 +528,18 @@ def update_bean_image(bean_id: int, image_url: str) -> None:
         conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
 
 
-def update_bean_story(bean_id: int, story: str) -> None:
-    story = (story or "").strip()
-    if not story:
+def update_bean_story(bean_id: int, story: Any, lang: str | None = None) -> None:
+    incoming = coerce_text_map(story, lang)
+    if not incoming:
         return
     with connect() as conn:
+        row = conn.execute("SELECT story FROM beans WHERE id = ?", (bean_id,)).fetchone()
+        if row is None:
+            return
+        merged = merge_text_map(row["story"], incoming, lang)
         conn.execute(
-            "UPDATE beans SET story = ? WHERE id = ? AND (story IS NULL OR story = '')",
-            (story, bean_id),
+            "UPDATE beans SET story = ? WHERE id = ?",
+            (_dump_lang_map(merged), bean_id),
         )
 
 
@@ -380,37 +648,60 @@ def _normalize_brew_fields(
     water_temp: str = "",
     brew_ratio: str = "",
     brew_recommendation: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    rec = brew_recommendation if isinstance(brew_recommendation, dict) else {}
+    lang: str | None = None,
+) -> dict[str, Any]:
+    extra = {
+        "recommended_method": recommended_method,
+        "grind_size": grind_size,
+        "water_temp": water_temp,
+        "brew_ratio": brew_ratio,
+    }
+    brew_map = coerce_brew_map(brew_recommendation, extra, lang)
+    flat = get_localized(brew_map, FALLBACK_LANG)
+    if not isinstance(flat, dict) or not any(str(v or "").strip() for v in flat.values()):
+        flat = get_localized(brew_map, "da")
+    if not isinstance(flat, dict):
+        flat = extra
     return {
-        "recommended_method": _normalize(recommended_method or rec.get("recommended_method") or ""),
-        "grind_size": _normalize(grind_size or rec.get("grind_size") or ""),
-        "water_temp": (water_temp or rec.get("water_temp") or "").strip(),
-        "brew_ratio": (brew_ratio or rec.get("brew_ratio") or "").strip(),
+        "recommended_method": _normalize(flat.get("recommended_method") or extra["recommended_method"] or ""),
+        "grind_size": _normalize(flat.get("grind_size") or extra["grind_size"] or ""),
+        "water_temp": str(flat.get("water_temp") or extra["water_temp"] or "").strip(),
+        "brew_ratio": str(flat.get("brew_ratio") or extra["brew_ratio"] or "").strip(),
+        "brew_map": brew_map,
     }
 
 
-def _apply_brew_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], brew: dict[str, str]) -> None:
-    if not bean or not any(brew.values()):
+def _apply_brew_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], brew: dict[str, Any]) -> None:
+    incoming_map = brew.get("brew_map") if isinstance(brew.get("brew_map"), dict) else coerce_brew_map(brew)
+    if not bean or not incoming_map:
         return
-    if any((bean.get(key) or "").strip() for key in brew):
+    merged = merge_brew_map(bean.get("brew_recommendation"), incoming_map)
+    existing = coerce_brew_map(bean.get("brew_recommendation"))
+    if existing and merged == existing:
         return
+    if existing and not incoming_map:
+        return
+    flat = get_localized(merged, FALLBACK_LANG)
+    if not isinstance(flat, dict):
+        flat = {key: brew.get(key) or "" for key in _BREW_KEYS}
     conn.execute(
         """
         UPDATE beans
-        SET recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?
+        SET recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
+            brew_recommendation = ?
         WHERE id = ?
         """,
         (
-            brew["recommended_method"],
-            brew["grind_size"],
-            brew["water_temp"],
-            brew["brew_ratio"],
+            _normalize(flat.get("recommended_method") or brew.get("recommended_method") or ""),
+            _normalize(flat.get("grind_size") or brew.get("grind_size") or ""),
+            str(flat.get("water_temp") or brew.get("water_temp") or "").strip(),
+            str(flat.get("brew_ratio") or brew.get("brew_ratio") or "").strip(),
+            _dump_lang_map(merged),
             bean["id"],
         ),
     )
-    bean.update(brew)
-    bean["brew_recommendation"] = dict(brew)
+    bean.update({key: brew.get(key) or "" for key in _BREW_KEYS if brew.get(key)})
+    bean["brew_recommendation"] = merged
 
 
 def _apply_meta_if_empty(conn: sqlite3.Connection, bean: dict[str, Any], meta: dict[str, Any]) -> None:
@@ -452,21 +743,30 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     if row is None:
         return None
     data = dict(row)
-    tags = data.get("flavor_tags") or "[]"
-    try:
-        data["flavor_tags"] = json.loads(tags)
-    except json.JSONDecodeError:
-        data["flavor_tags"] = [t.strip() for t in str(tags).split(",") if t.strip()]
+    flavor_map = coerce_list_map(data.get("flavor_tags"))
+    data["flavor_tags"] = flavor_map
     data["suitable_for"] = _parse_json_list(data.get("suitable_for"))
-    data["story"] = (data.get("story") or "").strip()
-    brew = {
-        "recommended_method": (data.get("recommended_method") or "").strip(),
-        "grind_size": (data.get("grind_size") or "").strip(),
-        "water_temp": (data.get("water_temp") or "").strip(),
-        "brew_ratio": (data.get("brew_ratio") or "").strip(),
-    }
-    data.update(brew)
-    data["brew_recommendation"] = brew
+    story_map = coerce_text_map(data.get("story"))
+    data["story"] = story_map
+    brew_map = coerce_brew_map(
+        data.get("brew_recommendation"),
+        {
+            "recommended_method": data.get("recommended_method") or "",
+            "grind_size": data.get("grind_size") or "",
+            "water_temp": data.get("water_temp") or "",
+            "brew_ratio": data.get("brew_ratio") or "",
+        },
+    )
+    flat = get_localized(brew_map, FALLBACK_LANG)
+    if not isinstance(flat, dict):
+        flat = {
+            "recommended_method": (data.get("recommended_method") or "").strip(),
+            "grind_size": (data.get("grind_size") or "").strip(),
+            "water_temp": (data.get("water_temp") or "").strip(),
+            "brew_ratio": (data.get("brew_ratio") or "").strip(),
+        }
+    data.update(_clean_brew_obj(flat))
+    data["brew_recommendation"] = brew_map
     lat, lng, region = resolve_origin_geo(
         data.get("origin") or "",
         data.get("region_full") or "",
@@ -581,11 +881,11 @@ def insert_bean(
     process: str = "",
     roast_level: str = "",
     roaster_notes: str = "",
-    flavor_tags: list[str] | None = None,
+    flavor_tags: list[str] | dict[str, Any] | None = None,
     suitable_for: list[str] | None = None,
     skip_fuzzy: bool = False,
     image_url: str = "",
-    story: str = "",
+    story: str | dict[str, Any] = "",
     recommended_method: str = "",
     grind_size: str = "",
     water_temp: str = "",
@@ -601,7 +901,8 @@ def insert_bean(
     name = _normalize(name)
     roaster = _normalize(roaster)
     image_url = (image_url or "").strip()
-    story = (story or "").strip()
+    story_map = coerce_text_map(story)
+    flavor_map = coerce_list_map(flavor_tags if flavor_tags is not None else _tags_from_notes(roaster_notes))
     brew = _normalize_brew_fields(
         recommended_method,
         grind_size,
@@ -628,12 +929,12 @@ def insert_bean(
         if image_url and not (bean.get("image_url") or "").strip():
             update_bean_image(bean["id"], image_url)
             bean["image_url"] = image_url
-        if story and not (bean.get("story") or "").strip():
-            update_bean_story(bean["id"], story)
-            bean["story"] = story
-        if any(brew.values()) or any(meta.values()) or suitable_for:
+        if story_map:
+            update_bean_story(bean["id"], story_map)
+            bean["story"] = merge_text_map(bean.get("story"), story_map)
+        if brew.get("brew_map") or any(brew.get(key) for key in _BREW_KEYS) or any(meta.values()) or suitable_for:
             with connect() as conn:
-                if any(brew.values()):
+                if brew.get("brew_map") or any(brew.get(key) for key in _BREW_KEYS):
                     _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
                 _apply_suitable_if_empty(conn, bean, suitable_for or [])
@@ -641,17 +942,19 @@ def insert_bean(
     if not skip_fuzzy and similar:
         return {"status": "fuzzy", "similar": similar}
 
-    tags = json.dumps(flavor_tags or _tags_from_notes(roaster_notes))
+    tags = _dump_lang_map(flavor_map)
     suitability = json.dumps(suitable_for or [])
+    story_json = _dump_lang_map(story_map)
+    brew_json = _dump_lang_map(brew.get("brew_map") or {})
     with connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO beans (
                 name, roaster, origin, process, roast_level, roaster_notes,
                 flavor_tags, suitable_for, story, image_url, recommended_method, grind_size,
-                water_temp, brew_ratio, roast_date, altitude, varietal,
+                water_temp, brew_ratio, brew_recommendation, roast_date, altitude, varietal,
                 latitude, longitude, region_full, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -662,12 +965,13 @@ def insert_bean(
                 (roaster_notes or "").strip(),
                 tags,
                 suitability,
-                story,
+                story_json,
                 image_url,
                 brew["recommended_method"],
                 brew["grind_size"],
                 brew["water_temp"],
                 brew["brew_ratio"],
+                brew_json,
                 meta["roast_date"],
                 meta["altitude"],
                 meta["varietal"],
@@ -689,12 +993,13 @@ def insert_bean(
                     (image_url, bean["id"]),
                 )
                 bean["image_url"] = image_url
-            if bean and story and not (bean.get("story") or "").strip():
+            if bean and story_map:
+                merged_story = merge_text_map(bean.get("story"), story_map)
                 conn.execute(
                     "UPDATE beans SET story = ? WHERE id = ?",
-                    (story, bean["id"]),
+                    (_dump_lang_map(merged_story), bean["id"]),
                 )
-                bean["story"] = story
+                bean["story"] = merged_story
             if bean:
                 _apply_brew_if_empty(conn, bean, brew)
                 _apply_meta_if_empty(conn, bean, meta)
@@ -715,9 +1020,9 @@ def update_bean(
     process: str = "",
     roast_level: str = "",
     roaster_notes: str = "",
-    flavor_tags: list[str] | None = None,
+    flavor_tags: list[str] | dict[str, Any] | None = None,
     suitable_for: list[str] | None = None,
-    story: str = "",
+    story: str | dict[str, Any] = "",
     image_url: str = "",
     recommended_method: str = "",
     grind_size: str = "",
@@ -755,12 +1060,17 @@ def update_bean(
         region_full,
         origin,
     )
-    tags = flavor_tags if flavor_tags is not None else existing.get("flavor_tags") or []
+    flavor_map = (
+        coerce_list_map(flavor_tags)
+        if flavor_tags is not None
+        else coerce_list_map(existing.get("flavor_tags"))
+    )
     suitability = (
         suitable_for if suitable_for is not None else existing.get("suitable_for") or []
     )
     image_url = (image_url or "").strip() or (existing.get("image_url") or "")
-    story = (story or "").strip()
+    story_map = coerce_text_map(story) if story else coerce_text_map(existing.get("story"))
+    brew_map = brew.get("brew_map") or coerce_brew_map(existing.get("brew_recommendation"))
     with connect() as conn:
         clash = conn.execute(
             "SELECT id FROM beans WHERE name = ? AND roaster = ? AND id != ?",
@@ -774,7 +1084,7 @@ def update_bean(
                 name = ?, roaster = ?, origin = ?, process = ?, roast_level = ?,
                 roaster_notes = ?, flavor_tags = ?, suitable_for = ?, story = ?, image_url = ?,
                 recommended_method = ?, grind_size = ?, water_temp = ?, brew_ratio = ?,
-                roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
+                brew_recommendation = ?, roast_date = ?, altitude = ?, varietal = ?, latitude = ?,
                 longitude = ?, region_full = ?
             WHERE id = ?
             """,
@@ -785,14 +1095,15 @@ def update_bean(
                 _normalize(process),
                 _normalize(roast_level),
                 (roaster_notes or "").strip(),
-                json.dumps(tags),
+                _dump_lang_map(flavor_map),
                 json.dumps(suitability),
-                story,
+                _dump_lang_map(story_map),
                 image_url,
                 brew["recommended_method"],
                 brew["grind_size"],
                 brew["water_temp"],
                 brew["brew_ratio"],
+                _dump_lang_map(brew_map),
                 meta["roast_date"],
                 meta["altitude"],
                 meta["varietal"],

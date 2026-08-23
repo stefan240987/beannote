@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# Active UI + AI-content languages. Append codes (e.g. "de", "fr", "es") to expand;
+# dictionaries below already hold DE/FR/ES UI copy, and Gemini maps are keyed the same way.
+SUPPORTED_LANGUAGES = ["da", "en"]
+FALLBACK_LANG = "en"
+
 LANGS = {
     "da": "Dansk",
     "en": "English",
@@ -9,6 +14,19 @@ LANGS = {
     "fr": "Français",
     "es": "Español",
 }
+
+
+def ui_langs() -> dict[str, str]:
+    return {code: LANGS[code] for code in SUPPORTED_LANGUAGES if code in LANGS}
+
+
+def normalize_lang(lang: str | None, fallback: str = FALLBACK_LANG) -> str:
+    code = (lang or "").lower().strip()
+    if code in SUPPORTED_LANGUAGES:
+        return code
+    if fallback in SUPPORTED_LANGUAGES:
+        return fallback
+    return SUPPORTED_LANGUAGES[0] if SUPPORTED_LANGUAGES else "en"
 
 STRINGS: dict[str, dict[str, str]] = {
     "da": {

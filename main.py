@@ -57,9 +57,9 @@ from ocr import (
     scan_available,
     scan_label,
 )
-from translations import LANGS, STRINGS, t
+from translations import FALLBACK_LANG, STRINGS, SUPPORTED_LANGUAGES, t, ui_langs
 
-UI_LANGS = {"da": LANGS["da"], "en": LANGS["en"]}
+UI_LANGS = ui_langs()
 
 ensure_local_env()
 load_local_env()
@@ -351,8 +351,10 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
         "version": VERSION,
         "lang": lang,
         "langs": UI_LANGS,
-        "strings": STRINGS.get(lang) or STRINGS["en"],
-        "i18n": {code: STRINGS[code] for code in UI_LANGS},
+        "supported_languages": list(SUPPORTED_LANGUAGES),
+        "fallback_lang": FALLBACK_LANG,
+        "strings": STRINGS.get(lang) or STRINGS[FALLBACK_LANG],
+        "i18n": {code: STRINGS[code] for code in SUPPORTED_LANGUAGES if code in STRINGS},
         "user": user,
         "environment": ENVIRONMENT,
         "local_dev": local,
@@ -385,15 +387,15 @@ class BeanIn(BaseModel):
     process: str = ""
     roast_level: str = ""
     roaster_notes: str = ""
-    flavor_tags: list[str] = Field(default_factory=list)
+    flavor_tags: Any = Field(default_factory=dict)
     suitable_for: list[str] = Field(default_factory=list)
-    story: str = ""
+    story: Any = ""
     image_url: str = ""
     recommended_method: str = ""
     grind_size: str = ""
     water_temp: str = ""
     brew_ratio: str = ""
-    brew_recommendation: dict[str, Any] = Field(default_factory=dict)
+    brew_recommendation: Any = Field(default_factory=dict)
     roast_date: str = ""
     altitude: str = ""
     varietal: str = ""
@@ -663,7 +665,7 @@ def bean_detail(bean_id: int, user: dict[str, Any] = Depends(current_user)) -> d
     notes = compare_flavor_notes(
         (profile["bean"] or {}).get("roaster_notes") or "",
         ((profile.get("user") or {}) or {}).get("notes") or "",
-        (profile["bean"] or {}).get("flavor_tags") or [],
+        (profile["bean"] or {}).get("flavor_tags") or {},
     )
     profile["notes"] = notes
     return profile
@@ -762,7 +764,7 @@ async def scan(
     if not scan_available():
         raise HTTPException(status_code=503, detail="ocr_missing")
     chosen = (lang or request.query_params.get("lang") or "da").lower().strip()
-    if chosen not in LANGS:
+    if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
     try:
         jpeg = encode_scan_jpeg(raw)
@@ -845,7 +847,7 @@ def export_log(fmt: str = "csv", _user: dict[str, Any] = Depends(current_user)) 
 
 @app.get("/api/i18n")
 def i18n_pack() -> dict[str, dict[str, str]]:
-    return {code: STRINGS[code] for code in UI_LANGS}
+    return {code: STRINGS[code] for code in SUPPORTED_LANGUAGES if code in STRINGS}
 
 
 @app.get("/api/i18n/{lang}")
@@ -853,7 +855,7 @@ def i18n(lang: str) -> dict[str, str]:
     code = (lang or "da").lower()
     if code not in UI_LANGS:
         code = "da"
-    return STRINGS.get(code) or STRINGS["en"]
+    return STRINGS.get(code) or STRINGS[FALLBACK_LANG]
 
 
 @app.get("/media/{image_name}")

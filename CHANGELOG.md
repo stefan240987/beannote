@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [3.6.0] - 2026-08-23
+
+- Scalable JSON-based multi-language i18n: `story`, `flavor_tags`, and `brew_recommendation` are language maps (`{"da": "...", "en": "..."}`) with `getLocalized` fallback to English.
+- Gemini Vision now fills those maps in one scan. Adding a language is appending a code to `SUPPORTED_LANGUAGES` — no schema or HTML restructure.
+- Frontend `i18nManager` renders the language switcher from the config array and re-renders static UI plus dynamic bean copy on switch.
+
 ## [3.3.0] - 2026-08-23
 
 - Autonomous high-res image search finds up to 3 official/studio product photos after a scan. DuckDuckGo Images is the primary source (no API key); known packshots and Gemini grounding backfill when live search is thin.

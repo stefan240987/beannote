@@ -14,7 +14,8 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
-from db import classify_matches, find_similar_beans, resolve_origin_geo, scan_destination
+from db import classify_matches, find_similar_beans, get_localized, resolve_origin_geo, scan_destination
+from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 from image_search import (
     BELLAROM_BIO_PACKSHOT,
     BELLAROM_STUDIO_PACKSHOTS,
@@ -349,13 +350,14 @@ _NEXT_FIELD = (
 
 def _ui_lang(lang: str | None) -> str:
     code = (lang or "da").lower().strip()
-    return code if code in STORY_LANG else "da"
+    if code in STORY_LANG:
+        return normalize_lang(code)
+    return normalize_lang(lang)
 
 
 def _copy_lang(lang: str | None) -> str:
     """Languages with full extraction copy (flavor tags, process, brew)."""
-    code = _ui_lang(lang)
-    return code if code in {"da", "en"} else "en"
+    return normalize_lang(lang)
 
 
 def flavor_notes_for(lang: str = "da") -> list[str]:
@@ -395,10 +397,11 @@ def localize_flavor(tag: str, lang: str = "da") -> str:
 
 
 def flavor_i18n_table() -> dict[str, dict[str, str]]:
-    """Bidirectional flavor lookup so saved DA/EN tags can switch instantly."""
+    """Bidirectional flavor lookup so saved language tags can switch instantly."""
     table: dict[str, dict[str, str]] = {}
     for canon, names in FLAVOR_LOCALES.items():
-        entry = {"da": names.get("da", canon), "en": names.get("en", canon)}
+        entry = {code: names.get(code, names.get("da", canon)) for code in SUPPORTED_LANGUAGES}
+        entry.update(names)
         keys = {canon, *names.values(), *FLAVOR_ALIASES.get(canon, [])}
         for key in keys:
             compact = re.sub(r"\s+", " ", str(key or "").strip())
@@ -412,6 +415,70 @@ def flavor_i18n_table() -> dict[str, dict[str, str]]:
 
 def localize_flavor_tags(tags: list[str] | None, lang: str = "da") -> list[str]:
     return [localize_flavor(tag, lang) for tag in (tags or []) if str(tag).strip()]
+
+
+def _flatten_i18n_sources(*sources: Any) -> list[Any]:
+    out: list[Any] = []
+    for source in sources:
+        if not source:
+            continue
+        if isinstance(source, dict):
+            for value in source.values():
+                if isinstance(value, (list, tuple)):
+                    out.extend(value)
+                elif value:
+                    out.append(value)
+            continue
+        out.append(source)
+    return out
+
+
+def flavor_tags_lang_map(*sources: Any) -> dict[str, list[str]]:
+    """Canonicalize flavor pills, then emit a language → tags dictionary."""
+    canons = extract_flavor_canons(*sources)
+    if not canons:
+        return {}
+    return {code: [localize_flavor(tag, code) for tag in canons] for code in SUPPORTED_LANGUAGES}
+
+
+def brew_recommendation_lang_map(raw: Any) -> dict[str, dict[str, str]]:
+    """Expand a flat or partial brew object into a language map."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
+        seed = next((item for item in raw.values() if isinstance(item, dict)), {})
+        method = str(seed.get("recommended_method") or "")
+        grind = str(seed.get("grind_size") or "")
+        temp = str(seed.get("water_temp") or "")
+        ratio = str(seed.get("brew_ratio") or "")
+    elif isinstance(raw, dict):
+        method = str(raw.get("recommended_method") or "")
+        grind = str(raw.get("grind_size") or "")
+        temp = str(raw.get("water_temp") or "")
+        ratio = str(raw.get("brew_ratio") or "")
+    else:
+        return {}
+    method = _canon_listed(method, BREW_METHODS_REC, METHOD_ALIASES) or method
+    grind = _canon_listed(grind, GRIND_SIZES, GRIND_ALIASES) or grind
+    out: dict[str, dict[str, str]] = {}
+    for code in SUPPORTED_LANGUAGES:
+        out[code] = {
+            "recommended_method": localize_mapped(method, METHOD_LOCALES, code) if method else "",
+            "grind_size": localize_mapped(grind, GRIND_LOCALES, code) if grind else "",
+            "water_temp": temp,
+            "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else "",
+        }
+    if isinstance(raw, dict):
+        for code, item in raw.items():
+            if isinstance(item, dict) and any(str(item.get(key) or "").strip() for key in item):
+                key = str(code).lower().strip()
+                out[key] = {
+                    "recommended_method": str(item.get("recommended_method") or out.get(key, {}).get("recommended_method") or ""),
+                    "grind_size": str(item.get("grind_size") or out.get(key, {}).get("grind_size") or ""),
+                    "water_temp": str(item.get("water_temp") or temp),
+                    "brew_ratio": str(item.get("brew_ratio") or out.get(key, {}).get("brew_ratio") or ""),
+                }
+    return {code: brew for code, brew in out.items() if any(brew.values())}
 
 
 def _canonical_suitable(token: str) -> str:
@@ -430,7 +497,8 @@ def _canonical_suitable(token: str) -> str:
 def suitable_for_i18n_table() -> dict[str, dict[str, str]]:
     table: dict[str, dict[str, str]] = {}
     for canon, names in SUITABLE_LOCALES.items():
-        entry = {"da": names.get("da", canon), "en": names.get("en", canon)}
+        entry = {code: names.get(code, names.get("da", canon)) for code in SUPPORTED_LANGUAGES}
+        entry.update(names)
         keys = {canon, *names.values(), *SUITABLE_ALIASES.get(canon, [])}
         for key in keys:
             compact = re.sub(r"\s+", " ", str(key or "").strip())
@@ -627,12 +695,12 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     """Map Gemini/Tesseract fields onto the add-bean widget keys."""
     notes = (parsed.get("official_notes") or parsed.get("roaster_notes") or "").strip()
     name = (parsed.get("bean_name") or parsed.get("name") or "").strip()
-    flavors = extract_flavor_tags(
+    flavor_map = flavor_tags_lang_map(
         parsed.get("flavor_tags"),
         parsed.get("flavor_notes"),
         notes,
-        lang=lang,
     )
+    flavors = get_localized(flavor_map, lang) or []
     out = dict(parsed)
     out["lang"] = _copy_lang(lang)
     out["name"] = name
@@ -643,14 +711,15 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["roaster_notes"] = notes
     out["official_notes"] = notes
     out["flavor_notes"] = flavors
-    out["flavor_tags"] = flavors
+    out["flavor_tags"] = flavor_map
     out["suitable_for"] = extract_suitable_for(
         parsed.get("suitable_for"),
         parsed.get("official_notes"),
         notes,
         lang=lang,
     )
-    out["story"] = (parsed.get("story") or "").strip()
+    story_map = _as_story_map(parsed.get("story"), lang)
+    out["story"] = story_map
     out["roast_date"] = (parsed.get("roast_date") or "").strip()
     out["altitude"] = (parsed.get("altitude") or "").strip()
     out["varietal"] = (parsed.get("varietal") or parsed.get("variety") or "").strip()
@@ -664,10 +733,37 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["longitude"] = lng
     out["region_full"] = region
     out = refine_label_fields(out, lang=lang)
+    if not isinstance(out.get("flavor_tags"), dict):
+        out["flavor_tags"] = flavor_tags_lang_map(out.get("flavor_tags"), out.get("flavor_notes"))
+    out["flavor_notes"] = get_localized(out["flavor_tags"], lang) or []
+    if not isinstance(out.get("story"), dict):
+        out["story"] = _as_story_map(out.get("story"), lang)
     brew = infer_brew_recommendation(out, lang=lang)
     out["brew_recommendation"] = brew
-    out.update(brew)
+    flat = get_localized(brew, lang)
+    if isinstance(flat, dict):
+        out.update(flat)
     return out
+
+
+def _as_story_map(value: Any, lang: str) -> dict[str, str]:
+    if isinstance(value, dict):
+        return {
+            str(key).lower().strip(): str(item or "").strip()
+            for key, item in value.items()
+            if str(item or "").strip()
+        }
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return _as_story_map(parsed, lang)
+        except json.JSONDecodeError:
+            pass
+    return {_copy_lang(lang): text}
 
 
 def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]]) -> str:
@@ -684,30 +780,34 @@ def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]])
     return raw
 
 
-def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[str, str]:
+def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[str, dict[str, str]]:
     """Use Gemini's brew object when present; otherwise infer from roast/origin/process."""
-    code = _copy_lang(lang)
     raw = parsed.get("brew_recommendation")
-    if not isinstance(raw, dict):
-        raw = {
+    seed: dict[str, Any] = {}
+    if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
+        mapped = brew_recommendation_lang_map(raw)
+        if mapped and all(
+            mapped.get(code, {}).get("recommended_method")
+            and mapped.get(code, {}).get("grind_size")
+            and mapped.get(code, {}).get("water_temp")
+            and mapped.get(code, {}).get("brew_ratio")
+            for code in SUPPORTED_LANGUAGES
+        ):
+            return mapped
+        seed = next((item for item in raw.values() if isinstance(item, dict)), {})
+    elif isinstance(raw, dict):
+        seed = raw
+    else:
+        seed = {
             "recommended_method": parsed.get("recommended_method") or "",
             "grind_size": parsed.get("grind_size") or "",
             "water_temp": parsed.get("water_temp") or "",
             "brew_ratio": parsed.get("brew_ratio") or "",
         }
-    method = _canon_listed(str(raw.get("recommended_method") or ""), BREW_METHODS_REC, METHOD_ALIASES)
-    method = localize_mapped(method, METHOD_LOCALES, code)
-    grind = _canon_listed(str(raw.get("grind_size") or ""), GRIND_SIZES, GRIND_ALIASES)
-    grind = localize_mapped(grind, GRIND_LOCALES, code)
-    temp = re.sub(r"\s+", " ", str(raw.get("water_temp") or "").strip())
-    ratio = re.sub(r"\s+", " ", str(raw.get("brew_ratio") or "").strip())
-    if method and grind and temp and ratio:
-        return {
-            "recommended_method": method,
-            "grind_size": grind,
-            "water_temp": temp,
-            "brew_ratio": _localize_brew_ratio(ratio, code),
-        }
+    method = _canon_listed(str(seed.get("recommended_method") or ""), BREW_METHODS_REC, METHOD_ALIASES)
+    grind = _canon_listed(str(seed.get("grind_size") or ""), GRIND_SIZES, GRIND_ALIASES)
+    temp = re.sub(r"\s+", " ", str(seed.get("water_temp") or "").strip())
+    ratio = re.sub(r"\s+", " ", str(seed.get("brew_ratio") or "").strip())
 
     roast = (parsed.get("roast_level") or "").lower()
     process = (parsed.get("process") or "").lower()
@@ -746,12 +846,29 @@ def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[
             "grind_size": "Medium",
             "brew_key": "filter",
         }
-    return {
-        "recommended_method": method or localize_mapped(inferred["recommended_method"], METHOD_LOCALES, code),
-        "grind_size": grind or localize_mapped(inferred["grind_size"], GRIND_LOCALES, code),
-        "water_temp": temp or "92-94°C",
-        "brew_ratio": ratio or BREW_RATIO_COPY[inferred["brew_key"]][code],
-    }
+    method = method or inferred["recommended_method"]
+    grind = grind or inferred["grind_size"]
+    temp = temp or "92-94°C"
+    out: dict[str, dict[str, str]] = {}
+    for code in SUPPORTED_LANGUAGES:
+        out[code] = {
+            "recommended_method": localize_mapped(method, METHOD_LOCALES, code),
+            "grind_size": localize_mapped(grind, GRIND_LOCALES, code),
+            "water_temp": temp,
+            "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else BREW_RATIO_COPY[inferred["brew_key"]].get(code) or BREW_RATIO_COPY[inferred["brew_key"]].get(FALLBACK_LANG, ""),
+        }
+    if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
+        for code, item in raw.items():
+            if isinstance(item, dict):
+                key = str(code).lower().strip()
+                current = out.get(key, {})
+                out[key] = {
+                    "recommended_method": str(item.get("recommended_method") or current.get("recommended_method") or ""),
+                    "grind_size": str(item.get("grind_size") or current.get("grind_size") or ""),
+                    "water_temp": str(item.get("water_temp") or current.get("water_temp") or temp),
+                    "brew_ratio": str(item.get("brew_ratio") or current.get("brew_ratio") or ""),
+                }
+    return out
 
 
 def _localize_brew_ratio(ratio: str, lang: str) -> str:
@@ -790,7 +907,16 @@ _ORIGIN_PRINTED = {
 }
 
 def _blob_of(parsed: dict[str, Any], *keys: str) -> str:
-    return " ".join(str(parsed.get(key) or "") for key in keys)
+    parts: list[str] = []
+    for key in keys:
+        value = parsed.get(key)
+        if isinstance(value, dict):
+            parts.extend(str(item or "") for item in value.values())
+        elif isinstance(value, (list, tuple)):
+            parts.extend(str(item or "") for item in value)
+        else:
+            parts.append(str(value or ""))
+    return " ".join(parts)
 
 
 def _looks_like_bellarom_bio(parsed: dict[str, Any]) -> bool:
@@ -941,30 +1067,39 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
 def _gemini_prompt(lang: str = "da") -> str:
     code = _copy_lang(lang)
     story_lang = STORY_LANG.get(code, "Danish")
-    flavors = ", ".join(f'"{name}"' for name in flavor_notes_for(code))
+    lang_keys = ", ".join(f'"{item}"' for item in SUPPORTED_LANGUAGES)
+    flavor_lines = "\n".join(
+        f'    "{item}": array of 1–6 descriptors chosen only from ['
+        + ", ".join(f'"{name}"' for name in flavor_notes_for(item))
+        + "]"
+        for item in SUPPORTED_LANGUAGES
+    )
     processes = ", ".join(f'"{name}"' for name in processes_for(code))
     roasts = ", ".join(f'"{name}"' for name in roast_levels_for(code))
-    methods = ", ".join(f'"{METHOD_LOCALES[name][code]}"' for name in BREW_METHODS_REC)
-    grinds = ", ".join(f'"{GRIND_LOCALES[name][code]}"' for name in GRIND_SIZES)
-    espresso_ratio = BREW_RATIO_COPY["espresso"][code]
-    pour_ratio = BREW_RATIO_COPY["pour_over"][code]
+    brew_lines = []
+    for item in SUPPORTED_LANGUAGES:
+        methods = ", ".join(f'"{METHOD_LOCALES[name].get(item, name)}"' for name in BREW_METHODS_REC)
+        grinds = ", ".join(f'"{GRIND_LOCALES[name].get(item, name)}"' for name in GRIND_SIZES)
+        espresso_ratio = BREW_RATIO_COPY["espresso"].get(item, BREW_RATIO_COPY["espresso"]["en"])
+        pour_ratio = BREW_RATIO_COPY["pour_over"].get(item, BREW_RATIO_COPY["pour_over"]["en"])
+        brew_lines.append(
+            f'    "{item}": {{"recommended_method": one of [{methods}], '
+            f'"grind_size": one of [{grinds}], "water_temp": e.g. "92-94°C", '
+            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}"}}'
+        )
+    espresso_ratio = BREW_RATIO_COPY["espresso"].get(code, BREW_RATIO_COPY["espresso"]["en"])
+    pour_ratio = BREW_RATIO_COPY["pour_over"].get(code, BREW_RATIO_COPY["pour_over"]["en"])
     origin_example = "Brazil & Ethiopia" if code == "en" else "Brasilien & Etiopien"
-    story_heading = "The Coffee's Story" if code == "en" else "Kaffens Historie"
-    story_example = (
-        "Harvested at 1,900 meters in the Yirgacheffe region by smallholders "
-        "who selectively hand-pick the ripest cherries..."
-        if code == "en"
-        else "Høstet i 1.900 meters højde i Yirgacheffe-regionen af småbønder, "
-        "der selektivt håndplukker de mest modne bær..."
-    )
-    press_name = METHOD_LOCALES["Stempelkande (French Press)"][code]
-    grind_fine = GRIND_LOCALES["Fin"][code]
-    grind_med_fine = GRIND_LOCALES["Medium-fin"][code]
-    grind_coarse = GRIND_LOCALES["Grov"][code]
+    press_name = METHOD_LOCALES["Stempelkande (French Press)"].get(code, "French Press")
+    grind_fine = GRIND_LOCALES["Fin"].get(code, "Fine")
+    grind_med_fine = GRIND_LOCALES["Medium-fin"].get(code, "Medium-fine")
+    grind_coarse = GRIND_LOCALES["Grov"].get(code, "Coarse")
     suitable = ", ".join(f'"{name}"' for name in suitable_for_catalog(code))
     bellarom_suitable = ", ".join(
         f'"{localize_suitable(tag, code)}"' for tag in LABEL_SUITABLE_BELLAROM
     )
+    da_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("da"))
+    en_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("en"))
     return (
         "You are a specialty-coffee label reader for BeanNote. "
         "Inspect this coffee bag photo and return ONE JSON object only "
@@ -990,37 +1125,38 @@ def _gemini_prompt(lang: str = "da") -> str:
         '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
         f'- "process": exactly one of [{processes}] — write this in {story_lang}\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
-        f'- "flavor_tags": array of 1–6 {story_lang} descriptors chosen only from [{flavors}]\n'
+        f'- "flavor_tags": language map keyed by {lang_keys}. Same flavors, same order, '
+        "translated per key. Schema:\n"
+        f"{flavor_lines}\n"
+        f'  Example: {{"da": ["Mørk chokolade"], "en": ["Dark chocolate"]}}. '
+        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}].\n"
         f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
         f"[{suitable}]. Read printed icons such as FOR MACHINES (Espresso), FOR FILTER, "
         "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande. "
         f"For the Bellarom BIO Organic Full-Bodied bag, suitable_for MUST be "
         f"[{bellarom_suitable}].\n"
         f'- "official_notes": tasting-notes text rewritten in {story_lang}\n'
-        f'- "story": 2–4 engaging {story_lang} sentences ("{story_heading}"). '
-        "Combine printed label facts (farm, region, altitude, varietals, process, "
-        "flavor notes) with your specialty-coffee knowledge into a short "
-        "background story. Include farm, region, altitude, varietals, or a "
-        "flavor-characteristic narrative when known. Example tone: "
-        f'"{story_example}" '
-        "Do not invent a specific farm or producer name unless the label shows it; "
-        "you may use well-known regional context. "
-        f"The entire story must be {story_lang} only — no mixed languages.\n"
-        '- "brew_recommendation": object with:\n'
-        f'  - "recommended_method": one of [{methods}]\n'
-        f'  - "grind_size": one of [{grinds}]\n'
-        '  - "water_temp": e.g. "92-94°C"\n'
-        f'  - "brew_ratio": localize the description in {story_lang}, '
-        f'e.g. "{espresso_ratio}" or "{pour_ratio}"\n'
+        f'- "story": language map keyed by {lang_keys}. Each value is 2–4 engaging sentences '
+        '("Kaffens Historie" / "The Coffee\'s Story"). Combine printed label facts '
+        "(farm, region, altitude, varietals, process, flavor notes) with specialty-coffee "
+        "knowledge. Do not invent a specific farm or producer name unless the label shows it. "
+        'Example: {"da": "Høstet i 1.900 meters højde i Yirgacheffe-regionen af småbønder, '
+        'der selektivt håndplukker de mest modne bær...", '
+        '"en": "Harvested at 1,900 meters in the Yirgacheffe region by smallholders '
+        'who selectively hand-pick the ripest cherries..."}. '
+        "Each language key must stay in that language only — no mixed languages inside a key.\n"
+        f'- "brew_recommendation": language map keyed by {lang_keys} with localized text fields:\n'
+        f'{chr(10).join(brew_lines)}\n'
         "Infer brew_recommendation from roast, origin, process and typical "
         "specialty practice when the bag does not print brew advice. "
         f"Light washed African lots usually suit V60 / Pour-over, {grind_med_fine}, "
         f"92-94°C, {pour_ratio}. Darker or espresso-oriented roasts suit Espresso and a "
         f"{grind_fine} grind with {espresso_ratio}. Full-bodied naturals can use "
         f"{press_name} with a {grind_coarse} grind.\n"
-        f"LANGUAGE LOCK: lang={code}. Write EVERY user-facing string in {story_lang}. "
-        "That includes flavor_tags, suitable_for, story, process, roast_level, official_notes, "
-        "and brew_recommendation.recommended_method / grind_size / brew_ratio.\n"
+        f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
+        "brew_recommendation. Adding another ISO key later (de, fr, es) uses the same shape. "
+        f"Scalar fields (origin, process, roast_level, suitable_for, official_notes) stay in "
+        f"{story_lang} because lang={code}.\n"
         "If latitude/longitude are not printed, infer the best-known coordinates "
         "for the origin region (for example Yirgacheffe ≈ 6.16, 38.21). "
         "Read printed text first. If a field is missing on the label, "
@@ -1764,11 +1900,11 @@ def _match_flavors(text: str) -> list[str]:
     return _dedupe_flavors(hits)
 
 
-def extract_flavor_tags(*sources: str | list[str] | None, lang: str = "da") -> list[str]:
-    """Official 1–2 word flavor pills only, localized to lang. Never sentence fragments."""
+def extract_flavor_canons(*sources: Any) -> list[str]:
+    """Official flavor pills as canonical (Danish catalog) names."""
     hits: list[str] = []
     blobs: list[str] = []
-    for source in sources:
+    for source in _flatten_i18n_sources(*sources):
         if not source:
             continue
         if isinstance(source, (list, tuple)):
@@ -1790,14 +1926,18 @@ def extract_flavor_tags(*sources: str | list[str] | None, lang: str = "da") -> l
     blob = " ".join(blobs)
     if blob:
         hits.extend(_match_flavors(blob))
-    tags = [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag) and tag in FLAVOR_NOTES]
-    return [localize_flavor(tag, lang) for tag in tags]
+    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag) and tag in FLAVOR_NOTES]
+
+
+def extract_flavor_tags(*sources: Any, lang: str = "da") -> list[str]:
+    """Official 1–2 word flavor pills only, localized to lang. Never sentence fragments."""
+    return [localize_flavor(tag, lang) for tag in extract_flavor_canons(*sources)]
 
 
 def compare_flavor_notes(
     roaster_notes: str,
     user_notes: str,
-    extra_roaster: list[str] | None = None,
+    extra_roaster: Any = None,
     lang: str = "da",
 ) -> dict[str, list[str]]:
     roaster = extract_flavor_tags(roaster_notes, extra_roaster, lang=lang)

@@ -100,6 +100,142 @@
   <script>
     const TOKEN_KEY = "beannote_token";
     const LANG_KEY = "beannote_lang";
+    const i18nManager = {
+      SUPPORTED_LANGUAGES: ["da", "en"],
+      FALLBACK_LANG: "en",
+      supported() {
+        const fromConfig = state.config?.supported_languages;
+        if (Array.isArray(fromConfig) && fromConfig.length) return fromConfig;
+        const langs = state.config?.langs;
+        if (langs && typeof langs === "object") return Object.keys(langs);
+        return this.SUPPORTED_LANGUAGES;
+      },
+      labels() {
+        return state.config?.langs || { da: "Dansk", en: "English" };
+      },
+      normalize(lang) {
+        const code = String(lang || "").toLowerCase().trim();
+        const supported = this.supported();
+        if (supported.includes(code)) return code;
+        const fallback = this.FALLBACK_LANG;
+        return supported.includes(fallback) ? fallback : (supported[0] || "en");
+      },
+      active() {
+        return this.normalize(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
+      },
+      getLocalized(jsonObj, activeLang, fallbackLang) {
+        const fallback = fallbackLang || this.FALLBACK_LANG;
+        if (jsonObj == null || jsonObj === "") return "";
+        if (Array.isArray(jsonObj)) return jsonObj;
+        if (typeof jsonObj === "string") {
+          const trimmed = jsonObj.trim();
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try { return this.getLocalized(JSON.parse(trimmed), activeLang, fallback); }
+            catch { return jsonObj; }
+          }
+          return jsonObj;
+        }
+        if (typeof jsonObj !== "object") return jsonObj;
+        const brewKeys = ["recommended_method", "grind_size", "water_temp", "brew_ratio"];
+        const hasLangKey = this.supported().some((code) => Object.prototype.hasOwnProperty.call(jsonObj, code));
+        if (!hasLangKey && brewKeys.some((key) => key in jsonObj)) return jsonObj;
+        const pick = (code) => {
+          const value = jsonObj[code];
+          if (value == null) return null;
+          if (typeof value === "string" && !value.trim()) return null;
+          if (Array.isArray(value) && !value.length) return null;
+          if (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length) return null;
+          return value;
+        };
+        const lang = this.normalize(activeLang || this.active());
+        const fb = this.normalize(fallback);
+        return pick(lang)
+          ?? pick(fb)
+          ?? this.supported().map(pick).find((value) => value != null)
+          ?? Object.values(jsonObj).find((value) => value != null && value !== "")
+          ?? "";
+      },
+      setLocalized(jsonObj, value, lang) {
+        const code = this.normalize(lang || this.active());
+        let map = {};
+        if (jsonObj && typeof jsonObj === "object" && !Array.isArray(jsonObj)) {
+          map = { ...jsonObj };
+        } else if (typeof jsonObj === "string" && jsonObj.trim()) {
+          map[this.FALLBACK_LANG] = jsonObj;
+        }
+        map[code] = value;
+        return map;
+      },
+      t(key, vars = {}) {
+        const table = state.config?.strings || {};
+        let text = table[key] || key;
+        Object.entries(vars).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
+        return text;
+      },
+      applyToDom() {
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          const key = el.getAttribute("data-i18n");
+          if (key) el.textContent = this.t(key);
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+          const key = el.getAttribute("data-i18n-placeholder");
+          if (key) el.setAttribute("placeholder", this.t(key));
+        });
+        document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+          const key = el.getAttribute("data-i18n-aria");
+          if (key) el.setAttribute("aria-label", this.t(key));
+        });
+        const next = this.active();
+        document.querySelectorAll("[data-setlang]").forEach((btn) => {
+          const on = btn.dataset.setlang === next;
+          btn.classList.toggle("bg-espresso", on);
+          btn.classList.toggle("text-cream", on);
+          btn.classList.toggle("shadow", on);
+          btn.classList.toggle("text-muted", !on);
+        });
+      },
+      setLanguage(lang) {
+        const next = this.normalize(lang);
+        localStorage.setItem(LANG_KEY, next);
+        document.documentElement.lang = next;
+        const strings = state.i18n?.[next] || state.config?.strings || {};
+        state.config = { ...(state.config || {}), lang: next, strings };
+        refreshFlavorCatalog(next);
+        this.applyToDom();
+        if (radarChart) {
+          radarChart.data.labels = [this.t("acidity"), this.t("sweetness"), this.t("body"), this.t("aftertaste")];
+          if (radarChart.data.datasets[0]) radarChart.data.datasets[0].label = this.t("radar_you");
+          if (radarChart.data.datasets[1]) radarChart.data.datasets[1].label = this.t("radar_community");
+          radarChart.update("none");
+        }
+        if (worldMap) {
+          worldMap.eachLayer((layer) => {
+            const popup = layer.getPopup?.();
+            const el = popup?.getElement?.();
+            el?.querySelectorAll("[data-i18n]").forEach((node) => {
+              const key = node.getAttribute("data-i18n");
+              if (key) node.textContent = this.t(key);
+            });
+          });
+        }
+        render();
+      },
+      renderLanguageSwitcher() {
+        const current = this.active();
+        const langs = this.supported();
+        const labels = this.labels();
+        const buttons = langs.map((code) => {
+          const on = current === code;
+          return `<button type="button" data-setlang="${code}" class="min-h-12 flex-1 rounded-xl px-2 text-sm font-bold tracking-wide ${on ? "bg-espresso text-cream shadow" : "text-muted"}">${esc(labels[code] || code.toUpperCase())}</button>`;
+        }).join("");
+        return `<div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+          <p class="mb-3 text-sm font-semibold" data-i18n="language">${this.t("language")}</p>
+          <div class="flex flex-wrap gap-1.5 rounded-2xl bg-foam p-1.5" role="group" aria-label="${esc(this.t("language"))}">
+            ${buttons}
+          </div>
+        </div>`;
+      },
+    };
     const state = {
       config: null,
       i18n: { da: {}, en: {} },
@@ -132,14 +268,11 @@
     const esc = (value) => String(value ?? "")
       .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;");
-    const t = (key, vars = {}) => {
-      const table = state.config?.strings || {};
-      let text = table[key] || key;
-      Object.entries(vars).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
-      return text;
-    };
-    const normalizeLang = (lang) => (String(lang || "da").toLowerCase() === "en" ? "en" : "da");
-    const activeLang = () => normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
+    const t = (key, vars = {}) => i18nManager.t(key, vars);
+    const getLocalized = (jsonObj, lang, fallback) => i18nManager.getLocalized(jsonObj, lang, fallback);
+    const normalizeLang = (lang) => i18nManager.normalize(lang);
+    const activeLang = () => i18nManager.active();
+    const applyLanguage = (lang) => i18nManager.setLanguage(lang);
     const isAdmin = () => !!state.user?.is_admin;
 
     function localizeSuitable(tag) {
@@ -191,50 +324,6 @@
       if (notes.length) state.config.flavor_notes = notes;
     }
 
-    function applyLanguage(lang) {
-      const next = normalizeLang(lang);
-      localStorage.setItem(LANG_KEY, next);
-      document.documentElement.lang = next;
-      const strings = state.i18n?.[next] || state.config?.strings || {};
-      state.config = { ...(state.config || {}), lang: next, strings };
-      refreshFlavorCatalog(next);
-      document.querySelectorAll("[data-i18n]").forEach((el) => {
-        const key = el.getAttribute("data-i18n");
-        if (key) el.textContent = t(key);
-      });
-      document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
-        const key = el.getAttribute("data-i18n-placeholder");
-        if (key) el.setAttribute("placeholder", t(key));
-      });
-      document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
-        const key = el.getAttribute("data-i18n-aria");
-        if (key) el.setAttribute("aria-label", t(key));
-      });
-      document.querySelectorAll("[data-setlang]").forEach((btn) => {
-        const on = btn.dataset.setlang === next;
-        btn.classList.toggle("bg-espresso", on);
-        btn.classList.toggle("text-cream", on);
-        btn.classList.toggle("shadow", on);
-        btn.classList.toggle("text-muted", !on);
-      });
-      if (radarChart) {
-        radarChart.data.labels = [t("acidity"), t("sweetness"), t("body"), t("aftertaste")];
-        if (radarChart.data.datasets[0]) radarChart.data.datasets[0].label = t("radar_you");
-        if (radarChart.data.datasets[1]) radarChart.data.datasets[1].label = t("radar_community");
-        radarChart.update("none");
-      }
-      if (worldMap) {
-        worldMap.eachLayer((layer) => {
-          const popup = layer.getPopup?.();
-          const el = popup?.getElement?.();
-          el?.querySelectorAll("[data-i18n]").forEach((node) => {
-            const key = node.getAttribute("data-i18n");
-            if (key) node.textContent = t(key);
-          });
-        });
-      }
-      render();
-    }
     const token = () => localStorage.getItem(TOKEN_KEY) || "";
     const mediaSrc = (url) => {
       if (!url) return "";
@@ -286,7 +375,8 @@
       try {
         state.config = await api(`/api/config?lang=${lang}`);
         state.i18n = state.config.i18n || {};
-        if (!state.i18n.da || !state.i18n.en) {
+        const packMissing = i18nManager.supported().some((code) => !state.i18n[code]);
+        if (packMissing) {
           try { state.i18n = await api("/api/i18n"); } catch { /* keep config strings */ }
         }
         state.config.lang = lang;
@@ -294,7 +384,7 @@
         state.user = state.config.user;
         if (state.user) await loadBeans();
       } catch {
-        state.config = { strings: {}, langs: { da: "Dansk", en: "English" }, providers: {}, brew_methods: [], flavor_notes: [] };
+        state.config = { strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
       }
       document.documentElement.lang = lang;
       const params = new URLSearchParams(location.search);
@@ -371,14 +461,19 @@
       </div>`;
     }
 
+    function flavorList(tags) {
+      const localized = getLocalized(tags, activeLang());
+      return Array.isArray(localized) ? localized : [];
+    }
+
     function pills(tags) {
-      return (tags || []).map((tag) =>
+      return flavorList(tags).map((tag) =>
         `<span class="rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-medium text-espresso">${esc(localizeTag(tag))}</span>`
       ).join("");
     }
 
     function feedPills(tags) {
-      const clean = (tags || [])
+      const clean = flavorList(tags)
         .map((tag) => localizeTag(tag))
         .filter((tag) => tag && !/[.!?;:]/.test(tag) && tag.split(/\s+/).length <= 2)
         .slice(0, 3);
@@ -388,12 +483,13 @@
     }
 
     function brewSource(source) {
-      const rec = source?.brew_recommendation || {};
+      const rec = getLocalized(source?.brew_recommendation, activeLang()) || {};
+      const flat = rec && typeof rec === "object" && !Array.isArray(rec) ? rec : {};
       return {
-        method: rec.recommended_method || source?.recommended_method || "",
-        grind: rec.grind_size || source?.grind_size || "",
-        temp: rec.water_temp || source?.water_temp || "",
-        ratio: rec.brew_ratio || source?.brew_ratio || "",
+        method: flat.recommended_method || source?.recommended_method || "",
+        grind: flat.grind_size || source?.grind_size || "",
+        temp: flat.water_temp || source?.water_temp || "",
+        ratio: flat.brew_ratio || source?.brew_ratio || "",
       };
     }
 
@@ -461,10 +557,11 @@
     }
 
     function storyBlock(story) {
-      if (!story) return "";
+      const text = getLocalized(story, activeLang());
+      if (!text) return "";
       return `<details class="rounded-xl bg-foam px-3 py-2">
         <summary class="cursor-pointer text-sm font-semibold" data-i18n="story_expand">${t("story_expand")}</summary>
-        <p class="mt-2 text-sm leading-6 text-espresso/80">${esc(story)}</p>
+        <p class="mt-2 text-sm leading-6 text-espresso/80">${esc(text)}</p>
       </details>`;
     }
 
@@ -770,7 +867,7 @@
         <select name="process" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.processes, scan.process)}</select>
         <select name="roast_level" class="min-h-11 w-full rounded-lg border border-latte bg-white px-3">${options(state.config.roast_levels, scan.roast_level)}</select>
         <textarea name="roaster_notes" class="min-h-20 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("add_roaster_notes"))}">${esc(scan.roaster_notes || "")}</textarea>
-        <textarea name="story" class="min-h-24 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("bean_story"))}">${esc(scan.story || "")}</textarea>
+        <textarea name="story" class="min-h-24 w-full rounded-lg border border-latte bg-white px-3 py-2" placeholder="${esc(t("bean_story"))}">${esc(getLocalized(scan.story) || "")}</textarea>
       </form>`;
     }
 
@@ -820,17 +917,7 @@
     }
 
     function langToggle() {
-      const current = normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY));
-      const btn = (code, label) => {
-        const on = current === code;
-        return `<button type="button" data-setlang="${code}" class="min-h-12 rounded-xl text-sm font-bold tracking-wide ${on ? "bg-espresso text-cream shadow" : "text-muted"}">${label}</button>`;
-      };
-      return `<div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
-        <p class="mb-3 text-sm font-semibold" data-i18n="language">${t("language")}</p>
-        <div class="grid grid-cols-2 gap-1.5 rounded-2xl bg-foam p-1.5" role="group" aria-label="${esc(t("language"))}">
-          ${btn("da", "Dansk")}${btn("en", "English")}
-        </div>
-      </div>`;
+      return i18nManager.renderLanguageSwitcher();
     }
 
     function profileView() {
@@ -1062,14 +1149,14 @@
         process: source.process,
         roast_level: source.roast_level,
         roaster_notes: source.roaster_notes,
-        flavor_tags: source.flavor_tags || [],
+        flavor_tags: source.flavor_tags || {},
         suitable_for: source.suitable_for || [],
-        story: source.story,
+        story: source.story || {},
         image_url: source.image_url,
-        recommended_method: source.recommended_method || source.brew_recommendation?.recommended_method || "",
-        grind_size: source.grind_size || source.brew_recommendation?.grind_size || "",
-        water_temp: source.water_temp || source.brew_recommendation?.water_temp || "",
-        brew_ratio: source.brew_ratio || source.brew_recommendation?.brew_ratio || "",
+        recommended_method: source.recommended_method || brewSource(source).method || "",
+        grind_size: source.grind_size || brewSource(source).grind || "",
+        water_temp: source.water_temp || brewSource(source).temp || "",
+        brew_ratio: source.brew_ratio || brewSource(source).ratio || "",
         brew_recommendation: source.brew_recommendation || {},
         roast_date: source.roast_date || "",
         altitude: source.altitude || "",
@@ -1170,7 +1257,7 @@
         process: data.get("process"),
         roast_level: data.get("roast_level"),
         roaster_notes: data.get("roaster_notes"),
-        story: data.get("story"),
+        story: i18nManager.setLocalized(base.story, data.get("story")),
       };
     }
 

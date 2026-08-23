@@ -19,6 +19,7 @@ from db import (
     export_ratings,
     find_similar_beans,
     get_flavor_profile,
+    get_localized,
     init_db,
     insert_bean,
     insert_rating,
@@ -976,7 +977,10 @@ def apply_pending_ui() -> None:
 def apply_ocr_form(parsed: dict) -> None:
     """Write Gemini/OCR fields into widget keys so inputs update on the next rerun."""
     parsed = normalize_scan_fields(parsed)
-    flavors = [tag for tag in (parsed.get("flavor_notes") or []) if tag in FLAVOR_NOTES]
+    raw_flavors = get_localized(parsed.get("flavor_tags"), "da") or parsed.get("flavor_notes") or []
+    if not isinstance(raw_flavors, list):
+        raw_flavors = []
+    flavors = [tag for tag in raw_flavors if tag in FLAVOR_NOTES]
     process = parsed.get("process") or ""
     roast = parsed.get("roast_level") or ""
     if process not in PROCESSES:
@@ -992,7 +996,9 @@ def apply_ocr_form(parsed: dict) -> None:
     st.session_state.add_roast = roast
     st.session_state.add_notes = parsed.get("official_notes") or parsed.get("roaster_notes") or ""
     st.session_state.add_flavors = flavors
-    st.session_state.add_story = parsed.get("story") or ""
+    st.session_state.add_story = get_localized(parsed.get("story"), "da") or ""
+    if not isinstance(st.session_state.add_story, str):
+        st.session_state.add_story = ""
     if parsed.get("image_url"):
         st.session_state.pending_image_url = parsed["image_url"]
     filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
@@ -1049,9 +1055,9 @@ def process_scan_image(image_file) -> None:
     if parsed.get("scan_action") == "rate" and match:
         if not (match.get("image_url") or "").strip():
             update_bean_image(match["id"], image_url)
-        story = (parsed.get("story") or "").strip()
-        if story and not (match.get("story") or "").strip():
-            update_bean_story(match["id"], story)
+        story = get_localized(parsed.get("story"), "da") or ""
+        if isinstance(story, str) and story.strip():
+            update_bean_story(match["id"], parsed.get("story") or story)
         notes = parsed.get("roaster_notes") or ", ".join(parsed.get("flavor_notes") or [])
         st.session_state.bean_found_flash = True
         go_review(match["id"], notes=notes)
@@ -1199,9 +1205,9 @@ def bean_dialog(bean_id: int, lang: str) -> None:
         st.rerun()
 
 
-def render_bean_story(lang: str, story: str) -> None:
-    text = (story or "").strip()
-    if not text:
+def render_bean_story(lang: str, story: str | dict | None) -> None:
+    text = get_localized(story, lang)
+    if not isinstance(text, str) or not text.strip():
         return
     st.markdown(
         f'<div class="bn-story">'
