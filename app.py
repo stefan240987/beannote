@@ -372,6 +372,31 @@ def go_review(bean_id: int) -> None:
     st.session_state.pop("force_insert", None)
 
 
+def apply_ocr_form(parsed: dict) -> None:
+    """Write OCR fields into widget keys so inputs update on the next rerun."""
+    st.session_state.ocr_form = parsed
+    st.session_state.pending_similar = parsed.get("similar") or []
+    st.session_state.add_name = parsed.get("name") or ""
+    st.session_state.add_roaster = parsed.get("roaster") or ""
+    st.session_state.add_origin = parsed.get("origin") or ""
+    st.session_state.add_process = parsed.get("process") or ""
+    st.session_state.add_roast = parsed.get("roast_level") or ""
+    st.session_state.add_notes = parsed.get("roaster_notes") or ""
+    filled = bool((parsed.get("name") or "").strip() or (parsed.get("roaster") or "").strip())
+    st.session_state.ocr_flash = "scanned" if filled else "ocr_empty"
+
+
+def clear_ocr_form() -> None:
+    st.session_state.ocr_form = {}
+    st.session_state.pending_similar = None
+    st.session_state.add_name = ""
+    st.session_state.add_roaster = ""
+    st.session_state.add_origin = ""
+    st.session_state.add_process = ""
+    st.session_state.add_roast = ""
+    st.session_state.add_notes = ""
+
+
 def render_duplicate_warning(lang: str, similar: list[dict]) -> None:
     if not similar:
         return
@@ -570,36 +595,28 @@ def render_add(lang: str) -> None:
             st.error(t(lang, "ocr_missing"))
         else:
             try:
-                parsed = scan_label(uploaded.getvalue())
-                st.session_state.ocr_form = parsed
-                st.session_state.pending_similar = parsed.get("similar") or []
-                st.success(t(lang, "scanned"))
+                apply_ocr_form(scan_label(uploaded.getvalue()))
+                st.rerun()
             except Exception:
                 st.error(t(lang, "ocr_fail"))
 
+    flash = st.session_state.pop("ocr_flash", None)
+    if flash == "scanned":
+        st.success(t(lang, "scanned"))
+    elif flash == "ocr_empty":
+        st.warning(t(lang, "ocr_empty"))
+
     form = st.session_state.get("ocr_form") or {}
-    name = st.text_input(t(lang, "add_name"), value=form.get("name", ""))
-    roaster = st.text_input(t(lang, "add_roaster"), value=form.get("roaster", ""))
+    name = st.text_input(t(lang, "add_name"), key="add_name")
+    roaster = st.text_input(t(lang, "add_roaster"), key="add_roaster")
     c1, c2, c3 = st.columns(3)
-    origin = c1.text_input(t(lang, "origin"), value=form.get("origin", ""))
-    process = c2.selectbox(
-        t(lang, "add_process"),
-        [""] + PROCESSES,
-        index=(PROCESSES.index(form["process"]) + 1) if form.get("process") in PROCESSES else 0,
-    )
-    roast = c3.selectbox(
-        t(lang, "add_roast"),
-        [""] + ROAST_LEVELS,
-        index=(ROAST_LEVELS.index(form["roast_level"]) + 1) if form.get("roast_level") in ROAST_LEVELS else 0,
-    )
-    roaster_notes = st.text_area(
-        t(lang, "add_roaster_notes"),
-        value=form.get("roaster_notes", ""),
-        height=90,
-    )
-    if form.get("raw_text"):
+    origin = c1.text_input(t(lang, "origin"), key="add_origin")
+    process = c2.selectbox(t(lang, "add_process"), [""] + PROCESSES, key="add_process")
+    roast = c3.selectbox(t(lang, "add_roast"), [""] + ROAST_LEVELS, key="add_roast")
+    roaster_notes = st.text_area(t(lang, "add_roaster_notes"), key="add_notes", height=90)
+    if "raw_text" in form:
         with st.expander(t(lang, "raw_ocr")):
-            st.code(form["raw_text"])
+            st.code(form.get("raw_text") or "—")
 
     similar = st.session_state.get("pending_similar")
     if similar is None and name and roaster:
@@ -631,8 +648,7 @@ def render_add(lang: str) -> None:
             go_review(result["bean"]["id"])
             st.rerun()
         if result["status"] == "created":
-            st.session_state.ocr_form = {}
-            st.session_state.pending_similar = None
+            clear_ocr_form()
             st.toast(t(lang, "created"), icon="☕")
             go_review(result["bean"]["id"])
             st.rerun()

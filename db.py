@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 FUZZY_CUTOFF = 0.80
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()

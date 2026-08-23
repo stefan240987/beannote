@@ -73,7 +73,15 @@ def extract_text(image_bytes: bytes) -> str:
     image = Image.open(BytesIO(image_bytes))
     if image.mode not in {"L", "RGB"}:
         image = image.convert("RGB")
-    raw = pytesseract.image_to_string(image, lang="eng+dan")
+    width, height = image.size
+    shortest = min(width, height)
+    if shortest and shortest < 900:
+        scale = 900 / shortest
+        image = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+    try:
+        raw = pytesseract.image_to_string(image, lang="eng+dan")
+    except Exception:
+        raw = pytesseract.image_to_string(image, lang="eng")
     return _cleanup_ocr_text(raw)
 
 

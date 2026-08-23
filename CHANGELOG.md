@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.2] - 2026-08-23
+
+- Fix OCR scan: write parsed fields into Streamlit widget keys and rerun so the add-bean form actually fills.
+- Warn when Tesseract finds no text, always show raw OCR, and upscale small label photos.
+
 ## [1.0.1] - 2026-08-23
 
 - UI overhaul: compact elevated cards, ghost card actions, iOS-style segmented nav, and a slimmer header with embedded search.
