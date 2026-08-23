@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [5.2.0] - 2026-08-23
+
+- snapshot: v5.2.0 - integrated Gemini Grounded search for image candidates and redesigned Rate UI without radar chart
+- Gemini Vision OCR now enables Google Search grounding during the scan and returns up to 3 official packshot URLs in `image_candidates`. DuckDuckGo/Bing scrapers and `GOOGLE_SEARCH_CX` are gone; missing slots fall back to the camera snapshot without failing.
+- Rate tab replaces the Chart.js radar with a tap-friendly 5-star score, 🍋🍯☕🌿 5-dot sensory selectors, a compact 2×2 recipe card, and a live tasting-profile preview. Bean Detail history uses the same progress bars.
+
 ## [5.0.2] - 2026-08-23
 
 - snapshot: v5.0.2 - restored stable catalog-backed image candidate pipeline

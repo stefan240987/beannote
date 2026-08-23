@@ -78,6 +78,8 @@ def test_prompt_locks_name_and_lang() -> None:
         _assert_true("prompt asks for acidity_score", '"acidity_score"' in prompt)
         _assert_true("prompt asks for body_score", '"body_score"' in prompt)
         _assert_true("prompt asks for roast_level_score", '"roast_level_score"' in prompt)
+        _assert_true("prompt asks for image_candidates", '"image_candidates"' in prompt)
+        _assert_true("prompt uses Google Search grounding", "Google Search" in prompt)
         _assert_true("prompt includes da key", '"da"' in prompt)
         _assert_true("prompt includes en key", '"en"' in prompt)
         _assert_true("da flavors in map prompt", "Mørk chokolade" in prompt)
@@ -256,11 +258,18 @@ def test_bellarom_suitability_and_packshot() -> None:
     )
     _assert_eq("icon suitable_for", extracted, ["Espresso", "Filter", "Mælkedrikke"])
     _assert_true("catalog packshot", curated_packshot_url(raw["bean_name"], "Bellarom").startswith("https://"))
-    attached = attach_official_bag_image({
-        "name": raw["bean_name"],
-        "roaster": "Bellarom",
-        "product_image_urls": [],
-    })
+    import ocr as ocr_mod
+
+    original = ocr_mod._gemini_product_image_search
+    ocr_mod._gemini_product_image_search = lambda *args, **kwargs: []  # type: ignore[assignment]
+    try:
+        attached = attach_official_bag_image({
+            "name": raw["bean_name"],
+            "roaster": "Bellarom",
+            "product_image_urls": [],
+        })
+    finally:
+        ocr_mod._gemini_product_image_search = original
     attached_urls = attached.get("image_candidates") or []
     _assert_true("1-3 catalog candidates", 1 <= len(attached_urls) <= 3)
     _assert_true(
@@ -399,6 +408,9 @@ def test_intensity_scores_and_support() -> None:
     _assert_eq("scan roast_level_score", scanned.get("roast_level_score"), 1)
     _assert_eq("da acidity bar", t("da", "intensity_acidity"), "🍋 Syre")
     _assert_eq("en acidity bar", t("en", "intensity_acidity"), "🍋 Acidity")
+    _assert_eq("da sense sweetness", t("da", "sense_sweetness"), "🍯 Sødme")
+    _assert_eq("en recipe brew", t("en", "recipe_brew"), "☕ Brew method")
+    _assert_eq("da sensory preview", t("da", "sensory_preview"), "Din smagsprofil")
     _assert_eq("da support", t("da", "support_app"), "☕ Støt appen")
     _assert_eq("en french press", brew_method_label("French Press", "en"), "French Press")
     _assert_eq("da french press", brew_method_label("French Press", "da"), "Stempelkande")
@@ -409,6 +421,42 @@ def test_intensity_scores_and_support() -> None:
         _assert_eq("local buymeacoffee", cfg["buymeacoffee_url"], LOCAL_SUPPORT_BUYMEACOFFEE)
         _assert_true("local support on", cfg["support_enabled"])
     print("OK  intensity scores, recipe i18n, and local support fallbacks")
+
+
+def test_grounded_image_candidates() -> None:
+    from types import SimpleNamespace
+
+    from ocr import _extract_grounding_urls, _with_grounded_images, pad_image_candidates
+
+    padded = pad_image_candidates(
+        ["https://cdn.shopify.com/a.jpg"],
+        "/media/scan.jpg",
+    )
+    _assert_eq("pad snapshot when short", padded, ["https://cdn.shopify.com/a.jpg", "/media/scan.jpg"])
+    _assert_eq("pad empty uses snapshot", pad_image_candidates([], "/media/own.jpg"), ["/media/own.jpg"])
+    _assert_eq(
+        "pad does not duplicate snapshot",
+        pad_image_candidates(["/media/own.jpg"], "/media/own.jpg"),
+        ["/media/own.jpg"],
+    )
+
+    response = SimpleNamespace(
+        text='{"image_candidates":["https://cdn.shopify.com/grounded.jpg"]}',
+        candidates=[
+            SimpleNamespace(
+                grounding_metadata=SimpleNamespace(
+                    grounding_chunks=[
+                        SimpleNamespace(web=SimpleNamespace(uri="https://cdn.shopify.com/chunk.png"))
+                    ]
+                )
+            )
+        ],
+    )
+    urls = _extract_grounding_urls(response)
+    _assert_true("grounding urls", "https://cdn.shopify.com/grounded.jpg" in urls or "https://cdn.shopify.com/chunk.png" in urls)
+    merged = _with_grounded_images({"product_image_url": "https://cdn.shopify.com/hint.webp"}, response)
+    _assert_true("merged candidates", 1 <= len(merged.get("image_candidates") or []) <= 3)
+    print("OK  Gemini grounded image_candidates merge and camera-photo pad")
 
 
 def main() -> int:
@@ -422,6 +470,7 @@ def main() -> int:
         test_refine_and_flavor_i18n()
         test_bellarom_suitability_and_packshot()
         test_intensity_scores_and_support()
+        test_grounded_image_candidates()
         test_label_extraction("da")
         test_label_extraction("en")
         test_bellarom_label_extraction()

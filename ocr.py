@@ -27,8 +27,8 @@ from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 from image_search import (
     MAX_IMAGE_CANDIDATES,
     collect_image_urls,
+    curated_packshot_urls,
     fetch_official_image_bytes,
-    find_product_images,
     is_public_image_url,
     sanitize_image_url,
 )
@@ -1105,11 +1105,16 @@ def _gemini_prompt(lang: str = "da") -> str:
         '- "roaster_url": official https homepage of the roaster if printed on the bag '
         "(www.example.com or https://…) or clearly known. Homepage only — never a product "
         "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
-        '- "product_image_urls": array of up to 3 real public https URLs of official '
-        "high-resolution studio packshots / product-container graphics from the roaster "
-        "shop or CDN (for example Shopify, Cloudinary, official shop). "
-        '- "product_image_url": first official packshot URL, or "" if unknown. '
-        "Never invent a URL and never return a blurry phone photo."
+        "WEB SEARCH / GROUNDING: After reading the bag, use the Google Search tool to find "
+        "official high-resolution studio packshots of the detected roaster and bean_name. "
+        "Search the roaster shop and queries such as the product name plus coffee bag packshot. "
+        "Return only real https image URLs discovered via that search — never invent a URL.\n"
+        '- "image_candidates": array of up to 3 distinct public https image URLs '
+        "(jpg/png/webp) of official studio packshots / product-container graphics "
+        "from the roaster shop or CDN (Shopify, Cloudinary, official shop). "
+        "Fewer than 3 is OK. Never return a blurry phone photo or marketplace screenshot.\n"
+        '- "product_image_urls": same list as image_candidates (legacy alias).\n'
+        '- "product_image_url": first image_candidates URL, or "" if unknown.'
     )
 
 
@@ -1222,30 +1227,152 @@ def _transient_gemini_error(exc: Exception) -> bool:
     return any(token in text for token in ("503", "unavailable", "high demand", "429", "resource_exhausted"))
 
 
+def _tools_unsupported(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        token in text
+        for token in (
+            "invalid_argument",
+            "response_mime_type",
+            "google_search",
+            "search tool",
+            "tools are not supported",
+            "tool is not supported",
+            "function calling is not enabled",
+        )
+    )
+
+
+def _google_search_tools(types: Any) -> list[Any]:
+    """Gemini built-in Search Grounding — no Programmable Search / CX keys."""
+    for factory in (
+        lambda: types.Tool(google_search=types.GoogleSearch()),
+        lambda: types.Tool(google_search_retrieval=types.GoogleSearchRetrieval()),
+    ):
+        try:
+            tool = factory()
+        except Exception:
+            continue
+        if tool is not None:
+            return [tool]
+    return []
+
+
+def _legacy_google_search_tools() -> list[Any] | None:
+    return [{"google_search": {}}]
+
+
+def _iter_grounding_chunks(response: Any) -> list[Any]:
+    chunks: list[Any] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        meta = getattr(candidate, "grounding_metadata", None)
+        if meta is None and isinstance(candidate, dict):
+            meta = candidate.get("grounding_metadata")
+        if not meta:
+            continue
+        found = getattr(meta, "grounding_chunks", None)
+        if found is None and isinstance(meta, dict):
+            found = meta.get("grounding_chunks")
+        if found:
+            chunks.extend(list(found))
+    return chunks
+
+
+def _extract_grounding_urls(response: Any) -> list[str]:
+    """Collect public image URLs from Search Grounding metadata and response text."""
+    if response is None:
+        return []
+    raw: list[Any] = []
+    for chunk in _iter_grounding_chunks(response):
+        web = getattr(chunk, "web", None)
+        if web is None and isinstance(chunk, dict):
+            web = chunk.get("web") or chunk.get("retrieved_context")
+        uri = getattr(web, "uri", None) if web is not None else None
+        if uri is None and isinstance(web, dict):
+            uri = web.get("uri") or web.get("url")
+        if uri:
+            raw.append(uri)
+        image = getattr(chunk, "image", None)
+        if image is None and isinstance(chunk, dict):
+            image = chunk.get("image")
+        image_uri = getattr(image, "uri", None) if image is not None else None
+        if image_uri is None and isinstance(image, dict):
+            image_uri = image.get("uri") or image.get("url")
+        if image_uri:
+            raw.append(image_uri)
+    text = _response_text(response)
+    if text:
+        raw.extend(re.findall(r"https://[^\s\"'<>\\]+", text))
+    return collect_image_urls(raw)
+
+
+def _with_grounded_images(data: dict[str, Any], response: Any | None = None) -> dict[str, Any]:
+    out = dict(data or {})
+    urls = collect_image_urls(
+        out.get("image_candidates"),
+        out.get("product_image_urls"),
+        out.get("product_image_url"),
+        out.get("official_image_url"),
+        _extract_grounding_urls(response) if response is not None else [],
+    )
+    out["image_candidates"] = urls[:MAX_IMAGE_CANDIDATES]
+    if urls:
+        out["product_image_url"] = urls[0]
+        out["product_image_urls"] = urls[:MAX_IMAGE_CANDIDATES]
+        out.setdefault("official_image_url", urls[0])
+    return out
+
+
+def pad_image_candidates(candidates: list[str] | None, snapshot_url: str = "") -> list[str]:
+    """Keep unique studio URLs, then fill remaining slots with the camera snapshot."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in list(candidates or []):
+        clean = str(url or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+        if len(out) >= MAX_IMAGE_CANDIDATES:
+            return out
+    snap = str(snapshot_url or "").strip()
+    if snap and snap not in seen and len(out) < MAX_IMAGE_CANDIDATES:
+        out.append(snap)
+    return out
+
+
 def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=key)
     image_part = _gemini_image_part(image)
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json",
-        temperature=0.0,
-    )
+    tools = _google_search_tools(types)
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
+        use_tools = list(tools)
         for attempt in range(3):
+            config_kwargs: dict[str, Any] = {"temperature": 0.0}
+            if use_tools:
+                config_kwargs["tools"] = use_tools
+            else:
+                config_kwargs["response_mime_type"] = "application/json"
             try:
                 response = client.models.generate_content(
                     model=model_name,
                     contents=[prompt, image_part],
-                    config=config,
+                    config=types.GenerateContentConfig(**config_kwargs),
                 )
-                return _parse_gemini_json(_response_text(response))
+                data = _parse_gemini_json(_response_text(response))
+                return _with_grounded_images(data, response)
             except Exception as exc:
                 last_error = exc
-                if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                message = str(exc)
+                if "404" in message or "NOT_FOUND" in message:
                     break
+                if use_tools and _tools_unsupported(exc):
+                    use_tools = []
+                    continue
                 if _transient_gemini_error(exc) and attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
@@ -1262,16 +1389,28 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     image_blob = {"mime_type": "image/jpeg", "data": _image_jpeg_bytes(image)}
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                [prompt, image_blob],
-                generation_config={"response_mime_type": "application/json", "temperature": 0},
-            )
-            return _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
-        except Exception as exc:
-            last_error = exc
-            continue
+        for tools in (_legacy_google_search_tools(), None):
+            try:
+                kwargs: dict[str, Any] = {}
+                generation_config: dict[str, Any] = {"temperature": 0}
+                if tools:
+                    kwargs["tools"] = tools
+                else:
+                    generation_config["response_mime_type"] = "application/json"
+                model = genai.GenerativeModel(model_name, **kwargs)
+                response = model.generate_content(
+                    [prompt, image_blob],
+                    generation_config=generation_config,
+                )
+                data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
+                return _with_grounded_images(data, response)
+            except Exception as exc:
+                last_error = exc
+                if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                    break
+                if tools and _tools_unsupported(exc):
+                    continue
+                break
     if last_error:
         raise last_error
     return None
@@ -1431,42 +1570,43 @@ def _gemini_product_image_search(name: str, roaster: str, key: str) -> list[str]
     from google.genai import types
 
     prompt = (
-        "Find official high-resolution studio packshots of this coffee bag. "
+        "Use Google Search to find official high-resolution studio packshots of this coffee bag. "
         f'Roaster: "{roaster}". Product name: "{name}". '
         "Prefer clean retailer/roaster container graphics (Shopify, Cloudinary, "
         "official shop). Return up to 3 distinct product shots of the same bag or "
         "the roaster's official studio photography for that product line. "
         "Never return a blurry phone snapshot or marketplace screenshot. "
         "Return ONE JSON object only with keys "
-        '{"image_urls":["https://..."],"source":"..."}. '
-        "Each image_urls item must be a direct https image (jpg/png/webp), not an HTML page. "
-        'If no real official image exists, return {"image_urls":[],"source":""}. '
+        '{"image_candidates":["https://..."],"image_urls":["https://..."],"source":"..."}. '
+        "Each URL must be a direct https image (jpg/png/webp), not an HTML page. "
+        'If no real official image exists, return {"image_candidates":[],"image_urls":[],"source":""}. '
         "Do not invent URLs."
     )
     client = genai.Client(api_key=key)
-    tools: list[Any] = []
-    try:
-        tools = [types.Tool(google_search=types.GoogleSearch())]
-    except Exception:
-        tools = []
+    tools = _google_search_tools(types)
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
+        use_tools = list(tools)
         config_kwargs: dict[str, Any] = {"temperature": 0.1}
-        if tools:
-            config_kwargs["tools"] = tools
+        if use_tools:
+            config_kwargs["tools"] = use_tools
         try:
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(**config_kwargs),
             )
-            data = _parse_gemini_json(_response_text(response))
-            return _collect_image_urls(data)
+            try:
+                data = _parse_gemini_json(_response_text(response))
+            except (ValueError, json.JSONDecodeError):
+                data = {}
+            merged = _with_grounded_images(data if isinstance(data, dict) else {}, response)
+            return _collect_image_urls(merged.get("image_candidates"), merged)
         except Exception as exc:
             last_error = exc
             if "404" in str(exc) or "NOT_FOUND" in str(exc):
                 continue
-            if tools:
+            if use_tools and _tools_unsupported(exc):
                 tools = []
                 continue
             break
@@ -1480,20 +1620,19 @@ def find_official_bag_images(
     roaster: str,
     hint_urls: str | list[str] | None = None,
 ) -> list[str]:
-    """Return up to 3 official high-res product URLs for the scanned bag."""
-    collected = find_product_images(name, roaster, hint_urls)
-    if collected:
-        return collected[:MAX_IMAGE_CANDIDATES]
-    if not (name or "").strip() and not (roaster or "").strip():
-        return collected
-    key = get_gemini_api_key()
-    if not key:
-        return collected
-    try:
-        found = _gemini_product_image_search(name, roaster, key)
-    except Exception:
-        found = []
-    return _collect_image_urls(collected, found)[:MAX_IMAGE_CANDIDATES]
+    """Return up to 3 official high-res URLs from Gemini Search Grounding, then catalog."""
+    collected = _collect_image_urls(hint_urls)
+    if not collected and ((name or "").strip() or (roaster or "").strip()):
+        key = get_gemini_api_key()
+        if key:
+            try:
+                found = _gemini_product_image_search(name, roaster, key)
+            except Exception:
+                found = []
+            collected = _collect_image_urls(collected, found)
+    if len(collected) < MAX_IMAGE_CANDIDATES:
+        collected = _collect_image_urls(collected, curated_packshot_urls(name, roaster))
+    return collected[:MAX_IMAGE_CANDIDATES]
 
 
 def find_official_bag_image(name: str, roaster: str, hint_url: str = "") -> str:

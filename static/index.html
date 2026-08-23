@@ -33,7 +33,6 @@
       },
     };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
@@ -111,6 +110,33 @@
       background: #e8d8c8;
     }
     .flavor-dot.on { background: #b85c38; }
+    .star-btn {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+      font-size: 2.05rem;
+      line-height: 1;
+      color: #e8d8c8;
+      background: transparent;
+    }
+    .star-btn.star-full { color: #b85c38; }
+    .star-btn.star-half {
+      background: linear-gradient(90deg, #b85c38 50%, #e8d8c8 50%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+    .sense-dot {
+      width: 1.85rem;
+      height: 1.85rem;
+      border-radius: 999px;
+      border: 2px solid #e8d8c8;
+      background: #fff;
+    }
+    .sense-dot.on {
+      background: #b85c38;
+      border-color: #b85c38;
+    }
     .bean-card-photo {
       height: 220px;
       width: 100%;
@@ -257,12 +283,6 @@
         state.config = { ...(state.config || {}), lang: next, strings };
         refreshFlavorCatalog(next);
         this.applyToDom();
-        if (radarChart) {
-          radarChart.data.labels = [this.t("acidity"), this.t("sweetness"), this.t("body"), this.t("aftertaste")];
-          if (radarChart.data.datasets[0]) radarChart.data.datasets[0].label = this.t("radar_you");
-          if (radarChart.data.datasets[1]) radarChart.data.datasets[1].label = this.t("radar_community");
-          radarChart.update("none");
-        }
         if (worldMap) {
           worldMap.eachLayer((layer) => {
             const popup = layer.getPopup?.();
@@ -313,10 +333,9 @@
       supportOpen: false,
       rate: {
         brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
-        notes: "", grind_setting: "", coffee_grams: "", water_grams: "", brew_time: "",
+        notes: "", grind_setting: "", coffee_grams: "", water_grams: "",         brew_time: "",
       },
     };
-    let radarChart = null;
     let originMap = null;
     let worldMap = null;
 
@@ -477,10 +496,21 @@
       render();
     }
 
-    function halfSteps(from = 0.5, to = 5) {
-      const out = [];
-      for (let n = from; n <= to + 0.01; n += 0.5) out.push(Number(n.toFixed(1)));
-      return out;
+    function clampHalf(value, min = 0.5, max = 5) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return min;
+      return Math.max(min, Math.min(max, Math.round(n * 2) / 2));
+    }
+
+    function clampDot(value) {
+      const n = Math.round(Number(value) || 0);
+      return Math.max(1, Math.min(5, n));
+    }
+
+    function starFill(score, n) {
+      if (score >= n) return "full";
+      if (score >= n - 0.5) return "half";
+      return "empty";
     }
 
     function bagFallback(heightClass = "h-[180px]") {
@@ -628,14 +658,104 @@
       return `<div class="grid gap-2 ${brew && story ? "sm:grid-cols-2" : ""}">${brew}${story}</div>`;
     }
 
-    function slider(id, label, help, value) {
-      return `<label class="block">
-        <div class="mb-1 flex items-center justify-between text-sm font-medium">
-          <span>${esc(label)}</span><span class="text-terracotta">${value.toFixed(1)}</span>
+    function progressRow(labelKey, score) {
+      const n = Number(score);
+      const value = Number.isFinite(n) ? Math.max(0, Math.min(5, n)) : 0;
+      const pct = (value / 5) * 100;
+      const rounded = Math.round(value);
+      const dots = [1, 2, 3, 4, 5].map((i) =>
+        `<span class="flavor-dot${i <= rounded ? " on" : ""}" aria-hidden="true"></span>`
+      ).join("");
+      return `<div>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <p class="text-sm font-semibold" data-i18n="${labelKey}">${esc(t(labelKey))}</p>
+          <p class="text-xs font-semibold tabular-nums text-terracotta">${value.toFixed(1)}/5</p>
         </div>
-        <input id="${id}" class="slider w-full" type="range" min="0.5" max="5" step="0.5" value="${value}">
-        <p class="mt-1 text-xs text-muted">${esc(help)}</p>
-      </label>`;
+        <div class="flavor-track" role="meter" aria-valuemin="0" aria-valuemax="5" aria-valuenow="${value.toFixed(1)}" aria-label="${esc(t(labelKey))}">
+          <div class="flavor-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="mt-1.5 flex items-center gap-1.5">${dots}</div>
+      </div>`;
+    }
+
+    function sensoryStrip(scores) {
+      if (!scores) return "";
+      return `<div class="mt-2 space-y-2">
+        ${progressRow("sense_acidity", scores.acidity)}
+        ${progressRow("sense_sweetness", scores.sweetness)}
+        ${progressRow("sense_body", scores.body)}
+        ${progressRow("sense_aftertaste", scores.aftertaste)}
+      </div>`;
+    }
+
+    function starControl(value) {
+      const score = clampHalf(value);
+      const stars = [1, 2, 3, 4, 5].map((n) =>
+        `<button type="button" data-star="${n}" class="star-btn star-${starFill(score, n)}" aria-label="${n}">★</button>`
+      ).join("");
+      return `<div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-sm font-semibold" data-i18n="rating">${esc(t("rating"))}</p>
+          <p id="rating-score" class="text-lg font-bold tabular-nums text-terracotta">${esc(t("rating_score", { score: score.toFixed(1) }))}</p>
+        </div>
+        <div id="star-row" class="mt-1 flex justify-center gap-0.5" role="slider" aria-valuemin="0.5" aria-valuemax="5" aria-valuenow="${score}">${stars}</div>
+      </div>`;
+    }
+
+    function sensoryDotRow(id, key, value) {
+      const score = clampDot(value);
+      const dots = [1, 2, 3, 4, 5].map((n) =>
+        `<button type="button" data-sense="${id}" data-value="${n}" class="sense-dot${n <= score ? " on" : ""}" aria-label="${n}"></button>`
+      ).join("");
+      return `<div class="flex items-center justify-between gap-3">
+        <p class="min-w-[6.5rem] shrink-0 text-sm font-semibold" data-i18n="${key}">${esc(t(key))}</p>
+        <div class="flex items-center gap-2">${dots}</div>
+      </div>`;
+    }
+
+    function sensorySelectors() {
+      return `<div class="space-y-3 rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-latte">
+        ${sensoryDotRow("acidity", "sense_acidity", state.rate.acidity)}
+        ${sensoryDotRow("sweetness", "sense_sweetness", state.rate.sweetness)}
+        ${sensoryDotRow("body", "sense_body", state.rate.body)}
+        ${sensoryDotRow("aftertaste", "sense_aftertaste", state.rate.aftertaste)}
+      </div>`;
+    }
+
+    function liveSensoryCard() {
+      const r = state.rate;
+      return `<section id="sensory-preview" class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-sm font-semibold" data-i18n="sensory_preview">${esc(t("sensory_preview"))}</p>
+          <p class="text-sm font-bold text-amber-600">★ ${clampHalf(r.rating).toFixed(1)}</p>
+        </div>
+        ${sensoryStrip(r)}
+      </section>`;
+    }
+
+    function syncRateUi() {
+      const score = clampHalf(state.rate.rating);
+      const scoreEl = $("#rating-score");
+      if (scoreEl) scoreEl.textContent = t("rating_score", { score: score.toFixed(1) });
+      const row = $("#star-row");
+      if (row) row.setAttribute("aria-valuenow", String(score));
+      document.querySelectorAll("[data-star]").forEach((btn) => {
+        const n = Number(btn.dataset.star);
+        btn.classList.remove("star-full", "star-half", "star-empty");
+        btn.classList.add(`star-${starFill(score, n)}`);
+      });
+      ["acidity", "sweetness", "body", "aftertaste"].forEach((key) => {
+        const value = clampDot(state.rate[key]);
+        document.querySelectorAll(`[data-sense="${key}"]`).forEach((btn) => {
+          btn.classList.toggle("on", Number(btn.dataset.value) <= value);
+        });
+      });
+      const preview = $("#sensory-preview");
+      if (preview) {
+        const wrap = document.createElement("div");
+        wrap.innerHTML = liveSensoryCard();
+        preview.replaceWith(wrap.firstElementChild);
+      }
     }
 
     function authView() {
@@ -872,6 +992,7 @@
             ${method ? `<p class="mt-1 text-sm font-semibold">${esc(method)}</p>` : ""}
             ${meta.length ? `<ul class="mt-2 space-y-1 text-xs text-espresso/80">${meta.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
             ${notes ? `<p class="mt-2 rounded-xl bg-foam px-2.5 py-2 text-sm leading-6 text-espresso/80">💬 ${esc(notes)}</p>` : ""}
+            ${sensoryStrip(row)}
           </article>`;
         }).join("")}
       </section>`;
@@ -939,12 +1060,7 @@
             <section>
               ${originMapBox(bean)}
             </section>
-            <section>
-              <p class="text-sm font-semibold" data-i18n="community_chart">${t("community_chart")}</p>
-              <div class="relative mx-auto my-3 h-64 w-full">
-                <canvas id="radar"></canvas>
-              </div>
-            </section>
+            ${communityBars(profile)}
             ${tastingHistory(profile.history)}
             ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
             ${editor}
@@ -953,6 +1069,17 @@
           </div>
         </article>
       </div>`;
+    }
+
+    function communityBars(profile) {
+      const community = profile?.community;
+      if (!community) return "";
+      const keys = ["acidity", "sweetness", "body", "aftertaste"];
+      if (!keys.some((key) => Number(community[key]) > 0)) return "";
+      return `<section class="space-y-3 rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
+        <p class="text-sm font-semibold" data-i18n="community_chart">${esc(t("community_chart"))}</p>
+        ${sensoryStrip(community)}
+      </section>`;
     }
 
     function scanView() {
@@ -1076,44 +1203,49 @@
       const beans = state.beans.map((bean) =>
         `<option value="${bean.id}" ${String(bean.id) === String(state.selectedId) ? "selected" : ""}>${esc(bean.name)} — ${esc(bean.roaster)}</option>`
       ).join("");
+      const methods = (state.config?.brew_methods || []).map((m) =>
+        `<option value="${esc(m)}" ${m === state.rate.brew_method ? "selected" : ""}>${esc(localizeBrewMethod(m))}</option>`
+      ).join("");
       return `<section class="space-y-4 px-4 pb-28 pt-4">
         <label class="block text-sm font-medium"><span data-i18n="select_bean">${t("select_bean")}</span>
           <select id="rate-bean" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${beans}</select>
         </label>
-        <label class="block text-sm font-medium"><span data-i18n="brew_method">${t("brew_method")}</span>
-          <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${(state.config?.brew_methods || []).map((m) =>
-            `<option value="${esc(m)}" ${m === state.rate.brew_method ? "selected" : ""}>${esc(localizeBrewMethod(m))}</option>`
-          ).join("")}</select>
-        </label>
-        <fieldset class="space-y-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+        ${starControl(state.rate.rating)}
+        ${sensorySelectors()}
+        <fieldset class="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
           <legend class="px-1 text-sm font-semibold" data-i18n="my_recipe">${t("my_recipe")}</legend>
-          <p class="text-xs text-muted" data-i18n="recipe_help">${t("recipe_help")}</p>
-          <label class="block text-sm font-medium">${t("grind_setting")}
-            <input id="grind_setting" value="${esc(state.rate.grind_setting || "")}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("grind_setting_ph"))}">
-          </label>
           <div class="grid grid-cols-2 gap-2">
-            <label class="block text-sm font-medium">${t("coffee_grams")}
-              <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("coffee_grams_ph"))}">
+            <label class="block text-xs font-semibold">
+              <span data-i18n="recipe_brew">${t("recipe_brew")}</span>
+              <select id="brew" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm">${methods}</select>
             </label>
-            <label class="block text-sm font-medium">${t("water_grams")}
-              <input id="water_grams" type="number" inputmode="decimal" step="1" min="0" value="${esc(state.rate.water_grams)}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("water_grams_ph"))}">
+            <label class="block text-xs font-semibold">
+              <span data-i18n="recipe_grind">${t("recipe_grind")}</span>
+              <input id="grind_setting" value="${esc(state.rate.grind_setting || "")}" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-3 text-sm" placeholder="${esc(t("grind_setting_ph"))}">
+            </label>
+            <label class="col-span-2 block text-xs font-semibold">
+              <span data-i18n="recipe_dose">${t("recipe_dose")}</span>
+              <div class="mt-1 grid grid-cols-2 gap-2">
+                <div class="relative">
+                  <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
+                  <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
+                </div>
+                <div class="relative">
+                  <input id="water_grams" type="number" inputmode="decimal" step="1" min="0" value="${esc(state.rate.water_grams)}" class="min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
+                  <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
+                </div>
+              </div>
+            </label>
+            <label class="col-span-2 block text-xs font-semibold">
+              <span data-i18n="recipe_time">${t("recipe_time")}</span>
+              <input id="brew_time" value="${esc(state.rate.brew_time || "")}" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-3 text-sm" placeholder="${esc(t("brew_time_ph"))}">
             </label>
           </div>
-          <label class="block text-sm font-medium">${t("brew_time")}
-            <input id="brew_time" value="${esc(state.rate.brew_time || "")}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("brew_time_ph"))}">
-          </label>
         </fieldset>
-        ${slider("rating", t("rating"), t("help_rating"), state.rate.rating)}
-        ${slider("acidity", t("acidity"), t("help_acidity"), state.rate.acidity)}
-        ${slider("sweetness", t("sweetness"), t("help_sweetness"), state.rate.sweetness)}
-        ${slider("body", t("body"), t("help_body"), state.rate.body)}
-        ${slider("aftertaste", t("aftertaste"), t("help_aftertaste"), state.rate.aftertaste)}
         <label class="block text-sm font-medium"><span data-i18n="tasting_notes_user">${t("tasting_notes_user")}</span>
           <textarea id="notes" class="mt-1 min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("tasting_notes_user_ph"))}">${esc(state.rate.notes)}</textarea>
         </label>
-        <div class="relative mx-auto h-64 w-full">
-          <canvas id="radar"></canvas>
-        </div>
+        ${liveSensoryCard()}
         <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="save_rating">${t("save_rating")}</button>
       </section>`;
     }
@@ -1152,61 +1284,6 @@
             </button>`).join("")}
         </div>
       </nav>`;
-    }
-
-    function drawRadar() {
-      const canvas = $("#radar");
-      if (!canvas || !window.Chart) return;
-      const community = state.profile?.community || {};
-      const user = {
-        acidity: state.rate.acidity,
-        sweetness: state.rate.sweetness,
-        body: state.rate.body,
-        aftertaste: state.rate.aftertaste,
-      };
-      if (radarChart) {
-        radarChart.destroy();
-        radarChart = null;
-      }
-      radarChart = new Chart(canvas, {
-        type: "radar",
-        data: {
-          labels: [t("acidity"), t("sweetness"), t("body"), t("aftertaste")],
-          datasets: [
-            {
-              label: t("radar_you"),
-              data: [user.acidity, user.sweetness, user.body, user.aftertaste],
-              borderColor: "#b85c38",
-              backgroundColor: "rgba(184,92,56,0.25)",
-              pointBackgroundColor: "#b85c38",
-            },
-            {
-              label: t("radar_community"),
-              data: [community.acidity || 3.4, community.sweetness || 3.5, community.body || 3.3, community.aftertaste || 3.4],
-              borderColor: "#3c2a21",
-              backgroundColor: "rgba(60,42,33,0.12)",
-              pointBackgroundColor: "#3c2a21",
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          animation: false,
-          events: [],
-          plugins: { legend: { labels: { font: { family: "Outfit" } } } },
-          scales: {
-            r: {
-              min: 0,
-              max: 5,
-              ticks: { stepSize: 1, backdropColor: "transparent" },
-              grid: { color: "#e8d8c8" },
-              angleLines: { color: "#e8d8c8" },
-              pointLabels: { font: { family: "Outfit", size: 12 } },
-            },
-          },
-        },
-      });
     }
 
     function coffeeIcon(beanId) {
@@ -1377,10 +1454,6 @@
 
     function render() {
       destroyMaps();
-      if (radarChart) {
-        radarChart.destroy();
-        radarChart = null;
-      }
       const root = $("#app");
       if (!state.config) {
         root.innerHTML = `<p class="p-8 text-center text-muted">BeanNote…</p>`;
@@ -1397,7 +1470,6 @@
       const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
       root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-50 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-50 grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">…</div></div>` : ""}`;
       bindApp();
-      drawRadar();
       drawMaps();
     }
 
@@ -1634,12 +1706,21 @@
           toast(t(err.detail || "required"));
         }
       });
-      ["rating", "acidity", "sweetness", "body", "aftertaste"].forEach((key) => {
-        $(`#${key}`)?.addEventListener("input", (event) => {
-          state.rate[key] = Number(event.target.value);
-          drawRadar();
-          const label = event.target.previousElementSibling?.querySelector("span:last-child");
-          if (label) label.textContent = Number(event.target.value).toFixed(1);
+      document.querySelectorAll("[data-star]").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          const n = Number(btn.dataset.star);
+          const rect = btn.getBoundingClientRect();
+          const half = (event.clientX - rect.left) < rect.width / 2;
+          state.rate.rating = half ? Math.max(0.5, n - 0.5) : n;
+          syncRateUi();
+        });
+      });
+      document.querySelectorAll("[data-sense]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const key = btn.dataset.sense;
+          if (!key) return;
+          state.rate[key] = Number(btn.dataset.value);
+          syncRateUi();
         });
       });
       $("#rate-bean")?.addEventListener("change", (event) => openBean(Number(event.target.value), "rate"));

@@ -77,28 +77,13 @@ def test_catalog_lookup() -> None:
 
 
 def test_find_product_images() -> None:
-    from image_search import find_live_product_images, find_product_images
+    from image_search import find_product_images
 
-    called = {"live": False}
-
-    def _blocked_live(name: str, roaster: str, limit: int = 3):
-        del name, roaster, limit
-        called["live"] = True
-        raise AssertionError("live search must not run when catalog matches")
-
-    original = find_live_product_images
-    import image_search as image_search_mod
-
-    image_search_mod.find_live_product_images = _blocked_live  # type: ignore[assignment]
-    try:
-        candidates = find_product_images(NAME, ROASTER)
-    finally:
-        image_search_mod.find_live_product_images = original
-    _assert_true("catalog skips live search", called["live"] is False)
+    candidates = find_product_images(NAME, ROASTER)
     _assert_true("merged 1-3", 1 <= len(candidates) <= 3)
     _assert_true("merged https", all(item.startswith("https://") for item in candidates))
     _assert_eq("payload key length", len(candidates), len(dict.fromkeys(candidates)))
-    print("OK  find_product_images returned catalog candidates without live search")
+    print("OK  find_product_images returned catalog candidates without scrapers")
     for url in candidates:
         print(f"     {url}")
 

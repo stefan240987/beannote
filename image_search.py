@@ -1,26 +1,23 @@
-"""Autonomous high-res coffee product image search.
+"""Product image URL sanitization and local packshot catalog.
 
-Priority: Gemini vision hints, then the local roaster packshot catalog,
-then live DuckDuckGo/Bing search. Gemini Search Grounding stays a
-last-resort fallback in ocr.py. Prompts stay brand-agnostic.
+Studio candidates come from Gemini Search Grounding in ocr.py.
+This module never calls Google CX, DuckDuckGo, or Bing scrapers.
 """
 
 from __future__ import annotations
 
 import ipaddress
-import json
 import re
 import socket
 import urllib.error
 import urllib.request
 from io import BytesIO
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
 
 from PIL import Image
 
 MAX_IMAGE_CANDIDATES = 3
-SEARCH_TIMEOUT = 8.0
 _MAX_OFFICIAL_IMAGE_BYTES = 8 * 1024 * 1024
 
 # Keyword → verified studio packshots. Keys match as case-insensitive
@@ -117,34 +114,6 @@ _BROWSER_HEADERS = {
     "Accept": "application/json,text/html,image/avif,image/webp,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,da;q=0.8",
 }
-_STOP_TOKENS = {
-    "coffee",
-    "coffees",
-    "beans",
-    "bean",
-    "bag",
-    "bags",
-    "kaffe",
-    "kava",
-    "kawa",
-    "cafe",
-    "café",
-    "the",
-    "and",
-    "for",
-    "with",
-    "bio",
-    "organic",
-}
-_DRINK_PENALTY = (
-    "latte art",
-    "in cup",
-    "hotove",
-    "hotové",
-    "cupping",
-    "pouring",
-    "recipe",
-)
 
 
 def _host_is_public(host: str) -> bool:
@@ -309,244 +278,17 @@ def curated_packshot_url(name: str, roaster: str) -> str:
     return found[0] if found else ""
 
 
-def _http_get(
-    url: str,
-    timeout: float = SEARCH_TIMEOUT,
-    headers: dict[str, str] | None = None,
-    opener: urllib.request.OpenerDirector | None = None,
-) -> bytes:
-    request = urllib.request.Request(url, headers=headers or _BROWSER_HEADERS)
-    handle = opener or urllib.request.build_opener()
-    with handle.open(request, timeout=timeout) as response:
-        return response.read()
-
-
-def _extract_vqd(html: str) -> str:
-    for pattern in (
-        r"vqd=['\"]([^'\"]+)['\"]",
-        r"vqd=([0-9\-]+)",
-        r'"vqd"\s*:\s*"([^"]+)"',
-        r"vqd:\\['\"]([^'\"]+)['\"]",
-    ):
-        match = re.search(pattern, html or "")
-        if match:
-            return match.group(1).strip()
-    return ""
-
-
-def _hit_image_url(item: dict[str, Any]) -> str:
-    for key in ("image", "image_url", "thumbnail", "url", "src"):
-        raw = str(item.get(key) or "").strip()
-        if raw.startswith("https://"):
-            return raw
-    return ""
-
-
-def _query_tokens(name: str, roaster: str) -> list[str]:
-    blob = f"{roaster} {name}".lower()
-    tokens = []
-    for raw in re.findall(r"[a-zæøåäöüß0-9]{3,}", blob):
-        if raw in _STOP_TOKENS or raw in tokens:
-            continue
-        tokens.append(raw)
-    return tokens
-
-
-def _search_query(name: str, roaster: str) -> str:
-    parts = [part for part in (roaster, name) if part]
-    query = " ".join(parts).strip()
-    if "coffee" not in query.lower() and "kaffe" not in query.lower():
-        query = f"{query} coffee bag"
-    else:
-        query = f"{query} bag"
-    return re.sub(r"\s+", " ", query).strip()
-
-
-def _score_hit(item: dict[str, Any], tokens: list[str]) -> int:
-    title = str(item.get("title") or "").lower()
-    image = str(item.get("image") or item.get("url") or "").lower()
-    source = str(item.get("url") or "").lower()
-    blob = f"{title} {image} {source}"
-    score = 0
-    for token in tokens:
-        if token in title:
-            score += 4
-        elif token in blob:
-            score += 2
-    try:
-        width = int(item.get("width") or 0)
-        height = int(item.get("height") or 0)
-    except (TypeError, ValueError):
-        width = height = 0
-    longest = max(width, height)
-    if longest >= 1000:
-        score += 4
-    elif longest >= 700:
-        score += 3
-    elif longest >= 400:
-        score += 1
-    if any(hint in blob for hint in ("bag", "pack", "beans", "ziarn", "zern", "kaffe", "kava", "kawa")):
-        score += 2
-    if any(hint in blob for hint in _DRINK_PENALTY):
-        score -= 4
-    if any(hint in image for hint in (".jpg", ".jpeg", ".png", ".webp")):
-        score += 1
-    return score
-
-
-def _search_queries(name: str, roaster: str) -> list[str]:
-    """Brand-agnostic query variants for the extracted roaster + bean name."""
-    name = re.sub(r"\s+", " ", (name or "").strip())
-    roaster = re.sub(r"\s+", " ", (roaster or "").strip())
-    seen: set[str] = set()
-    out: list[str] = []
-    candidates = [
-        _search_query(name, roaster),
-        f"{roaster} {name}".strip(),
-        f"{roaster} {name} packshot".strip(),
-        f"{name} coffee beans".strip() if name else "",
-        f"{roaster} coffee bag".strip() if roaster else "",
-    ]
-    for query in candidates:
-        compact = re.sub(r"\s+", " ", query).strip()
-        if len(compact) < 4 or compact.lower() in seen:
-            continue
-        seen.add(compact.lower())
-        out.append(compact)
-    return out
-
-
-def search_duckduckgo_images(query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Return raw DuckDuckGo image hits for a product query. Empty on any failure."""
-    query = re.sub(r"\s+", " ", (query or "").strip())
-    if not query:
-        return []
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
-    html_headers = {**_BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml"}
-    try:
-        html = _http_get(
-            "https://duckduckgo.com/?" + urlencode({"q": query, "iax": "images", "ia": "images"}),
-            headers=html_headers,
-            opener=opener,
-        ).decode("utf-8", "replace")
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError, UnicodeError):
-        return []
-    vqd = _extract_vqd(html)
-    if not vqd:
-        return []
-    json_headers = {**_BROWSER_HEADERS, "Referer": "https://duckduckgo.com/", "Accept": "application/json"}
-    for locale in ("us-en", "wt-wt"):
-        try:
-            raw = _http_get(
-                "https://duckduckgo.com/i.js?"
-                + urlencode({"l": locale, "o": "json", "q": query, "vqd": vqd, "f": ",,,", "p": "1"}),
-                headers=json_headers,
-                opener=opener,
-            )
-            data = json.loads(raw.decode("utf-8", "replace"))
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError, json.JSONDecodeError):
-            continue
-        results = data.get("results") if isinstance(data, dict) else None
-        if isinstance(results, list) and results:
-            return [item for item in results if isinstance(item, dict)][: max(limit, 0)]
-    return []
-
-
-def search_bing_images(query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Fallback image search when DuckDuckGo returns nothing. Brand-agnostic."""
-    query = re.sub(r"\s+", " ", (query or "").strip())
-    if not query:
-        return []
-    try:
-        html = _http_get(
-            "https://www.bing.com/images/async?"
-            + urlencode({"q": query, "first": "0", "count": str(max(limit, 8)), "mmasync": "1"}),
-            headers={**_BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml", "Referer": "https://www.bing.com/"},
-        ).decode("utf-8", "replace")
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError, UnicodeError):
-        return []
-    urls: list[str] = []
-    seen: set[str] = set()
-    for pattern in (
-        r"murl&quot;(https://[^&<>\"]+)&quot;",
-        r'"murl"\s*:\s*"(https://[^"]+)"',
-        r"murl&quot;:?(https://[^&<>\"]+)",
-        r"src=['\"](https://[^'\"]+\.(?:jpg|jpeg|png|webp)[^'\"]*)['\"]",
-    ):
-        for match in re.findall(pattern, html, flags=re.I):
-            url = str(match).replace("\\u0026", "&").replace("\\/", "/")
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(url)
-            if len(urls) >= limit:
-                break
-        if len(urls) >= limit:
-            break
-    return [{"image": url, "title": query, "url": url} for url in urls]
-
-
-def find_live_product_images(name: str, roaster: str, limit: int = MAX_IMAGE_CANDIDATES) -> list[str]:
-    """Autonomous web image search scored for the scanned coffee. Never brand-locked."""
-    tokens = _query_tokens(name, roaster)
-    hits: list[dict[str, Any]] = []
-    seen_raw: set[str] = set()
-    for query in _search_queries(name, roaster):
-        batch = search_duckduckgo_images(query, limit=18)
-        if len(batch) < 4:
-            batch = batch + search_bing_images(query, limit=12)
-        for item in batch:
-            key = _hit_image_url(item)
-            if not key or key in seen_raw:
-                continue
-            seen_raw.add(key)
-            hits.append(item)
-        if len(hits) >= 12:
-            break
-    ranked: list[tuple[int, str]] = []
-    seen: set[str] = set()
-    for item in hits:
-        url = sanitize_image_url(_hit_image_url(item), resolve_dns=False)
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        ranked.append((_score_hit(item, tokens), url))
-    ranked.sort(key=lambda row: row[0], reverse=True)
-    out: list[str] = []
-    for score, url in ranked:
-        if score < 2:
-            continue
-        if url in out:
-            continue
-        out.append(url)
-        if len(out) >= limit:
-            return out
-    for _score, url in ranked:
-        if url in out:
-            continue
-        out.append(url)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def find_product_images(
     name: str,
     roaster: str,
     hint_urls: str | list[str] | None = None,
 ) -> list[str]:
-    """Return up to 3 high-res URLs: vision hints, catalog, then live search."""
+    """Merge Gemini/vision https hints with the local packshot catalog. No scrapers."""
     name = re.sub(r"\s+", " ", (name or "").strip())
     roaster = re.sub(r"\s+", " ", (roaster or "").strip())
-    hints = collect_image_urls(hint_urls, resolve_dns=False)
-    catalog = curated_packshot_urls(name, roaster)
-    matched = collect_image_urls(hints, catalog, resolve_dns=False)
-    if matched:
-        return matched[:MAX_IMAGE_CANDIDATES]
-    live: list[str] = []
-    if name or roaster:
-        try:
-            live = find_live_product_images(name, roaster)
-        except Exception:
-            live = []
-    return collect_image_urls(live, resolve_dns=False)[:MAX_IMAGE_CANDIDATES]
+    return collect_image_urls(
+        hint_urls,
+        curated_packshot_urls(name, roaster),
+        resolve_dns=False,
+    )[:MAX_IMAGE_CANDIDATES]
+
