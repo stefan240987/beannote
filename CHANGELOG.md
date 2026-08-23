@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.5] - 2026-08-23
+
+- Localized help tooltips on rating sliders (overall, acidity, sweetness, body, aftertaste).
+- Smart OCR matching: exact (≥90%) hard-blocks duplicates and jumps to Rate with extracted notes; near (70–89%) warns but allows save-as-new; below 70% treats the scan as a new bean.
+
 ## [1.0.4] - 2026-08-23
 
 - OCR bean-name parser ignores graphic noise (`ler oil`, `Est.`, `SEDATO`, `A POSEN`) and prefers title candidates (`Crema`, `Slow Roast`, `Geisha`, `Yirgacheffe`) in the upper/middle block.

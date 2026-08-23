@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-VERSION = "1.0.4"
-FUZZY_CUTOFF = 0.80
+VERSION = "1.0.5"
+EXACT_MATCH_CUTOFF = 0.90
+NEAR_MATCH_CUTOFF = 0.70
+FUZZY_CUTOFF = NEAR_MATCH_CUTOFF
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()
 
@@ -223,6 +225,21 @@ def _bean_label(bean: dict[str, Any]) -> str:
     return f"{bean.get('name', '')} - {bean.get('roaster', '')}".strip(" -")
 
 
+def match_tier(confidence: float) -> str:
+    """exact >= 90%, near 70–89%, otherwise new."""
+    if confidence >= EXACT_MATCH_CUTOFF:
+        return "exact"
+    if confidence >= NEAR_MATCH_CUTOFF:
+        return "near"
+    return "new"
+
+
+def classify_matches(similar: list[dict[str, Any]]) -> str:
+    if not similar:
+        return "new"
+    return match_tier(float(similar[0].get("confidence") or 0))
+
+
 def find_similar_beans(
     name: str,
     roaster: str = "",
@@ -258,7 +275,11 @@ def find_similar_beans(
                     ).ratio(),
                 )
                 if score >= cutoff:
-                    results.append({**bean, "confidence": round(score, 3)})
+                    results.append({
+                        **bean,
+                        "confidence": round(score, 3),
+                        "tier": match_tier(score),
+                    })
                     seen.add(bean["id"])
     results.sort(key=lambda b: b["confidence"], reverse=True)
     return results
@@ -279,10 +300,12 @@ def insert_bean(
     if not name or not roaster:
         raise ValueError("name_roaster_required")
 
-    if not skip_fuzzy:
-        similar = find_similar_beans(name, roaster)
-        if similar:
-            return {"status": "fuzzy", "similar": similar}
+    similar = find_similar_beans(name, roaster)
+    exact = [row for row in similar if row.get("tier") == "exact"]
+    if exact:
+        return {"status": "exact", "similar": exact, "bean": exact[0]}
+    if not skip_fuzzy and similar:
+        return {"status": "fuzzy", "similar": similar}
 
     tags = json.dumps(flavor_tags or _tags_from_notes(roaster_notes))
     with connect() as conn:

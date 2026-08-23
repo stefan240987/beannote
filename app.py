@@ -9,6 +9,7 @@ import streamlit as st
 
 from db import (
     VERSION,
+    classify_matches,
     distinct_values,
     export_ratings,
     find_similar_beans,
@@ -163,6 +164,15 @@ def inject_css() -> None:
             border-radius: 12px;
             padding: 0.7rem 0.85rem;
             margin: 0.55rem 0 0.9rem;
+        }
+        .bn-info {
+            background: #f4ebd9;
+            border: 1px solid #b85c38;
+            border-left: 5px solid #b85c38;
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            margin: 0.55rem 0 0.9rem;
+            color: #3c2a21;
         }
         .stButton button, .stDownloadButton button,
         button[data-testid="stBaseButton-primary"] {
@@ -365,11 +375,47 @@ def note_chips(tags: list[str], overlap: list[str]) -> str:
     return "".join(html) or '<span class="bn-badge">—</span>'
 
 
-def go_review(bean_id: int) -> None:
+def go_review(bean_id: int, notes: str | None = None) -> None:
     st.session_state.selected_bean_id = bean_id
-    st.session_state.active_tab = "review"
+    st.session_state.pending_tab = "review"
+    st.session_state.pending_review_bean_id = bean_id
     st.session_state.pop("pending_similar", None)
     st.session_state.pop("force_insert", None)
+    if notes:
+        st.session_state.pending_review_notes = notes
+
+
+def tasting_notes_from_form() -> str:
+    notes = (st.session_state.get("add_notes") or "").strip()
+    if notes:
+        return notes
+    flavors = st.session_state.get("add_flavors") or []
+    return ", ".join(flavors)
+
+
+def apply_pending_ui() -> None:
+    """Apply nav/form resets before their widgets are instantiated this run."""
+    pending = st.session_state.pop("pending_tab", None)
+    if pending:
+        st.session_state.active_tab = pending
+    pending_bean = st.session_state.pop("pending_review_bean_id", None)
+    if pending_bean is not None:
+        st.session_state.selected_bean_id = pending_bean
+        st.session_state.review_bean_id = pending_bean
+    pending_notes = st.session_state.pop("pending_review_notes", None)
+    if pending_notes is not None:
+        st.session_state.review_notes = pending_notes
+    if not st.session_state.pop("reset_add_form", False):
+        return
+    st.session_state.ocr_form = {}
+    st.session_state.pending_similar = None
+    st.session_state.add_name = ""
+    st.session_state.add_roaster = ""
+    st.session_state.add_origin = ""
+    st.session_state.add_process = ""
+    st.session_state.add_roast = ""
+    st.session_state.add_notes = ""
+    st.session_state.add_flavors = []
 
 
 def apply_ocr_form(parsed: dict) -> None:
@@ -390,22 +436,31 @@ def apply_ocr_form(parsed: dict) -> None:
 def clear_ocr_form() -> None:
     st.session_state.ocr_form = {}
     st.session_state.pending_similar = None
-    st.session_state.add_name = ""
-    st.session_state.add_roaster = ""
-    st.session_state.add_origin = ""
-    st.session_state.add_process = ""
-    st.session_state.add_roast = ""
-    st.session_state.add_notes = ""
-    st.session_state.add_flavors = []
+    st.session_state.reset_add_form = True
+
+
+def render_exact_match(lang: str, similar: list[dict]) -> None:
+    top = similar[0]
+    pct = int(round((top.get("confidence") or 1) * 100))
+    st.markdown(
+        f'<div class="bn-info"><strong>{t(lang, "exact_match_banner").format(pct=pct)}</strong></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(f"**{top['name']}** · {top['roaster']}")
+    if st.button(t(lang, "go_rate_existing"), type="primary", use_container_width=True):
+        go_review(top["id"], notes=tasting_notes_from_form())
+        st.rerun()
 
 
 def render_duplicate_warning(lang: str, similar: list[dict]) -> None:
     if not similar:
         return
     st.markdown(
-        f'<div class="bn-warn"><strong>{t(lang, "duplicate_warning")}</strong></div>',
+        f'<div class="bn-warn"><strong>{t(lang, "duplicate_warning")}</strong>'
+        f'<br>{t(lang, "near_match_hint")}</div>',
         unsafe_allow_html=True,
     )
+    notes = tasting_notes_from_form()
     for match in similar[:3]:
         cols = st.columns([3, 2])
         pct = int(match.get("confidence", 0) * 100)
@@ -418,7 +473,7 @@ def render_duplicate_warning(lang: str, similar: list[dict]) -> None:
             key=f"use-{match['id']}-{match.get('confidence')}",
             type="secondary",
         ):
-            go_review(match["id"])
+            go_review(match["id"], notes=notes)
             st.rerun()
 
 
@@ -543,10 +598,16 @@ def render_review(lang: str) -> None:
         return
 
     options = {b["id"]: f"{b['name']} — {b['roaster']}" for b in beans}
-    default_id = st.session_state.get("selected_bean_id") or beans[0]["id"]
     ids = list(options.keys())
-    index = ids.index(default_id) if default_id in ids else 0
-    bean_id = st.selectbox(t(lang, "select_bean"), ids, index=index, format_func=lambda i: options[i])
+    default_id = st.session_state.get("selected_bean_id") or beans[0]["id"]
+    if st.session_state.get("review_bean_id") not in ids:
+        st.session_state.review_bean_id = default_id if default_id in ids else ids[0]
+    bean_id = st.selectbox(
+        t(lang, "select_bean"),
+        ids,
+        format_func=lambda i: options[i],
+        key="review_bean_id",
+    )
     st.session_state.selected_bean_id = bean_id
 
     profile = get_flavor_profile(bean_id)
@@ -556,13 +617,18 @@ def render_review(lang: str) -> None:
 
     st.caption(f"{bean['origin']} · {bean['process']} · {bean['roast_level']}")
     brew = st.selectbox(t(lang, "brew_method"), BREW_METHODS)
-    rating = st.slider(t(lang, "rating"), 1.0, 5.0, 4.0, 0.1)
+    rating = st.slider(t(lang, "rating"), 1.0, 5.0, 4.0, 0.1, help=t(lang, "help_rating"))
     c1, c2 = st.columns(2)
-    acidity = c1.slider(t(lang, "acidity"), 1.0, 5.0, 3.5, 0.1)
-    sweetness = c2.slider(t(lang, "sweetness"), 1.0, 5.0, 3.5, 0.1)
-    body = c1.slider(t(lang, "body"), 1.0, 5.0, 3.5, 0.1)
-    aftertaste = c2.slider(t(lang, "aftertaste"), 1.0, 5.0, 3.5, 0.1)
-    notes = st.text_area(t(lang, "notes"), placeholder=t(lang, "notes_ph"), height=100)
+    acidity = c1.slider(t(lang, "acidity"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_acidity"))
+    sweetness = c2.slider(t(lang, "sweetness"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_sweetness"))
+    body = c1.slider(t(lang, "body"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_body"))
+    aftertaste = c2.slider(t(lang, "aftertaste"), 1.0, 5.0, 3.5, 0.1, help=t(lang, "help_aftertaste"))
+    notes = st.text_area(
+        t(lang, "notes"),
+        placeholder=t(lang, "notes_ph"),
+        height=100,
+        key="review_notes",
+    )
 
     live_user = {
         "acidity": acidity,
@@ -621,14 +687,25 @@ def render_add(lang: str) -> None:
         with st.expander(t(lang, "raw_ocr")):
             st.code(form.get("raw_text") or "—")
 
-    similar = st.session_state.get("pending_similar")
-    if similar is None and name and roaster:
+    if name.strip():
         similar = find_similar_beans(name, roaster)
-    render_duplicate_warning(lang, similar or [])
+    else:
+        similar = st.session_state.get("pending_similar") or []
+    st.session_state.pending_similar = similar
+    tier = classify_matches(similar)
 
-    col_a, col_b = st.columns(2)
-    save_new = col_a.button(t(lang, "save_bean"), type="primary", use_container_width=True)
-    force = col_b.button(t(lang, "insert_anyway"), use_container_width=True)
+    if tier == "exact":
+        render_exact_match(lang, similar)
+        return
+    if tier == "near":
+        render_duplicate_warning(lang, similar)
+
+    save_new = False
+    force = False
+    if tier == "near":
+        force = st.button(t(lang, "save_as_new"), use_container_width=True)
+    else:
+        save_new = st.button(t(lang, "save_bean"), type="primary", use_container_width=True)
 
     if save_new or force:
         if not name.strip() or not roaster.strip():
@@ -644,22 +721,23 @@ def render_add(lang: str) -> None:
             flavor_tags=flavors or None,
             skip_fuzzy=force,
         )
-        if result["status"] == "fuzzy":
+        if result["status"] in {"fuzzy", "exact"}:
             st.session_state.pending_similar = result["similar"]
             st.rerun()
         if result["status"] == "exists":
             st.warning(t(lang, "exists"))
-            go_review(result["bean"]["id"])
+            go_review(result["bean"]["id"], notes=tasting_notes_from_form())
             st.rerun()
         if result["status"] == "created":
             clear_ocr_form()
             st.toast(t(lang, "created"), icon="☕")
-            go_review(result["bean"]["id"])
+            go_review(result["bean"]["id"], notes=tasting_notes_from_form())
             st.rerun()
 
 
 def main() -> None:
     init_db()
+    apply_pending_ui()
     inject_css()
     lang = st.session_state.get("lang", "da")
     filters = sidebar(lang)
