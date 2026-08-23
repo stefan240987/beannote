@@ -703,7 +703,9 @@ async def scan(
     try:
         jpeg = encode_scan_jpeg(raw)
         parsed = scan_label(jpeg, lang=lang)
-    except RuntimeError as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise HTTPException(status_code=422, detail="ocr_fail") from exc
     image_url = save_bean_image(jpeg, filename="scan.jpg")
     parsed["image_url"] = image_url

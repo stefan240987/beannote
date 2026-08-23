@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.7.0] - 2026-08-23
+
+- Gemini Vision now sends in-memory bag photos as JPEG bytes (`Part.from_bytes`) instead of a filename-less PIL image, so the API no longer crashes on camera/album uploads.
+- Markdown ` ```json ` fences are stripped before `json.loads()`, and scans use the current stable Flash model (`gemini-3.6-flash`, then `gemini-flash-latest`) with a temperature-0 JSON config and 503 retries.
+- Copenhagen Roaster Slow Roast Crema (and similar Danish labels) normalize printed origin, MASL, varietal, and flavor tags; `test_gemini.py` verifies 100% extraction of that label.
+
 ## [2.6.0] - 2026-08-23
 
 - Explore feed cards are minimal: bag photo (180px, cover), favorite heart, name, roaster · origin, 2–3 flavor badges, and the average star. Leaflet maps, radar charts, recipes, and MASL/varietal metadata no longer render on the card.

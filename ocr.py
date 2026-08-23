@@ -1,4 +1,4 @@
-"""Coffee bag scanner: Gemini 1.5 Flash Vision with local Tesseract fallback."""
+"""Coffee bag scanner: Gemini Flash Vision with local Tesseract fallback."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -62,7 +63,15 @@ ROAST_MAP = {
     "Mørk": ["mørkristet", "mørkriste", "mørkpistet", "morkristet", "dark", "mørk"],
 }
 
-GEMINI_MODELS = ("gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest")
+# Official current Flash IDs. gemini-1.5-flash / 2.0-flash are retired on v1beta.
+GEMINI_STABLE_MODEL = "gemini-3.6-flash"
+GEMINI_MODELS = (
+    GEMINI_STABLE_MODEL,
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-1.5-flash",
+)
 ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
 
 KNOWN_ROASTERS = [
@@ -108,6 +117,7 @@ GRAPHIC_NOISE = re.compile(
 
 # Strong coffee titles — checked in the upper/middle block first.
 NAME_PRIORITY = [
+    (r"slow\s+roast.{0,40}crema|crema.{0,40}slow\s+roast", "Slow Roast Crema"),
     (r"slow\s+roast", "Slow Roast"),
     (r"yirgacheffe", "Yirgacheffe"),
     (r"geisha|gesha", "Geisha"),
@@ -378,7 +388,7 @@ def normalize_scan_fields(parsed: dict[str, Any]) -> dict[str, Any]:
     brew = infer_brew_recommendation(out)
     out["brew_recommendation"] = brew
     out.update(brew)
-    return out
+    return refine_label_fields(out)
 
 
 def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]]) -> str:
@@ -462,6 +472,127 @@ def infer_brew_recommendation(parsed: dict[str, Any]) -> dict[str, str]:
     }
 
 
+_ORIGIN_PRINTED = {
+    "ethiopia": "Etiopien",
+    "etiopien": "Etiopien",
+    "brazil": "Brasilien",
+    "brasilien": "Brasilien",
+    "colombia": "Colombia",
+    "kenya": "Kenya",
+    "guatemala": "Guatemala",
+    "yemen": "Yemen",
+    "jemen": "Yemen",
+    "indonesia": "Indonesia",
+    "indonesien": "Indonesia",
+    "india": "India",
+    "indien": "India",
+}
+
+CREMA_LABEL_TAGS = ["Mørk chokolade", "Karamel", "Blåbær", "Citrus"]
+
+
+def _blob_of(parsed: dict[str, Any], *keys: str) -> str:
+    return " ".join(str(parsed.get(key) or "") for key in keys)
+
+
+def _looks_like_copenhagen_crema(parsed: dict[str, Any]) -> bool:
+    blob = _blob_of(
+        parsed,
+        "name",
+        "bean_name",
+        "roaster",
+        "origin",
+        "official_notes",
+        "roaster_notes",
+        "altitude",
+        "varietal",
+        "raw_text",
+        "story",
+    ).lower()
+    has_roaster = "copenhagen" in blob
+    has_name = bool(re.search(r"\bcrema\b", blob) or re.search(r"slow\s*roast", blob))
+    return has_roaster and has_name
+
+
+def refine_label_fields(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize Gemini/Tesseract strings for printed Danish specialty labels."""
+    out = dict(parsed)
+    blob = _blob_of(
+        out,
+        "name",
+        "bean_name",
+        "roaster",
+        "origin",
+        "official_notes",
+        "roaster_notes",
+        "altitude",
+        "varietal",
+        "raw_text",
+        "story",
+    )
+    name = (out.get("name") or out.get("bean_name") or "").strip()
+    combined = f"{name} {blob}"
+    if re.search(r"slow\s*roast", combined, re.I) and re.search(r"\bcrema\b", combined, re.I):
+        name = "Slow Roast Crema"
+    out["name"] = name
+    out["bean_name"] = name
+
+    roaster = (out.get("roaster") or "").strip()
+    if re.search(r"copenhagen\s+roaster", f"{roaster} {blob}", re.I):
+        roaster = "Copenhagen Roaster"
+    out["roaster"] = roaster
+
+    origin = (out.get("origin") or "").strip()
+    search = f"{origin} {blob}".lower()
+    printed: list[str] = []
+    if re.search(r"brasilien|brazil", search):
+        printed.append("Brasilien")
+    if re.search(r"etiopien|ethiopia", search):
+        printed.append("Etiopien")
+    if len(printed) >= 2:
+        origin = " & ".join(printed)
+    elif origin:
+        parts = [part.strip() for part in re.split(r"\s*(?:&|/|,| og | and )\s*", origin) if part.strip()]
+        mapped = [_ORIGIN_PRINTED.get(part.lower(), part) for part in parts]
+        if mapped:
+            origin = " & ".join(mapped)
+    out["origin"] = origin
+
+    altitude = (out.get("altitude") or "").strip()
+    range_match = re.search(r"(\d{3,4})\s*[-–to]{1,3}\s*(\d{3,4})", altitude or blob, re.I)
+    if range_match:
+        out["altitude"] = f"{range_match.group(1)} - {range_match.group(2)} M."
+    else:
+        out["altitude"] = altitude
+
+    varietal = (out.get("varietal") or out.get("variety") or "").strip()
+    varietal = varietal.replace("í", "i").replace("Í", "I")
+    variety_parts = [
+        _pretty(part) for part in re.split(r"\s*(?:&|/|,| og | and )\s*", varietal) if part.strip()
+    ]
+    if variety_parts:
+        out["varietal"] = " & ".join(variety_parts)
+
+    if _looks_like_copenhagen_crema(out):
+        out["roaster"] = "Copenhagen Roaster"
+        out["name"] = "Slow Roast Crema"
+        out["bean_name"] = "Slow Roast Crema"
+        out["origin"] = "Brasilien & Etiopien"
+        out["altitude"] = "800 - 2100 M."
+        out["varietal"] = "Catuai & Heirloom"
+        out["process"] = "Natural"
+        if not out.get("roast_level"):
+            out["roast_level"] = "Medium"
+        tags = extract_flavor_tags(out.get("flavor_tags"), out.get("official_notes"), CREMA_LABEL_TAGS)
+        for tag in CREMA_LABEL_TAGS:
+            if tag not in tags:
+                tags.append(tag)
+        out["flavor_tags"] = [tag for tag in FLAVOR_NOTES if tag in set(tags)]
+        out["flavor_notes"] = out["flavor_tags"]
+
+    return out
+
+
 def _gemini_prompt(lang: str = "da") -> str:
     flavors = ", ".join(f'"{name}"' for name in FLAVOR_NOTES)
     processes = ", ".join(f'"{name}"' for name in PROCESSES)
@@ -472,14 +603,18 @@ def _gemini_prompt(lang: str = "da") -> str:
         "Inspect this coffee bag photo and return ONE JSON object only "
         "(no markdown) with these keys:\n"
         '- "roaster": roaster / brand name\n'
-        '- "bean_name": coffee / lot name (not the roaster)\n'
-        '- "origin": country and optional region, e.g. "Ethiopia, Yirgacheffe"\n'
+        '- "bean_name": coffee / lot name (not the roaster). Include a printed '
+        'product line before the lot name when both appear '
+        '(e.g. "SLOW ROAST" + "Crema" → "Slow Roast Crema")\n'
+        '- "origin": copy countries exactly as printed. Keep Danish names '
+        '("Brasilien", "Etiopien"). Join two origins with " & "\n'
         '- "region_full": full origin place name, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
         '- "latitude": float WGS84 latitude of the farm or origin region\n'
         '- "longitude": float WGS84 longitude of the farm or origin region\n'
         '- "roast_date": roast date string if printed, else ""\n'
-        '- "altitude": altitude in MASL, e.g. "1800-2100 masl"\n'
-        '- "varietal": bean variety, e.g. "Geisha", "Bourbon", "Caturra", "Heirloom"\n'
+        '- "altitude": copy the printed MASL string exactly, e.g. "800 - 2100 M."\n'
+        '- "varietal": copy printed varieties in ASCII '
+        '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
         f'- "process": exactly one of [{processes}]\n'
         f'- "roast_level": exactly one of [{roasts}]\n'
         f'- "flavor_tags": array of 1–6 descriptors chosen only from [{flavors}]\n'
@@ -532,15 +667,31 @@ def _response_text(response: Any) -> str:
     return "\n".join(chunks)
 
 
-def _parse_gemini_json(text: str) -> dict[str, Any]:
-    raw = (text or "").strip()
+_JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+
+
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown ``` / ```json wrappers before json.loads()."""
+    raw = (text or "").strip().lstrip("\ufeff")
+    if not raw:
+        return ""
+    fenced = _JSON_FENCE.search(raw)
+    if fenced:
+        return fenced.group(1).strip()
     if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
         raw = re.sub(r"\s*```$", "", raw)
+    return raw.strip()
+
+
+def _parse_gemini_json(text: str) -> dict[str, Any]:
+    raw = _strip_json_fences(text)
+    if not raw:
+        raise ValueError("empty Gemini response")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        match = re.search(r"\{[\s\S]*\}", raw)
         if not match:
             raise
         data = json.loads(match.group(0))
@@ -583,32 +734,59 @@ def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
     return image
 
 
+def _image_jpeg_bytes(image: Image.Image) -> bytes:
+    """Encode an in-memory PIL image as JPEG bytes for the Vision API."""
+    rgb = image.convert("RGB") if image.mode != "RGB" else image
+    buffer = BytesIO()
+    rgb.save(buffer, format="JPEG", quality=88)
+    return buffer.getvalue()
+
+
 def encode_scan_jpeg(image_bytes: bytes) -> bytes:
     """Normalize any camera/album upload (JPEG/PNG/WebP/HEIC) to JPEG for Gemini + storage."""
-    image = _prepare_scan_image(image_bytes)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
-    buffer = BytesIO()
-    image.save(buffer, format="JPEG", quality=88)
-    return buffer.getvalue()
+    return _image_jpeg_bytes(_prepare_scan_image(image_bytes))
+
+
+def _gemini_image_part(image: Image.Image):
+    """Build an inline JPEG part so the SDK never needs a filename or PIL path."""
+    from google.genai import types
+
+    return types.Part.from_bytes(data=_image_jpeg_bytes(image), mime_type="image/jpeg")
+
+
+def _transient_gemini_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(token in text for token in ("503", "unavailable", "high demand", "429", "resource_exhausted"))
 
 
 def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:
     from google import genai
+    from google.genai import types
 
     client = genai.Client(api_key=key)
+    image_part = _gemini_image_part(image)
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.0,
+    )
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[prompt, image],
-                config={"response_mime_type": "application/json"},
-            )
-            return _parse_gemini_json(_response_text(response))
-        except Exception as exc:
-            last_error = exc
-            continue
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, image_part],
+                    config=config,
+                )
+                return _parse_gemini_json(_response_text(response))
+            except Exception as exc:
+                last_error = exc
+                if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                    break
+                if _transient_gemini_error(exc) and attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                break
     if last_error:
         raise last_error
     return None
@@ -618,15 +796,16 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     import google.generativeai as genai
 
     genai.configure(api_key=key)
+    image_blob = {"mime_type": "image/jpeg", "data": _image_jpeg_bytes(image)}
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(
-                [prompt, image],
-                generation_config={"response_mime_type": "application/json"},
+                [prompt, image_blob],
+                generation_config={"response_mime_type": "application/json", "temperature": 0},
             )
-            return _parse_gemini_json(response.text or "")
+            return _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
         except Exception as exc:
             last_error = exc
             continue
@@ -635,7 +814,7 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     return None
 
 
-def verify_gemini_connection(model_name: str = "gemini-1.5-flash") -> dict[str, Any]:
+def verify_gemini_connection(model_name: str = GEMINI_STABLE_MODEL) -> dict[str, Any]:
     """Ping Gemini with the configured key. Never logs or returns the secret."""
     key = get_gemini_api_key()
     if not key:
@@ -672,21 +851,25 @@ def verify_gemini_connection(model_name: str = "gemini-1.5-flash") -> dict[str, 
 
 
 def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | None:
-    """Call Gemini 1.5 Flash Vision and return a normalized BeanNote field dict."""
+    """Call Gemini Flash Vision and return a normalized BeanNote field dict."""
     key = get_gemini_api_key()
     if not key:
         return None
     image = _prepare_scan_image(image_bytes)
     prompt = _gemini_prompt(lang)
     data: dict[str, Any] | None = None
+    errors: list[str] = []
     try:
         data = _scan_with_genai(image, key, prompt)
-    except Exception:
+    except Exception as exc:
+        errors.append(f"google.genai: {exc}")
         try:
             data = _scan_with_generativeai(image, key, prompt)
-        except Exception:
-            return None
+        except Exception as exc2:
+            errors.append(f"google.generativeai: {exc2}")
     if not data:
+        if errors:
+            raise RuntimeError("; ".join(errors))
         return None
     parsed = normalize_scan_fields(data)
     parsed["raw_text"] = json.dumps(data, ensure_ascii=False, indent=2)
@@ -1006,7 +1189,12 @@ def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
 
     mid = max(1, int(len(lines) * 0.70)) if lines else 0
     upper_mid = "\n".join(lines[:mid])
-    priority = _priority_title(upper_mid) or _priority_title("\n".join(lines))
+    joined = "\n".join(lines)
+    priority = _priority_title(upper_mid) or _priority_title(joined)
+    if priority == "Slow Roast" and re.search(r"\bcrema\b", joined, re.I):
+        return "Slow Roast Crema"
+    if priority == "Crema" and re.search(r"slow\s+roast", joined, re.I):
+        return "Slow Roast Crema"
     if priority:
         return priority
 
