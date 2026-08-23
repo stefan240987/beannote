@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [2.8.0] - 2026-08-23
+
+- Profile language control is a single Dansk / English toggle. Preference is stored in `localStorage` and applied instantly via `applyLanguage()` (nav, map labels, profile, popups, and modals) with no page reload.
+- World Map ☕ pins open a Leaflet mini-card popup (bag thumbnail, name, roaster, localized Vis Detaljer / View Details). That button opens the existing bean detail modal with radar and tasting history.
+- `/api/config` now ships both `da`/`en` dictionaries, and `/api/i18n` serves the PWA language pack.
+
 ## [2.7.0] - 2026-08-23
 
 - Gemini Vision now sends in-memory bag photos as JPEG bytes (`Part.from_bytes`) instead of a filename-less PIL image, so the API no longer crashes on camera/album uploads.

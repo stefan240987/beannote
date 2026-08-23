@@ -158,6 +158,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "favorite_removed": "Fjernet fra favoritter",
         "map_origin": "Oprindelse",
         "recipe_help": "Gem dine egne brygparametre sammen med smagningen.",
+        "view_details": "Vis Detaljer",
+        "tab_rate": "Rate",
+        "tasting_history": "Smagningshistorik",
     },
     "en": {
         "app_name": "BeanNote",
@@ -306,6 +309,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "favorite_removed": "Removed from favorites",
         "map_origin": "Origin",
         "recipe_help": "Save your own brew parameters with the tasting.",
+        "view_details": "View Details",
+        "tab_rate": "Rate",
+        "tasting_history": "Tasting history",
     },
     "de": {
         "app_name": "BeanNote",
@@ -454,6 +460,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "favorite_removed": "Aus Favoriten entfernt",
         "map_origin": "Herkunft",
         "recipe_help": "Speichere deine eigenen Brühparameter mit der Verkostung.",
+        "view_details": "Details ansehen",
+        "tab_rate": "Bewerten",
+        "tasting_history": "Verkostungshistorie",
     },
     "fr": {
         "app_name": "BeanNote",
@@ -602,6 +611,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "favorite_removed": "Retiré des favoris",
         "map_origin": "Origine",
         "recipe_help": "Enregistrez vos paramètres d'infusion avec la dégustation.",
+        "view_details": "Voir les détails",
+        "tab_rate": "Noter",
+        "tasting_history": "Historique des dégustations",
     },
     "es": {
         "app_name": "BeanNote",
@@ -750,6 +762,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "favorite_removed": "Quitado de favoritos",
         "map_origin": "Origen",
         "recipe_help": "Guarda tus propios parámetros de preparación con la cata.",
+        "view_details": "Ver detalles",
+        "tab_rate": "Puntuar",
+        "tasting_history": "Historial de catas",
     },
 }
 

@@ -49,6 +49,16 @@
     .leaflet-container { font-family: inherit; background: #f3ebe3; }
     .leaflet-control-attribution { font-size: 9px; }
     .coffee-pin { background: transparent !important; border: none !important; font-size: 1.6rem; line-height: 1; }
+    .bn-mini-popup .leaflet-popup-content-wrapper {
+      background: #faf6f0;
+      color: #3c2a21;
+      border-radius: 16px;
+      box-shadow: 0 10px 28px rgba(60, 42, 33, 0.2);
+      border: 1px solid #e8d8c8;
+    }
+    .bn-mini-popup .leaflet-popup-content { margin: 10px 12px; width: auto !important; }
+    .bn-mini-popup .leaflet-popup-tip { background: #faf6f0; }
+    .bn-mini-popup .leaflet-popup-close-button { color: #3c2a21 !important; top: 4px; right: 6px; }
     .coffee-pattern {
       background-color: #3c2a21;
       background-image:
@@ -66,6 +76,7 @@
     const LANG_KEY = "beannote_lang";
     const state = {
       config: null,
+      i18n: { da: {}, en: {} },
       user: null,
       tab: "explore",
       authMode: "login",
@@ -98,6 +109,51 @@
       Object.entries(vars).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
       return text;
     };
+    const normalizeLang = (lang) => (String(lang || "da").toLowerCase() === "en" ? "en" : "da");
+
+    function applyLanguage(lang) {
+      const next = normalizeLang(lang);
+      localStorage.setItem(LANG_KEY, next);
+      document.documentElement.lang = next;
+      const strings = state.i18n?.[next] || state.config?.strings || {};
+      state.config = { ...(state.config || {}), lang: next, strings };
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (key) el.textContent = t(key);
+      });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-placeholder");
+        if (key) el.setAttribute("placeholder", t(key));
+      });
+      document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-aria");
+        if (key) el.setAttribute("aria-label", t(key));
+      });
+      document.querySelectorAll("[data-setlang]").forEach((btn) => {
+        const on = btn.dataset.setlang === next;
+        btn.classList.toggle("bg-espresso", on);
+        btn.classList.toggle("text-cream", on);
+        btn.classList.toggle("shadow", on);
+        btn.classList.toggle("text-muted", !on);
+      });
+      if (radarChart) {
+        radarChart.data.labels = [t("acidity"), t("sweetness"), t("body"), t("aftertaste")];
+        if (radarChart.data.datasets[0]) radarChart.data.datasets[0].label = t("radar_you");
+        if (radarChart.data.datasets[1]) radarChart.data.datasets[1].label = t("radar_community");
+        radarChart.update("none");
+      }
+      if (worldMap) {
+        worldMap.eachLayer((layer) => {
+          const popup = layer.getPopup?.();
+          const el = popup?.getElement?.();
+          el?.querySelectorAll("[data-i18n]").forEach((node) => {
+            const key = node.getAttribute("data-i18n");
+            if (key) node.textContent = t(key);
+          });
+        });
+      }
+      render();
+    }
     const token = () => localStorage.getItem(TOKEN_KEY) || "";
     const mediaSrc = (url) => {
       if (!url) return "";
@@ -133,14 +189,22 @@
     }
 
     async function boot() {
-      const lang = localStorage.getItem(LANG_KEY) || "da";
+      const lang = normalizeLang(localStorage.getItem(LANG_KEY) || "da");
+      localStorage.setItem(LANG_KEY, lang);
       try {
         state.config = await api(`/api/config?lang=${lang}`);
+        state.i18n = state.config.i18n || {};
+        if (!state.i18n.da || !state.i18n.en) {
+          try { state.i18n = await api("/api/i18n"); } catch { /* keep config strings */ }
+        }
+        state.config.lang = lang;
+        state.config.strings = state.i18n[lang] || state.config.strings || {};
         state.user = state.config.user;
         if (state.user) await loadBeans();
       } catch {
-        state.config = { strings: {}, langs: { da: "Dansk" }, providers: {}, brew_methods: [], flavor_notes: [] };
+        state.config = { strings: {}, langs: { da: "Dansk", en: "English" }, providers: {}, brew_methods: [], flavor_notes: [] };
       }
+      document.documentElement.lang = lang;
       const params = new URLSearchParams(location.search);
       if (params.get("auth_error")) toast(t("oauth_unavailable"));
       render();
@@ -188,6 +252,32 @@
           <rect x="32" y="10" width="16" height="6" rx="2" fill="#e8d8c8"/>
           <circle cx="40" cy="40" r="9" stroke="#3c2a21" stroke-width="2"/>
         </svg>
+      </div>`;
+    }
+
+    function bagThumb() {
+      return `<div class="coffee-pattern flex h-16 w-16 shrink-0 items-center justify-center rounded">
+        <svg viewBox="0 0 80 64" width="28" height="24" fill="none" aria-hidden="true">
+          <rect x="22" y="10" width="36" height="46" rx="5" fill="#faf6f0"/>
+          <path d="M22 22h36" stroke="#b85c38" stroke-width="3"/>
+          <rect x="32" y="10" width="16" height="6" rx="2" fill="#e8d8c8"/>
+          <circle cx="40" cy="40" r="9" stroke="#3c2a21" stroke-width="2"/>
+        </svg>
+      </div>`;
+    }
+
+    function coffeeMiniCard(bean) {
+      const photo = mediaSrc(bean.image_url);
+      const img = photo
+        ? `<img src="${photo}" alt="" class="h-16 w-16 shrink-0 rounded object-cover">`
+        : bagThumb();
+      return `<div class="flex min-w-[13.5rem] max-w-[16rem] items-center gap-3">
+        ${img}
+        <div class="min-w-0 flex-1">
+          <p class="font-display truncate text-sm font-semibold leading-tight">${esc(bean.name)}</p>
+          <p class="truncate text-xs text-muted">${esc(bean.roaster || "")}</p>
+          <button type="button" data-open-bean="${bean.id}" class="mt-1.5 min-h-8 rounded-lg border border-latte bg-transparent px-2.5 text-xs font-semibold text-espresso" data-i18n="view_details">${t("view_details")}</button>
+        </div>
       </div>`;
     }
 
@@ -257,15 +347,15 @@
       ].filter(Boolean);
       if (!parts.length) return "";
       return `<div class="rounded-xl bg-foam px-3 py-2">
-        <p class="text-sm font-semibold">${t("my_recipe")}</p>
+        <p class="text-sm font-semibold" data-i18n="my_recipe">${t("my_recipe")}</p>
         <p class="mt-0.5 text-xs text-muted">${esc(parts.join(" · "))}</p>
       </div>`;
     }
 
     function segment(name, options, current) {
       return `<div class="grid grid-cols-2 gap-1 rounded-xl bg-foam p-1">
-        ${options.map(([id, label]) => `
-          <button type="button" data-${name}="${id}" class="min-h-10 rounded-lg px-2 text-sm font-semibold ${current === id ? "bg-white text-espresso shadow-sm" : "text-muted"}">${label}</button>
+        ${options.map(([id, label, key]) => `
+          <button type="button" data-${name}="${id}"${key ? ` data-i18n="${key}"` : ""} class="min-h-10 rounded-lg px-2 text-sm font-semibold ${current === id ? "bg-white text-espresso shadow-sm" : "text-muted"}">${label}</button>
         `).join("")}
       </div>`;
     }
@@ -275,7 +365,7 @@
       const compact = [rec.method, rec.grind, rec.temp].filter(Boolean);
       if (!compact.length) return "";
       return `<div class="rounded-xl bg-[#f4ebd9] px-3 py-2">
-        <p class="text-sm font-semibold">${t("brew_recs")}: ${esc(compact.join(" | "))}</p>
+        <p class="text-sm font-semibold"><span data-i18n="brew_recs">${t("brew_recs")}</span>: ${esc(compact.join(" | "))}</p>
         ${rec.ratio ? `<p class="mt-0.5 text-xs text-muted">${esc(rec.ratio)}</p>` : ""}
       </div>`;
     }
@@ -283,7 +373,7 @@
     function storyBlock(story) {
       if (!story) return "";
       return `<details class="rounded-xl bg-foam px-3 py-2">
-        <summary class="cursor-pointer text-sm font-semibold">${t("story_expand")}</summary>
+        <summary class="cursor-pointer text-sm font-semibold" data-i18n="story_expand">${t("story_expand")}</summary>
         <p class="mt-2 text-sm leading-6 text-espresso/80">${esc(story)}</p>
       </details>`;
     }
@@ -372,8 +462,8 @@
         </article>`;
       }).join("");
       const toolbar = `<div class="grid shrink-0 gap-2">
-        ${segment("filter", [["all", t("filter_all_beans")], ["favorites", t("filter_favorites")]], state.beanFilter)}
-        ${segment("view", [["cards", t("view_cards")], ["map", t("view_map")]], state.exploreMode)}
+        ${segment("filter", [["all", t("filter_all_beans"), "filter_all_beans"], ["favorites", t("filter_favorites"), "filter_favorites"]], state.beanFilter)}
+        ${segment("view", [["cards", t("view_cards"), "view_cards"], ["map", t("view_map"), "view_map"]], state.exploreMode)}
       </div>`;
       if (mapMode) {
         return `<section class="flex min-h-0 flex-1 flex-col px-4 pb-[4.75rem] pt-[max(0.75rem,env(safe-area-inset-top))]">
@@ -383,10 +473,32 @@
         </section>`;
       }
       return `<section class="px-4 pb-28 pt-4">
-        <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("search"))}">
+        <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
         <div class="mt-3">${toolbar}</div>
         <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
         ${state.profile?.bean ? beanModal(state.profile) : ""}
+      </section>`;
+    }
+
+    function tastingHistory(history) {
+      const rows = history || [];
+      if (!rows.length) {
+        return `<section>
+          <p class="text-sm font-semibold" data-i18n="tasting_history">${t("tasting_history")}</p>
+          <p class="mt-2 text-sm text-muted" data-i18n="no_ratings">${t("no_ratings")}</p>
+        </section>`;
+      }
+      return `<section class="space-y-2">
+        <p class="text-sm font-semibold" data-i18n="tasting_history">${t("tasting_history")}</p>
+        ${rows.map((row) => `
+          <div class="rounded-xl bg-foam px-3 py-2">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-sm font-semibold text-amber-600">★ ${Number(row.rating || 0).toFixed(1)}</p>
+              <p class="text-xs text-muted">${esc((row.created_at || "").slice(0, 10))}${row.brew_method ? ` · ${esc(row.brew_method)}` : ""}</p>
+            </div>
+            ${row.notes ? `<p class="mt-1 text-sm text-espresso/80">${esc(row.notes)}</p>` : ""}
+          </div>
+        `).join("")}
       </section>`;
     }
 
@@ -396,7 +508,7 @@
       const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
       return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
         <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
-          <button type="button" data-close-modal class="absolute left-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" aria-label="${esc(t("close_detail"))}">✕</button>
+          <button type="button" data-close-modal class="absolute left-3 top-3 z-10 grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
           <div class="relative">
             ${photo ? `<img src="${photo}" alt="" class="max-h-72 w-full object-cover">` : bagFallback("h-56")}
             ${heartBtn(bean, "absolute right-3 top-3")}
@@ -417,12 +529,13 @@
               ${originMapBox(bean)}
             </section>
             <section>
-              <p class="text-sm font-semibold">${t("community_chart")}</p>
+              <p class="text-sm font-semibold" data-i18n="community_chart">${t("community_chart")}</p>
               <div class="relative mx-auto my-3 h-64 w-full">
                 <canvas id="radar"></canvas>
               </div>
             </section>
-            <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("go_rate_existing")}</button>
+            ${tastingHistory(profile.history)}
+            <button data-rate-bean="${bean.id}" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="go_rate_existing">${t("go_rate_existing")}</button>
           </div>
         </article>
       </div>`;
@@ -433,8 +546,8 @@
       if (!scan) {
         return `<section class="px-4 pb-28 pt-6">
           <div class="rounded-2xl border-2 border-dashed border-terracotta/50 bg-white p-6 text-center">
-            <h2 class="font-display text-xl font-bold">${t("scan_card_title")}</h2>
-            <p class="mt-1 text-sm text-muted">${t("scan_card_sub")}</p>
+            <h2 class="font-display text-xl font-bold" data-i18n="scan_card_title">${t("scan_card_title")}</h2>
+            <p class="mt-1 text-sm text-muted" data-i18n="scan_card_sub">${t("scan_card_sub")}</p>
             <label class="mt-5 flex min-h-12 cursor-pointer items-center justify-center rounded-xl bg-terracotta font-semibold text-cream">
               ${t("scan_pick_image")}
               <input id="camera-input" type="file" accept="image/*" capture="environment" class="hidden">
@@ -500,15 +613,15 @@
         `<option ${m === state.rate.brew_method ? "selected" : ""}>${esc(m)}</option>`
       ).join("");
       return `<section class="space-y-4 px-4 pb-28 pt-4">
-        <label class="block text-sm font-medium">${t("select_bean")}
+        <label class="block text-sm font-medium"><span data-i18n="select_bean">${t("select_bean")}</span>
           <select id="rate-bean" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${beans}</select>
         </label>
-        <label class="block text-sm font-medium">${t("brew_method")}
+        <label class="block text-sm font-medium"><span data-i18n="brew_method">${t("brew_method")}</span>
           <select id="brew" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3">${brew}</select>
         </label>
         <fieldset class="space-y-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
-          <legend class="px-1 text-sm font-semibold">${t("my_recipe")}</legend>
-          <p class="text-xs text-muted">${t("recipe_help")}</p>
+          <legend class="px-1 text-sm font-semibold" data-i18n="my_recipe">${t("my_recipe")}</legend>
+          <p class="text-xs text-muted" data-i18n="recipe_help">${t("recipe_help")}</p>
           <label class="block text-sm font-medium">${t("grind_setting")}
             <input id="grind_setting" value="${esc(state.rate.grind_setting || "")}" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3" placeholder="${esc(t("grind_setting_ph"))}">
           </label>
@@ -533,42 +646,49 @@
         <div class="relative mx-auto h-64 w-full">
           <canvas id="radar"></canvas>
         </div>
-        <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${t("save_rating")}</button>
+        <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="save_rating">${t("save_rating")}</button>
       </section>`;
     }
 
+    function langToggle() {
+      const current = normalizeLang(state.config?.lang || localStorage.getItem(LANG_KEY));
+      const btn = (code, label) => {
+        const on = current === code;
+        return `<button type="button" data-setlang="${code}" class="min-h-12 rounded-xl text-sm font-bold tracking-wide ${on ? "bg-espresso text-cream shadow" : "text-muted"}">${label}</button>`;
+      };
+      return `<div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+        <p class="mb-3 text-sm font-semibold" data-i18n="language">${t("language")}</p>
+        <div class="grid grid-cols-2 gap-1.5 rounded-2xl bg-foam p-1.5" role="group" aria-label="${esc(t("language"))}">
+          ${btn("da", "Dansk")}${btn("en", "English")}
+        </div>
+      </div>`;
+    }
+
     function profileView() {
-      const langs = Object.entries(state.config?.langs || {}).map(([code, label]) =>
-        `<option value="${code}" ${code === state.config.lang ? "selected" : ""}>${esc(label)}</option>`
-      ).join("");
       return `<section class="space-y-4 px-4 pb-28 pt-5">
         <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
-          <p class="text-xs uppercase tracking-wider text-muted">${t("signed_in_as")}</p>
+          <p class="text-xs uppercase tracking-wider text-muted" data-i18n="signed_in_as">${t("signed_in_as")}</p>
           <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
           <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
         </div>
-        <div class="space-y-2">
-          <p class="text-sm font-medium">${t("language")}</p>
-          ${segment("setlang", [["da", "Dansk"], ["en", "English"]], state.config.lang)}
-          <select id="lang" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3">${langs}</select>
-        </div>
-        <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold">${t("export_csv")}</a>
-        <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("logout")}</button>
+        ${langToggle()}
+        <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold" data-i18n="export_csv">${t("export_csv")}</a>
+        <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
       </section>`;
     }
 
     function tabbar() {
       const tabs = [
-        ["explore", "☕", t("tab_explore")],
-        ["scan", "📸", t("tab_scan")],
-        ["rate", "✍️", t("tab_review")],
-        ["profile", "👤", t("tab_profile")],
+        ["explore", "☕", "tab_explore"],
+        ["scan", "📸", "tab_scan"],
+        ["rate", "✍️", "tab_rate"],
+        ["profile", "👤", "tab_profile"],
       ];
       return `<nav class="tabbar fixed inset-x-0 bottom-0 z-30 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
         <div class="grid grid-cols-4">
-          ${tabs.map(([id, icon, label]) => `
+          ${tabs.map(([id, icon, key]) => `
             <button data-tab="${id}" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${state.tab === id ? "text-terracotta" : "text-muted"}">
-              <span class="text-lg">${icon}</span>${esc(label)}
+              <span class="text-lg">${icon}</span><span data-i18n="${key}">${esc(t(key))}</span>
             </button>`).join("")}
         </div>
       </nav>`;
@@ -698,22 +818,24 @@
           const lat = Number(bean.latitude);
           const lng = Number(bean.longitude);
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-          const marker = L.marker([lat, lng], { icon: coffeeIcon(bean.id) }).addTo(worldMap);
-          const open = () => openBean(Number(bean.id));
-          marker.on("click", open);
-          marker.getElement()?.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            open();
+          const marker = L.marker([lat, lng], { icon: coffeeIcon() }).addTo(worldMap);
+          marker.bindPopup(coffeeMiniCard(bean), {
+            className: "bn-mini-popup",
+            maxWidth: 280,
+            minWidth: 220,
+            closeButton: true,
+            autoPan: true,
+          });
+          marker.on("popupopen", () => {
+            const btn = marker.getPopup()?.getElement()?.querySelector("[data-open-bean]");
+            btn?.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              marker.closePopup();
+              openBean(Number(bean.id));
+            });
           });
           points.push([lat, lng]);
-        });
-        world.querySelectorAll("[data-open-bean]").forEach((el) => {
-          el.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openBean(Number(el.dataset.openBean));
-          });
         });
         const placeWorld = () => {
           if (points.length === 1) worldMap.setView(points[0], 5);
@@ -974,16 +1096,9 @@
           toast(t(err.detail || "required"));
         }
       });
-      async function changeLang(lang) {
-        localStorage.setItem(LANG_KEY, lang);
-        state.config = await api(`/api/config?lang=${lang}`);
-        document.documentElement.lang = lang;
-        render();
-      }
       document.querySelectorAll("[data-setlang]").forEach((btn) => {
-        btn.addEventListener("click", () => changeLang(btn.dataset.setlang));
+        btn.addEventListener("click", () => applyLanguage(btn.dataset.setlang));
       });
-      $("#lang")?.addEventListener("change", (event) => changeLang(event.target.value));
       $("#logout")?.addEventListener("click", async () => {
         await api("/api/auth/logout", { method: "POST", body: "{}" });
         localStorage.removeItem(TOKEN_KEY);

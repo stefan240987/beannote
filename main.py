@@ -53,6 +53,8 @@ from ocr import (
 )
 from translations import LANGS, STRINGS, t
 
+UI_LANGS = {"da": LANGS["da"], "en": LANGS["en"]}
+
 ensure_local_env()
 load_local_env()
 
@@ -330,14 +332,15 @@ def health() -> dict[str, Any]:
 @app.get("/api/config")
 def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_user)) -> dict[str, Any]:
     lang = (request.query_params.get("lang") or "da").lower()
-    if lang not in LANGS:
+    if lang not in UI_LANGS:
         lang = "da"
     local = ENVIRONMENT == "local"
     return {
         "version": VERSION,
         "lang": lang,
-        "langs": LANGS,
+        "langs": UI_LANGS,
         "strings": STRINGS.get(lang) or STRINGS["en"],
+        "i18n": {code: STRINGS[code] for code in UI_LANGS},
         "user": user,
         "environment": ENVIRONMENT,
         "local_dev": local,
@@ -745,9 +748,17 @@ def export_log(fmt: str = "csv", _user: dict[str, Any] = Depends(current_user)) 
     )
 
 
+@app.get("/api/i18n")
+def i18n_pack() -> dict[str, dict[str, str]]:
+    return {code: STRINGS[code] for code in UI_LANGS}
+
+
 @app.get("/api/i18n/{lang}")
 def i18n(lang: str) -> dict[str, str]:
-    return STRINGS.get(lang) or STRINGS["en"]
+    code = (lang or "da").lower()
+    if code not in UI_LANGS:
+        code = "da"
+    return STRINGS.get(code) or STRINGS["en"]
 
 
 @app.get("/media/{image_name}")

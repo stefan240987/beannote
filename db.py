@@ -15,7 +15,7 @@ from typing import Any, Iterator
 
 import bcrypt
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
@@ -887,7 +887,10 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
             "water_grams": user.get("water_grams"),
             "brew_time": (user.get("brew_time") or "").strip(),
         }
-    return {"bean": bean, "community": community, "user": user}
+    history = []
+    if user_id is not None:
+        history = [row for row in list_ratings(bean_id) if row.get("user_id") == user_id]
+    return {"bean": bean, "community": community, "user": user, "history": history}
 
 
 def export_ratings(fmt: str = "csv") -> tuple[str, str, bytes]:
