@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shutil
@@ -78,8 +79,29 @@ FIELD_LABELS = re.compile(
 
 NOISE_LINE = re.compile(
     r"^(www\.|https?://|\d+\s*(g|kg|ml|%|gram)|net\s*wt|best\s*before|"
-    r"holdbar|e\s*\d{3,}|est\.?\s*\d{2,4}|©|scan|batch)$",
+    r"holdbar|e\s*\d{3,}|est\.?\s*\d{0,4}|©|scan|batch|"
+    r"ler\s+oil|sedato|a\s+posen|posen)$",
     re.IGNORECASE,
+)
+
+GRAPHIC_NOISE = re.compile(
+    r"^(ler\s+oil|est\.?|sedato|a\s+posen|posen)$",
+    re.IGNORECASE,
+)
+
+# Strong coffee titles — checked in the upper/middle block first.
+NAME_PRIORITY = [
+    (r"slow\s+roast", "Slow Roast"),
+    (r"yirgacheffe", "Yirgacheffe"),
+    (r"geisha|gesha", "Geisha"),
+    (r"crema", "Crema"),
+]
+
+ORIGIN_FUZZY_CUTOFF = 0.80
+
+PROCESS_LINE = re.compile(
+    r"(?i)^\s*(natural|naturlig|washed|vasket|wet\s+process|fully\s+washed|"
+    r"honey|pulped\s+natural|anaerobic|anaerob|carbonic|dry\s+process)\s*$",
 )
 
 NOTES_LEAD = re.compile(
@@ -257,24 +279,63 @@ def _value_after_label(lines: list[str], blob: str, labels: tuple[str, ...]) -> 
     return match.group(1).strip() if match else ""
 
 
+def _origin_lookup() -> dict[str, str]:
+    return {origin.lower(): ORIGIN_CANON.get(origin.lower(), origin) for origin in ORIGINS}
+
+
+def _origin_skip_tokens() -> set[str]:
+    skip = {
+        "crema", "geisha", "gesha", "yirgacheffe", "sedato", "posen",
+        "roaster", "coffee", "specialty", "process", "origin", "natural",
+        "washed", "vasket", "honey", "anaerobic", "citrus", "karamel",
+        "forarbejdning", "oprindelse", "ristningsgrad", "mellemristet",
+    }
+    for aliases in (*PROCESS_MAP.values(), *ROAST_MAP.values(), *FLAVOR_ALIASES.values()):
+        skip.update(alias.lower() for alias in aliases)
+    for pattern, title in NAME_PRIORITY:
+        skip.update(title.lower().split())
+    return skip
+
+
 def _countries_in(text: str) -> list[str]:
+    if not text:
+        return []
     hits: list[tuple[int, str]] = []
     seen: set[str] = set()
+    lookup = _origin_lookup()
+
     for origin in sorted(ORIGINS, key=len, reverse=True):
         match = re.search(rf"\b{re.escape(origin)}\b", text, re.IGNORECASE)
         if not match:
             continue
-        canon = ORIGIN_CANON.get(origin.lower(), origin)
+        canon = lookup[origin.lower()]
         if canon not in seen:
             seen.add(canon)
             hits.append((match.start(), canon))
+
+    skip = _origin_skip_tokens()
+    for match in re.finditer(r"[A-Za-zÆØÅÄÖÜæøåäöü]{5,}", text):
+        token = match.group(0).lower()
+        if token in skip or token in lookup:
+            continue
+        close = difflib.get_close_matches(token, list(lookup), n=1, cutoff=ORIGIN_FUZZY_CUTOFF)
+        if not close:
+            continue
+        canon = lookup[close[0]]
+        if canon not in seen:
+            seen.add(canon)
+            hits.append((match.start(), canon))
+
     hits.sort(key=lambda item: item[0])
     return [name for _, name in hits]
 
 
 def _find_origin(lines: list[str], blob: str) -> str:
     labeled = _value_after_label(lines, blob, ("oprindelse", "origin"))
-    countries = _countries_in(labeled) if labeled else _countries_in(blob)
+    countries = _countries_in(labeled) if labeled else []
+    for country in _countries_in(blob):
+        if country not in countries:
+            countries.append(country)
     return " / ".join(countries)
 
 
@@ -292,9 +353,16 @@ def _without_notes(blob: str) -> str:
 
 
 def _find_process(lines: list[str], blob: str) -> str:
+    for line in lines:
+        if PROCESS_LINE.match(line):
+            hit = _map_aliases(line, PROCESS_MAP)
+            if hit:
+                return hit
     labeled = _value_after_label(lines, blob, ("forarbejdning", "process", "proces"))
     if labeled:
-        return _map_aliases(labeled, PROCESS_MAP)
+        hit = _map_aliases(labeled, PROCESS_MAP)
+        if hit:
+            return hit
     return _map_aliases(_without_notes(blob), PROCESS_MAP)
 
 
@@ -317,11 +385,15 @@ def _find_roast(lines: list[str], blob: str) -> str:
 
 
 def _is_year_est(line: str) -> bool:
-    return bool(re.search(r"(?i)^est\.?\s*\d{2,4}$", line.strip()))
+    return bool(re.search(r"(?i)^est\.?\s*\d{0,4}$", line.strip()))
+
+
+def _is_graphic_noise(line: str) -> bool:
+    return bool(GRAPHIC_NOISE.match(line.strip()) or NOISE_LINE.match(line.strip()))
 
 
 def _is_roaster_line(line: str) -> bool:
-    if FIELD_LABELS.match(line) or _is_year_est(line):
+    if FIELD_LABELS.match(line) or _is_year_est(line) or _is_graphic_noise(line):
         return False
     return bool(ROASTER_MARKERS.search(line))
 
@@ -366,6 +438,13 @@ def _looks_like_spec(line: str) -> bool:
     return False
 
 
+def _priority_title(text: str) -> str:
+    for pattern, title in NAME_PRIORITY:
+        if re.search(rf"\b(?:{pattern})\b", text, re.IGNORECASE):
+            return title
+    return ""
+
+
 def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
     skip = {roaster.lower(), origin.lower(), "coffee", "kaffe", "specialty"}
     for part in origin.split(" / "):
@@ -375,10 +454,18 @@ def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
         skip.add(known.lower())
     roaster_words = set(roaster.lower().split())
 
+    mid = max(1, int(len(lines) * 0.70)) if lines else 0
+    upper_mid = "\n".join(lines[:mid])
+    priority = _priority_title(upper_mid) or _priority_title("\n".join(lines))
+    if priority:
+        return priority
+
     for line in lines:
         lowered = line.lower()
         line_words = set(lowered.split())
         if lowered in skip or _is_roaster_line(line) or _is_year_est(line):
+            continue
+        if _is_graphic_noise(line):
             continue
         if roaster_words and line_words and line_words <= roaster_words:
             continue
@@ -413,7 +500,7 @@ def _find_notes(blob: str) -> tuple[str, list[str]]:
     if match:
         snippet = re.split(rf"(?i)\s+(?:{_NEXT_FIELD})\b", match.group(1), maxsplit=1)[0]
         snippet = re.sub(r"\s+", " ", snippet).strip(" -:.,")[:180]
-    flavors = _match_flavors(snippet or blob)
+    flavors = _match_flavors(blob)
     if not snippet and flavors:
         snippet = ", ".join(flavors)
     return snippet, flavors
