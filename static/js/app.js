@@ -712,7 +712,11 @@ function suitabilityBar() {
 function suitabilityLine(tags) {
   const labels = (tags || []).map(localizeSuitable).filter(Boolean);
   if (!labels.length) return "";
-  return `<p class="text-sm font-medium text-espresso">${esc(t("suitable_for"))}: ${esc(labels.join(" · "))}</p>`;
+  const chips = labels.map((label) => `<span class="suitable-pill">${esc(label)}</span>`).join("");
+  return `<div class="inline-flex max-w-full flex-wrap items-center gap-1.5">
+    <span class="text-sm font-semibold text-espresso">${esc(t("suitable_for"))}:</span>
+    ${chips}
+  </div>`;
 }
 
 function localizeBrewMethod(method) {
@@ -1051,8 +1055,7 @@ function beanModal(profile) {
           <button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>
           ${state.rateOpen ? rateForm() : ""}
           ${retailerActions(bean)}
-          ${flavorPills ? `<div class="flex flex-wrap gap-1">${flavorPills}</div>` : ""}
-          ${suitabilityLine(bean.suitable_for)}
+          ${flavorPills || (bean.suitable_for || []).length ? `<div class="flex flex-wrap items-center gap-1.5">${flavorPills}${suitabilityLine(bean.suitable_for)}</div>` : ""}
           ${metaBadges(bean)}
           ${storyBlock(bean.story)}
         </section>

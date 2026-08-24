@@ -240,7 +240,9 @@ def normalize_gear_item(item: Any) -> dict[str, Any] | None:
     name = str(item.get("model_name") or item.get("name") or "").strip()
     if not name:
         return None
-    kind = canonical_gear_kind(item.get("kind") or item.get("gear_type") or "other")
+    kind = canonical_gear_kind(
+        item.get("kind") or item.get("type") or item.get("gear_type") or "other"
+    )
     raw_highlights = item.get("highlights") or []
     if isinstance(raw_highlights, str):
         highlights = [part.strip() for part in raw_highlights.split(",") if part.strip()]
@@ -363,7 +365,7 @@ def search_local_gear(query: str, kind: str = "") -> list[dict[str, Any]]:
                 score = 1.4
         if score <= 0:
             continue
-        item_kind = canonical_gear_kind(str(raw.get("kind") or ""))
+        item_kind = canonical_gear_kind(str(raw.get("kind") or raw.get("type") or ""))
         if slot and item_kind == slot:
             score += 0.35
         ranked.append((score, raw))

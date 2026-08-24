@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.2.0] - 2026-08-24
+
+- snapshot: v6.2.0 - added brew method badges, local gear catalog, and iOS zoom fix
+- Bean Detail renders `suitable_for` as cream/terracotta pills beside flavor tags (`🎯 Egnet til`).
+- `POST /api/gear/lookup` searches `gear_catalog.json` first for 0ms matches, then Gemini Flash grounding.
+- iOS viewport is `maximum-scale=1.0, user-scalable=no` and form controls stay `font-size: 16px` so Safari does not auto-zoom.
+
 ## [fix] - 2026-08-24
 
 - snapshot: fix - resolved post-modularization scanning crash

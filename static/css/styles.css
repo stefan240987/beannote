@@ -175,5 +175,18 @@ body.modal-open { overflow: hidden; }
   object-position: center;
 }
 
+.suitable-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  background: #faf6f0;
+  color: #b85c38;
+  border: 1px solid #b85c38;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
 /* iOS Safari: 16px on form controls prevents auto-zoom on focus */
 input, select, textarea { font-size: 16px !important; }

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from db import save_bean_image, update_user_gear
+from db import save_bean_image, search_local_gear, update_user_gear
 from deps import current_user
 from ocr import encode_scan_jpeg, lookup_gear_catalog
 from schemas import GearIn, GearLookupIn
@@ -25,6 +25,9 @@ def gear_lookup(
     chosen = (payload.lang or request.query_params.get("lang") or "da").lower().strip()
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
+    local = search_local_gear(payload.query, kind=payload.kind)
+    if local:
+        return {"gear_candidates": local, "specs": local[0]}
     try:
         candidates = lookup_gear_catalog(payload.query, kind=payload.kind, lang=chosen)
     except ValueError as exc:

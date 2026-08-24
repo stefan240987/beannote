@@ -1,654 +1,572 @@
 [
   {
+    "brand": "Profitec",
     "name": "Profitec Drive",
-    "brand": "Profitec",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "drive"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID",
-      "Rotary"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true,
-      "pump": "Rotary",
-      "group": "E61"
-    }
+    "aliases": ["drive"],
+    "highlights": ["Dual Boiler", "PID", "Rotary"],
+    "specs": {"boiler": "Dual Boiler", "pid": true, "pump": "Rotary", "group": "E61"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-drive.png"
   },
   {
+    "brand": "Profitec",
     "name": "Profitec Pro 700",
-    "brand": "Profitec",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "pro 700",
-      "pro700"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID",
-      "Rotary"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true,
-      "pump": "Rotary",
-      "group": "E61"
-    }
+    "aliases": ["pro 700", "pro700"],
+    "highlights": ["Dual Boiler", "PID", "Rotary"],
+    "specs": {"boiler": "Dual Boiler", "pid": true, "pump": "Rotary", "group": "E61"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-pro-700.png"
   },
   {
+    "brand": "Profitec",
     "name": "Profitec Go",
-    "brand": "Profitec",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "go"
-    ],
-    "highlights": [
-      "Heat Exchanger",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Heat Exchanger",
-      "pid": true,
-      "pump": "Vibratory",
-      "group": "E61"
-    }
+    "aliases": ["go"],
+    "highlights": ["Heat Exchanger", "PID"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "pump": "Vibratory", "group": "E61"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-go.png"
   },
   {
+    "brand": "Profitec",
     "name": "Profitec Pro 400",
-    "brand": "Profitec",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "pro 400",
-      "pro400"
-    ],
-    "highlights": [
-      "Heat Exchanger",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Heat Exchanger",
-      "pid": true,
-      "group": "E61"
-    }
+    "aliases": ["pro 400", "pro400"],
+    "highlights": ["Heat Exchanger", "PID"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "group": "E61"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-pro-400.png"
   },
   {
+    "brand": "Profitec",
+    "name": "Profitec Pro 500",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["pro 500", "pro500"],
+    "highlights": ["Heat Exchanger", "PID", "Rotary"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "pump": "Rotary", "group": "E61"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-pro-500.png"
+  },
+  {
+    "brand": "Profitec",
     "name": "Profitec Pro 600",
-    "brand": "Profitec",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "pro 600"
-    ],
-    "highlights": [
-      "Heat Exchanger",
-      "PID",
-      "Rotary"
-    ],
-    "specs": {
-      "boiler": "Heat Exchanger",
-      "pid": true,
-      "pump": "Rotary"
-    }
+    "aliases": ["pro 600", "pro600"],
+    "highlights": ["Heat Exchanger", "PID", "Rotary"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "pump": "Rotary"},
+    "image_url": "https://www.profitec-espresso.com/out/pictures/generated/product/1/650_650_90/profitec-pro-600.png"
   },
   {
-    "name": "Lelit Bianca",
-    "brand": "Lelit",
-    "kind": "espresso_machine",
-    "aliases": [
-      "bianca",
-      "pl162t"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID",
-      "Flow Control"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true,
-      "group": "E61"
-    }
-  },
-  {
-    "name": "Lelit Mara X",
-    "brand": "Lelit",
-    "kind": "espresso_machine",
-    "aliases": [
-      "mara x",
-      "marax"
-    ],
-    "highlights": [
-      "Heat Exchanger",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Heat Exchanger",
-      "pid": true
-    }
-  },
-  {
-    "name": "Lelit Victoria",
-    "brand": "Lelit",
-    "kind": "espresso_machine",
-    "aliases": [
-      "victoria"
-    ],
-    "highlights": [
-      "Single Boiler",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Single Boiler",
-      "pid": true
-    }
-  },
-  {
-    "name": "La Marzocco Linea Mini",
-    "brand": "La Marzocco",
-    "kind": "espresso_machine",
-    "aliases": [
-      "linea mini",
-      "lm linea"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true
-    }
-  },
-  {
-    "name": "Rocket Appartamento",
-    "brand": "Rocket",
-    "kind": "espresso_machine",
-    "aliases": [
-      "appartamento"
-    ],
-    "highlights": [
-      "Heat Exchanger"
-    ],
-    "specs": {
-      "boiler": "Heat Exchanger",
-      "group": "E61"
-    }
-  },
-  {
-    "name": "ECM Synchronika",
     "brand": "ECM",
+    "name": "ECM Synchronika",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "synchronika"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID",
-      "Rotary"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true,
-      "pump": "Rotary"
-    }
+    "aliases": ["synchronika"],
+    "highlights": ["Dual Boiler", "PID", "Rotary"],
+    "specs": {"boiler": "Dual Boiler", "pid": true, "pump": "Rotary", "group": "E61"},
+    "image_url": "https://www.ecm.de/out/pictures/generated/product/1/650_650_90/ecm-synchronika.png"
   },
   {
-    "name": "Decent DE1",
-    "brand": "Decent",
+    "brand": "ECM",
+    "name": "ECM Mechanika VI Slim",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "de1",
-      "decent de1"
-    ],
-    "highlights": [
-      "Profile",
-      "Tablet"
-    ],
-    "specs": {
-      "boiler": "Thermocoil",
-      "pid": true
-    }
+    "aliases": ["mechanika", "mechanika vi"],
+    "highlights": ["Heat Exchanger", "PID"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "group": "E61"},
+    "image_url": "https://www.ecm.de/out/pictures/generated/product/1/650_650_90/ecm-mechanika-vi.png"
   },
   {
-    "name": "Gaggia Classic Pro",
-    "brand": "Gaggia",
+    "brand": "ECM",
+    "name": "ECM Classika PID",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "classic pro",
-      "gcp"
-    ],
-    "highlights": [
-      "Single Boiler"
-    ],
-    "specs": {
-      "boiler": "Single Boiler",
-      "pump": "Vibratory"
-    }
+    "aliases": ["classika"],
+    "highlights": ["Single Boiler", "PID"],
+    "specs": {"boiler": "Single Boiler", "pid": true, "group": "E61"},
+    "image_url": "https://www.ecm.de/out/pictures/generated/product/1/650_650_90/ecm-classika-pid.png"
   },
   {
+    "brand": "ECM",
+    "name": "ECM Puristika",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["puristika"],
+    "highlights": ["Single Boiler", "PID", "Espresso only"],
+    "specs": {"boiler": "Single Boiler", "pid": true},
+    "image_url": "https://www.ecm.de/out/pictures/generated/product/1/650_650_90/ecm-puristika.png"
+  },
+  {
+    "brand": "La Marzocco",
+    "name": "La Marzocco Linea Mini",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["linea mini", "lm linea"],
+    "highlights": ["Dual Boiler", "PID"],
+    "specs": {"boiler": "Dual Boiler", "pid": true},
+    "image_url": "https://home.lamarzoccousa.com/wp-content/uploads/2024/02/Mini-Gray.png"
+  },
+  {
+    "brand": "La Marzocco",
+    "name": "La Marzocco Linea Micra",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["linea micra", "micra"],
+    "highlights": ["Dual Boiler", "Compact"],
+    "specs": {"boiler": "Dual Boiler", "pid": true},
+    "image_url": "https://home.lamarzoccousa.com/wp-content/uploads/2024/02/Silver-front-1.png"
+  },
+  {
+    "brand": "La Marzocco",
+    "name": "La Marzocco GS3",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["gs3", "gs/3"],
+    "highlights": ["Dual Boiler", "Saturated Group"],
+    "specs": {"boiler": "Dual Boiler", "pid": true},
+    "image_url": "https://home.lamarzoccousa.com/wp-content/uploads/2021/03/GS3-AV.png"
+  },
+  {
+    "brand": "Sage",
     "name": "Sage Barista Express",
-    "brand": "Sage",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "breville barista express",
-      "bes870"
-    ],
-    "highlights": [
-      "Thermocoil",
-      "Built-in Grinder"
-    ],
-    "specs": {
-      "boiler": "Thermocoil",
-      "pid": true
-    }
+    "aliases": ["breville barista express", "bes870"],
+    "highlights": ["Thermocoil", "Built-in Grinder"],
+    "specs": {"boiler": "Thermocoil", "pid": true},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/width=1000,format=auto/BES870/BES870BSS1BNA1.png"
   },
   {
+    "brand": "Sage",
+    "name": "Sage Barista Pro",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["breville barista pro", "bes878"],
+    "highlights": ["ThermoJet", "Built-in Grinder", "PID"],
+    "specs": {"boiler": "ThermoJet", "pid": true},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/width=1000,format=auto/BES878/BES878BSS1BNA1.png"
+  },
+  {
+    "brand": "Sage",
     "name": "Sage Dual Boiler",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["breville dual boiler", "bes920", "oracle dual boiler"],
+    "highlights": ["Dual Boiler", "PID"],
+    "specs": {"boiler": "Dual Boiler", "pid": true},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/width=1000,format=auto/BES920/BES920BSS1BNA1.png"
+  },
+  {
     "brand": "Sage",
+    "name": "Sage Bambino Plus",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "breville dual boiler",
-      "bes920"
-    ],
-    "highlights": [
-      "Dual Boiler",
-      "PID"
-    ],
-    "specs": {
-      "boiler": "Dual Boiler",
-      "pid": true
-    }
+    "aliases": ["breville bambino", "bambino plus", "bes500"],
+    "highlights": ["ThermoJet", "Compact"],
+    "specs": {"boiler": "ThermoJet", "pid": true},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/width=1000,format=auto/BES500/BES500BSS1BNA1.png"
   },
   {
-    "name": "Rancilio Silvia",
+    "brand": "Sage",
+    "name": "Sage Oracle Touch",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["breville oracle", "bes990"],
+    "highlights": ["Dual Boiler", "Automatic"],
+    "specs": {"boiler": "Dual Boiler", "pid": true},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/width=1000,format=auto/BES990/BES990BSS1BNA1.png"
+  },
+  {
+    "brand": "Rocket",
+    "name": "Rocket Appartamento",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["appartamento"],
+    "highlights": ["Heat Exchanger"],
+    "specs": {"boiler": "Heat Exchanger", "group": "E61"},
+    "image_url": "https://www.rocket-espresso.it/wp-content/uploads/appartamento.png"
+  },
+  {
+    "brand": "Rocket",
+    "name": "Rocket Mozzafiato",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["mozzafiato", "mozzafiato cronometro"],
+    "highlights": ["Heat Exchanger", "PID"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true, "group": "E61"},
+    "image_url": "https://www.rocket-espresso.it/wp-content/uploads/mozzafiato.png"
+  },
+  {
+    "brand": "Rocket",
+    "name": "Rocket Cinquantotto",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["r58", "cinquantotto"],
+    "highlights": ["Dual Boiler", "PID"],
+    "specs": {"boiler": "Dual Boiler", "pid": true, "group": "E61"},
+    "image_url": "https://www.rocket-espresso.it/wp-content/uploads/cinquantotto.png"
+  },
+  {
+    "brand": "Gaggia",
+    "name": "Gaggia Classic Pro",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["classic pro", "gcp"],
+    "highlights": ["Single Boiler"],
+    "specs": {"boiler": "Single Boiler", "pump": "Vibratory"},
+    "image_url": "https://www.gaggia.com/wp-content/uploads/gaggia-classic-pro.png"
+  },
+  {
+    "brand": "Gaggia",
+    "name": "Gaggia Classic Evo Pro",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["classic evo", "evo pro"],
+    "highlights": ["Single Boiler", "9 bar"],
+    "specs": {"boiler": "Single Boiler", "pump": "Vibratory"},
+    "image_url": "https://www.gaggia.com/wp-content/uploads/gaggia-classic-evo-pro.png"
+  },
+  {
+    "brand": "Lelit",
+    "name": "Lelit Bianca",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["bianca", "pl162t"],
+    "highlights": ["Dual Boiler", "PID", "Flow Control"],
+    "specs": {"boiler": "Dual Boiler", "pid": true, "group": "E61"},
+    "image_url": "https://www.lelit.com/wp-content/uploads/lelit-bianca.png"
+  },
+  {
+    "brand": "Lelit",
+    "name": "Lelit Mara X",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["mara x", "marax"],
+    "highlights": ["Heat Exchanger", "PID"],
+    "specs": {"boiler": "Heat Exchanger", "pid": true},
+    "image_url": "https://www.lelit.com/wp-content/uploads/lelit-mara-x.png"
+  },
+  {
+    "brand": "Lelit",
+    "name": "Lelit Victoria",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["victoria"],
+    "highlights": ["Single Boiler", "PID"],
+    "specs": {"boiler": "Single Boiler", "pid": true},
+    "image_url": "https://www.lelit.com/wp-content/uploads/lelit-victoria.png"
+  },
+  {
+    "brand": "Decent",
+    "name": "Decent DE1",
+    "type": "espresso_machine",
+    "kind": "espresso_machine",
+    "aliases": ["de1", "decent de1"],
+    "highlights": ["Profile", "Tablet"],
+    "specs": {"boiler": "Thermocoil", "pid": true},
+    "image_url": "https://decentespresso.com/images/de1.png"
+  },
+  {
     "brand": "Rancilio",
+    "name": "Rancilio Silvia",
+    "type": "espresso_machine",
     "kind": "espresso_machine",
-    "aliases": [
-      "silvia",
-      "silvia pro"
-    ],
-    "highlights": [
-      "Single Boiler"
-    ],
-    "specs": {
-      "boiler": "Single Boiler"
-    }
+    "aliases": ["silvia", "silvia pro"],
+    "highlights": ["Single Boiler"],
+    "specs": {"boiler": "Single Boiler"},
+    "image_url": "https://www.ranciliogroup.com/wp-content/uploads/silvia.png"
   },
   {
+    "brand": "Mahlkönig",
     "name": "Mahlkönig E65S",
-    "brand": "Mahlkönig",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "mahlkonig e65s",
-      "e65s",
-      "e65"
-    ],
-    "highlights": [
-      "65mm Flat Burrs",
-      "Grind by Time"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "65mm"
-    }
+    "aliases": ["mahlkonig e65s", "e65s", "e65"],
+    "highlights": ["65mm Flat Burrs", "Grind by Time"],
+    "specs": {"burrs": "Flat", "burr_size": "65mm"},
+    "image_url": "https://www.mahlkoenig.com/wp-content/uploads/e65s.png"
   },
   {
+    "brand": "Mahlkönig",
     "name": "Mahlkönig E80S",
-    "brand": "Mahlkönig",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "mahlkonig e80s",
-      "e80s",
-      "e80"
-    ],
-    "highlights": [
-      "80mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "80mm"
-    }
+    "aliases": ["mahlkonig e80s", "e80s", "e80"],
+    "highlights": ["80mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "80mm"},
+    "image_url": "https://www.mahlkoenig.com/wp-content/uploads/e80s.png"
   },
   {
+    "brand": "Mahlkönig",
     "name": "Mahlkönig X54",
-    "brand": "Mahlkönig",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "mahlkonig x54",
-      "x54"
-    ],
-    "highlights": [
-      "54mm Flat Burrs",
-      "Home"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "54mm"
-    }
+    "aliases": ["mahlkonig x54", "x54"],
+    "highlights": ["54mm Flat Burrs", "Home"],
+    "specs": {"burrs": "Flat", "burr_size": "54mm"},
+    "image_url": "https://www.mahlkoenig.com/wp-content/uploads/x54.png"
   },
   {
+    "brand": "Mahlkönig",
     "name": "Mahlkönig EK43",
-    "brand": "Mahlkönig",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "mahlkonig ek43",
-      "ek43",
-      "ek 43"
-    ],
-    "highlights": [
-      "98mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "98mm"
-    }
+    "aliases": ["mahlkonig ek43", "ek43", "ek 43"],
+    "highlights": ["98mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "98mm"},
+    "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Mahlkoenig_EK43.jpg/640px-Mahlkoenig_EK43.jpg"
   },
   {
+    "brand": "DF64",
     "name": "DF64 Gen 2",
-    "brand": "Turin",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "df64",
-      "df64 gen2",
-      "df 64"
-    ],
-    "highlights": [
-      "64mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "64mm"
-    }
+    "aliases": ["df64", "df64 gen2", "df 64", "turin df64"],
+    "highlights": ["64mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "64mm"},
+    "image_url": "https://df64coffee.com/cdn/shop/files/df64-gen2.png"
   },
   {
+    "brand": "DF64",
     "name": "DF64V",
-    "brand": "Turin",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "df64v",
-      "df64 v"
-    ],
-    "highlights": [
-      "64mm Flat Burrs",
-      "Variable RPM"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "64mm"
-    }
+    "aliases": ["df64v", "df64 v"],
+    "highlights": ["64mm Flat Burrs", "Variable RPM"],
+    "specs": {"burrs": "Flat", "burr_size": "64mm"},
+    "image_url": "https://df64coffee.com/cdn/shop/files/df64v.png"
   },
   {
+    "brand": "DF64",
     "name": "DF83V",
-    "brand": "Turin",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "df83",
-      "df83v"
-    ],
-    "highlights": [
-      "83mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "83mm"
-    }
+    "aliases": ["df83", "df83v"],
+    "highlights": ["83mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "83mm"},
+    "image_url": "https://df64coffee.com/cdn/shop/files/df83v.png"
   },
   {
+    "brand": "Niche",
     "name": "Niche Zero",
-    "brand": "Niche",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "zero"
-    ],
-    "highlights": [
-      "63mm Conical",
-      "Single Dose"
-    ],
-    "specs": {
-      "burrs": "Conical",
-      "burr_size": "63mm"
-    }
+    "aliases": ["zero"],
+    "highlights": ["63mm Conical", "Single Dose"],
+    "specs": {"burrs": "Conical", "burr_size": "63mm"},
+    "image_url": "https://www.nichecoffee.co.uk/cdn/shop/files/niche-zero.png"
   },
   {
+    "brand": "Niche",
     "name": "Niche Duo",
-    "brand": "Niche",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "duo"
-    ],
-    "highlights": [
-      "83mm Conical",
-      "Single Dose"
-    ],
-    "specs": {
-      "burrs": "Conical",
-      "burr_size": "83mm"
-    }
+    "aliases": ["duo"],
+    "highlights": ["83mm Conical", "Single Dose"],
+    "specs": {"burrs": "Conical", "burr_size": "83mm"},
+    "image_url": "https://www.nichecoffee.co.uk/cdn/shop/files/niche-duo.png"
   },
   {
+    "brand": "Eureka",
     "name": "Eureka Mignon Specialita",
-    "brand": "Eureka",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "specialita",
-      "mignon specialita"
-    ],
-    "highlights": [
-      "55mm Flat Burrs",
-      "Silent"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "55mm"
-    }
+    "aliases": ["specialita", "mignon specialita"],
+    "highlights": ["55mm Flat Burrs", "Silent"],
+    "specs": {"burrs": "Flat", "burr_size": "55mm"},
+    "image_url": "https://www.eureka.co.it/wp-content/uploads/mignon-specialita.png"
   },
   {
+    "brand": "Eureka",
     "name": "Eureka Mignon Libra",
-    "brand": "Eureka",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "libra",
-      "mignon libra"
-    ],
-    "highlights": [
-      "Grind by Weight"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "65mm"
-    }
+    "aliases": ["libra", "mignon libra"],
+    "highlights": ["Grind by Weight"],
+    "specs": {"burrs": "Flat", "burr_size": "65mm"},
+    "image_url": "https://www.eureka.co.it/wp-content/uploads/mignon-libra.png"
   },
   {
+    "brand": "Eureka",
     "name": "Eureka Mignon Silenzio",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["silenzio"],
+    "highlights": ["50mm Flat Burrs", "Silent"],
+    "specs": {"burrs": "Flat", "burr_size": "50mm"},
+    "image_url": "https://www.eureka.co.it/wp-content/uploads/mignon-silenzio.png"
+  },
+  {
     "brand": "Eureka",
+    "name": "Eureka Mignon Oro",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "silenzio"
-    ],
-    "highlights": [
-      "50mm Flat Burrs",
-      "Silent"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "50mm"
-    }
+    "aliases": ["oro", "mignon oro"],
+    "highlights": ["65mm Flat Burrs", "Single Dose"],
+    "specs": {"burrs": "Flat", "burr_size": "65mm"},
+    "image_url": "https://www.eureka.co.it/wp-content/uploads/mignon-oro.png"
   },
   {
+    "brand": "Baratza",
+    "name": "Baratza Encore",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["encore"],
+    "highlights": ["40mm Conical", "Filter"],
+    "specs": {"burrs": "Conical", "burr_size": "40mm"},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/format=auto/ZCG485/ZCG485_Carousel1.png"
+  },
+  {
+    "brand": "Baratza",
+    "name": "Baratza Encore ESP",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["encore esp"],
+    "highlights": ["40mm Conical", "Espresso + Filter"],
+    "specs": {"burrs": "Conical", "burr_size": "40mm"},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/format=auto/ZCG430/ZCG430_Carousel1.png"
+  },
+  {
+    "brand": "Baratza",
+    "name": "Baratza Sette 270",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["sette", "sette 270"],
+    "highlights": ["40mm Conical", "Espresso"],
+    "specs": {"burrs": "Conical", "burr_size": "40mm"},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/format=auto/ZCG270/ZCG270_Carousel1.png"
+  },
+  {
+    "brand": "Baratza",
+    "name": "Baratza Forte BG",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["forte", "forte bg"],
+    "highlights": ["54mm Flat Burrs", "Grind by Weight"],
+    "specs": {"burrs": "Flat", "burr_size": "54mm"},
+    "image_url": "https://assets.breville.com/cdn-cgi/image/format=auto/ZCG580/ZCG580_Carousel1.png"
+  },
+  {
+    "brand": "Fellow",
     "name": "Fellow Ode Gen 2",
-    "brand": "Fellow",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "ode",
-      "ode gen 2"
-    ],
-    "highlights": [
-      "64mm Flat Burrs",
-      "Filter"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "64mm"
-    }
+    "aliases": ["ode", "ode gen 2"],
+    "highlights": ["64mm Flat Burrs", "Filter"],
+    "specs": {"burrs": "Flat", "burr_size": "64mm"},
+    "image_url": "https://www.fellowproducts.com/cdn/shop/files/ode-gen-2-matte-black.png"
   },
   {
+    "brand": "Fellow",
     "name": "Fellow Opus",
-    "brand": "Fellow",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "opus"
-    ],
-    "highlights": [
-      "Espresso + Filter"
-    ],
-    "specs": {
-      "burrs": "Conical"
-    }
+    "aliases": ["opus"],
+    "highlights": ["Espresso + Filter"],
+    "specs": {"burrs": "Conical"},
+    "image_url": "https://www.fellowproducts.com/cdn/shop/files/opus-matte-black.png"
   },
   {
-    "name": "Comandante C40",
     "brand": "Comandante",
+    "name": "Comandante C40",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "c40",
-      "nitro blade"
-    ],
-    "highlights": [
-      "Hand Grinder",
-      "Nitro Blade"
-    ],
-    "specs": {
-      "burrs": "Conical"
-    }
+    "aliases": ["c40", "nitro blade"],
+    "highlights": ["Hand Grinder", "Nitro Blade"],
+    "specs": {"burrs": "Conical"},
+    "image_url": "https://www.comandantegrinder.com/wp-content/uploads/c40-nitro-blade.png"
   },
   {
-    "name": "1Zpresso J-Max",
     "brand": "1Zpresso",
+    "name": "1Zpresso J-Max",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "j-max",
-      "jmax"
-    ],
-    "highlights": [
-      "Hand Grinder",
-      "Espresso"
-    ],
-    "specs": {
-      "burrs": "Conical"
-    }
+    "aliases": ["j-max", "jmax"],
+    "highlights": ["Hand Grinder", "Espresso"],
+    "specs": {"burrs": "Conical"},
+    "image_url": "https://www.1zpresso.coffee/wp-content/uploads/j-max.png"
   },
   {
-    "name": "Timemore Chestnut C3",
     "brand": "Timemore",
+    "name": "Timemore Chestnut C3",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "chestnut",
-      "c3"
-    ],
-    "highlights": [
-      "Hand Grinder"
-    ],
-    "specs": {
-      "burrs": "Conical"
-    }
+    "aliases": ["chestnut", "c3"],
+    "highlights": ["Hand Grinder"],
+    "specs": {"burrs": "Conical"},
+    "image_url": "https://www.timemore.com/cdn/shop/files/chestnut-c3.png"
   },
   {
-    "name": "Weber EG-1",
-    "brand": "Weber",
-    "kind": "grinder",
-    "aliases": [
-      "eg-1",
-      "eg1"
-    ],
-    "highlights": [
-      "80mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "80mm"
-    }
-  },
-  {
-    "name": "Option-O Lagom P64",
     "brand": "Option-O",
+    "name": "Option-O Lagom P64",
+    "type": "grinder",
     "kind": "grinder",
-    "aliases": [
-      "lagom",
-      "p64",
-      "lagom p64"
-    ],
-    "highlights": [
-      "64mm Flat Burrs"
-    ],
-    "specs": {
-      "burrs": "Flat",
-      "burr_size": "64mm"
-    }
+    "aliases": ["lagom", "p64", "lagom p64"],
+    "highlights": ["64mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "64mm"},
+    "image_url": "https://option-o.com/cdn/shop/files/lagom-p64.png"
   },
   {
-    "name": "Fellow Stagg EKG",
+    "brand": "Weber",
+    "name": "Weber EG-1",
+    "type": "grinder",
+    "kind": "grinder",
+    "aliases": ["eg-1", "eg1"],
+    "highlights": ["80mm Flat Burrs"],
+    "specs": {"burrs": "Flat", "burr_size": "80mm"},
+    "image_url": "https://www.weberworkshops.com/cdn/shop/files/eg-1.png"
+  },
+  {
     "brand": "Fellow",
+    "name": "Fellow Stagg EKG",
+    "type": "brewer",
     "kind": "brewer",
-    "aliases": [
-      "stagg",
-      "ekg"
-    ],
-    "highlights": [
-      "Variable Temp Kettle"
-    ],
-    "specs": {
-      "pid": true
-    }
+    "aliases": ["stagg", "ekg"],
+    "highlights": ["Variable Temp Kettle"],
+    "specs": {"pid": true},
+    "image_url": "https://www.fellowproducts.com/cdn/shop/files/stagg-ekg.png"
   },
   {
-    "name": "Hario V60",
     "brand": "Hario",
+    "name": "Hario V60",
+    "type": "brewer",
     "kind": "brewer",
-    "aliases": [
-      "v60",
-      "v-60"
-    ],
-    "highlights": [
-      "Pour Over"
-    ],
-    "specs": {}
+    "aliases": ["v60", "v-60"],
+    "highlights": ["Pour Over"],
+    "specs": {},
+    "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7d/Hario_V60.jpg/640px-Hario_V60.jpg"
   },
   {
-    "name": "Chemex",
     "brand": "Chemex",
+    "name": "Chemex",
+    "type": "brewer",
     "kind": "brewer",
-    "aliases": [
-      "chemex 6 cup"
-    ],
-    "highlights": [
-      "Pour Over"
-    ],
-    "specs": {}
+    "aliases": ["chemex 6 cup"],
+    "highlights": ["Pour Over"],
+    "specs": {},
+    "image_url": "https://upload.wikimedia.org/wikipedia/commons/8/88/Chemex_coffeemaker.jpg"
   },
   {
-    "name": "AeroPress",
     "brand": "AeroPress",
+    "name": "AeroPress",
+    "type": "brewer",
     "kind": "brewer",
-    "aliases": [
-      "aeropress go"
-    ],
-    "highlights": [
-      "Immersion"
-    ],
-    "specs": {}
+    "aliases": ["aeropress go"],
+    "highlights": ["Immersion"],
+    "specs": {},
+    "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Aeropress.jpg/640px-Aeropress.jpg"
   },
   {
-    "name": "Origami Dripper",
     "brand": "Origami",
+    "name": "Origami Dripper",
+    "type": "brewer",
     "kind": "brewer",
-    "aliases": [
-      "origami"
-    ],
-    "highlights": [
-      "Pour Over"
-    ],
-    "specs": {}
+    "aliases": ["origami"],
+    "highlights": ["Pour Over"],
+    "specs": {},
+    "image_url": "https://origamijapan.net/cdn/shop/files/origami-dripper.png"
   }
 ]
