@@ -4,6 +4,12 @@ All notable BeanNote changes are recorded here.
 
 ## [fix] - 2026-08-24
 
+- snapshot: fix - explicit suitable_for extraction in OCR prompt
+- Gemini optical and grounded prompts always extract or infer `suitable_for` as a JSON array of strings from brew icons, label text, or roast level (`["Espresso"]`, `["Filter"]`, `["Mælkedrikke"]`, `["Fuldautomatisk"]`).
+- Scan output schema types `suitable_for` as `ARRAY` of `STRING` and coerces it to `list[str]` so it saves cleanly.
+
+## [fix] - 2026-08-24
+
 - snapshot: fix - rendered suitable_for brew method tags in bean detail modal
 - Bean Detail parses `suitable_for` as either an array or a JSON string and renders cream/terracotta pills next to flavor tags (`🎯 Egnet til`).
 - `suitable_for` i18n stays present in DA / EN / DE / FR / ES.

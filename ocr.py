@@ -320,12 +320,13 @@ BREW_RATIO_COPY = {
     },
 }
 
-SUITABLE_FOR = ["Espresso", "Filter", "Mælkedrikke", "Stempelkande"]
+SUITABLE_FOR = ["Espresso", "Filter", "Mælkedrikke", "Stempelkande", "Fuldautomatisk"]
 SUITABLE_LOCALES: dict[str, dict[str, str]] = {
     "Espresso": {"da": "Espresso", "en": "Espresso"},
     "Filter": {"da": "Filter", "en": "Filter"},
     "Mælkedrikke": {"da": "Mælkedrikke", "en": "Milk drinks"},
     "Stempelkande": {"da": "Stempelkande", "en": "French Press"},
+    "Fuldautomatisk": {"da": "Fuldautomatisk", "en": "Superautomatic"},
 }
 SUITABLE_ALIASES: dict[str, list[str]] = {
     "Espresso": [
@@ -349,6 +350,16 @@ SUITABLE_ALIASES: dict[str, list[str]] = {
         "ideal for latte",
     ],
     "Stempelkande": ["stempelkande", "french press", "press", "plunger"],
+    "Fuldautomatisk": [
+        "fuldautomatisk",
+        "fuldautomatiske",
+        "superautomatic",
+        "super-automatic",
+        "super automatic",
+        "fully automatic",
+        "bean to cup",
+        "bean-to-cup",
+    ],
 }
 _NEXT_FIELD = (
     r"oprindelse|origin|forarbejdning|process|proces|ristningsgrad|"
@@ -605,29 +616,95 @@ def localize_suitable(tag: str, lang: str = "da") -> str:
     return names.get(_copy_lang(lang), names["da"])
 
 
+def _as_string_list(value: Any) -> list[str]:
+    """Coerce Gemini/DB values into a JSON-ready list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items: list[str] = []
+        for item in value:
+            items.extend(_as_string_list(item))
+        return items
+    if isinstance(value, dict):
+        return _as_string_list(list(value.values()))
+    text = str(value).strip()
+    if not text:
+        return []
+    if text[:1] in "[{":
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, (list, tuple, dict)):
+            return _as_string_list(parsed)
+        if parsed is not None and not isinstance(parsed, (dict, list, tuple)):
+            text = str(parsed).strip()
+            if not text:
+                return []
+    if "," in text and not text.startswith("http"):
+        return [part.strip().strip("\"'") for part in text.split(",") if part.strip().strip("\"'")]
+    return [text]
+
+
 def extract_suitable_for(*sources: str | list[str] | None, lang: str = "da") -> list[str]:
     hits: list[str] = []
     blobs: list[str] = []
     for source in sources:
         if not source:
             continue
-        if isinstance(source, (list, tuple)):
-            for item in source:
-                text = str(item).strip()
-                if not text:
-                    continue
+        tokens = _as_string_list(source)
+        if len(tokens) > 1 or (tokens and _canonical_suitable(tokens[0])):
+            for text in tokens:
                 canon = _canonical_suitable(text)
                 if canon:
                     hits.append(canon)
                 else:
                     blobs.append(text)
+            if isinstance(source, str) and source.strip()[:1] not in "[{":
+                blobs.append(source)
             continue
-        blobs.append(str(source))
+        blobs.extend(tokens or [str(source)])
     blob = " ".join(blobs).lower()
     if blob:
         for canon, aliases in SUITABLE_ALIASES.items():
             if any(re.search(rf"\b{re.escape(alias)}\b", blob) for alias in aliases):
                 hits.append(canon)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for canon in SUITABLE_FOR:
+        if canon in hits and canon not in seen:
+            seen.add(canon)
+            ordered.append(canon)
+    return [localize_suitable(tag, lang) for tag in ordered]
+
+
+def infer_suitable_from_roast(
+    roast_level: str = "",
+    name: str = "",
+    notes: str = "",
+    lang: str = "da",
+) -> list[str]:
+    """Deduce brew suitability from roast depth and product wording when icons are missing."""
+    roast = (roast_level or "").lower()
+    blob = f"{roast_level} {name} {notes}".lower()
+    hits: list[str] = []
+    if any(token in blob for token in ("fuldautomat", "superautomatic", "super-automatic", "bean to cup", "bean-to-cup")):
+        hits.append("Fuldautomatisk")
+    if any(token in blob for token in ("espresso", "for machines", "portafilter")):
+        hits.append("Espresso")
+    if any(token in blob for token in ("filter", "pour-over", "pour over", "v60", "drip")):
+        hits.append("Filter")
+    if any(token in blob for token in ("mælk", "milk", "latte", "macchiato")):
+        hits.append("Mælkedrikke")
+    if any(token in blob for token in ("stempel", "french press", "plunger")):
+        hits.append("Stempelkande")
+    if not hits and roast:
+        dark = any(token in roast for token in ("espresso", "mørk", "dark", "full city", "mellemmørk"))
+        light = any(token in roast for token in ("lys", "light"))
+        if dark and not light:
+            hits.append("Espresso")
+        else:
+            hits.append("Filter")
     seen: set[str] = set()
     ordered: list[str] = []
     for canon in SUITABLE_FOR:
@@ -837,8 +914,17 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
         parsed.get("suitable_for"),
         parsed.get("official_notes"),
         notes,
+        parsed.get("roast_level"),
+        parsed.get("bean_name") or parsed.get("name"),
         lang=lang,
     )
+    if not out["suitable_for"]:
+        out["suitable_for"] = infer_suitable_from_roast(
+            parsed.get("roast_level") or "",
+            parsed.get("bean_name") or parsed.get("name") or "",
+            notes,
+            lang=lang,
+        )
     story_map = _as_story_map(parsed.get("story"), lang)
     out["story"] = story_map
     out["roast_date"] = (parsed.get("roast_date") or "").strip()
@@ -1158,8 +1244,95 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
 
     if out.get("suitable_for"):
         out["suitable_for"] = extract_suitable_for(out.get("suitable_for"), lang=code)
+    else:
+        out["suitable_for"] = infer_suitable_from_roast(
+            out.get("roast_level") or "",
+            out.get("name") or out.get("bean_name") or "",
+            out.get("official_notes") or out.get("roaster_notes") or "",
+            lang=code,
+        )
 
     return out
+
+
+def _suitable_for_schema_line(code: str, story_lang: str) -> str:
+    catalog = suitable_for_catalog(code)
+    suitable = ", ".join(f'"{name}"' for name in catalog)
+    examples = ", ".join(f'["{name}"]' for name in catalog)
+    return (
+        '- "suitable_for": JSON array of strings (never a scalar string, never comma-separated text). '
+        f"Choose 1–4 brew-suitability labels in {story_lang} only from [{suitable}]. "
+        "Always extract printed brew icons and words such as FOR MACHINES (Espresso), FOR FILTER, "
+        "IDEAL FOR LATTE MACCHIATO (milk drinks), French Press / Stempelkande, and "
+        "Fuldautomatisk / superautomatic. "
+        "If icons are missing, DEDUCE from roast level and label text: "
+        "dark / espresso / Full City roast → Espresso; light / filter roast → Filter; "
+        "latte / milk drinks → Mælkedrikke; superautomatic machines → Fuldautomatisk. "
+        f"Examples: {examples}. "
+        "Always return a valid JSON array of strings so it saves cleanly to the database. "
+        "Use [] only when roast level and brew hints are both absent."
+    )
+
+
+def _gemini_output_schema() -> dict[str, Any]:
+    """Gemini response schema: suitable_for is always a JSON array of strings."""
+    string_list = {"type": "ARRAY", "items": {"type": "STRING"}}
+    lang_strings = {
+        "type": "OBJECT",
+        "properties": {code: {"type": "STRING"} for code in SUPPORTED_LANGUAGES},
+    }
+    lang_string_lists = {
+        "type": "OBJECT",
+        "properties": {
+            code: {"type": "ARRAY", "items": {"type": "STRING"}}
+            for code in SUPPORTED_LANGUAGES
+        },
+    }
+    recipe = {
+        "type": "OBJECT",
+        "properties": {
+            "recommended_method": {"type": "STRING"},
+            "grind_size": {"type": "STRING"},
+            "water_temp": {"type": "STRING"},
+            "brew_ratio": {"type": "STRING"},
+            "usage": {"type": "STRING"},
+        },
+    }
+    return {
+        "type": "OBJECT",
+        "required": ["suitable_for"],
+        "properties": {
+            "roaster": {"type": "STRING"},
+            "bean_name": {"type": "STRING"},
+            "origin": {"type": "STRING"},
+            "region_full": {"type": "STRING"},
+            "latitude": {"type": "NUMBER", "nullable": True},
+            "longitude": {"type": "NUMBER", "nullable": True},
+            "roast_date": {"type": "STRING"},
+            "altitude": {"type": "STRING"},
+            "varietal": {"type": "STRING"},
+            "process": {"type": "STRING"},
+            "roast_level": {"type": "STRING"},
+            "roaster_acidity": {"type": "INTEGER", "nullable": True},
+            "roaster_body": {"type": "INTEGER", "nullable": True},
+            "roaster_roast_level": {"type": "INTEGER", "nullable": True},
+            "acidity_score": {"type": "INTEGER", "nullable": True},
+            "body_score": {"type": "INTEGER", "nullable": True},
+            "roast_level_score": {"type": "INTEGER", "nullable": True},
+            "flavor_tags": lang_string_lists,
+            "suitable_for": string_list,
+            "official_notes": {"type": "STRING"},
+            "story": lang_strings,
+            "brew_recommendation": {
+                "type": "OBJECT",
+                "properties": {code: recipe for code in SUPPORTED_LANGUAGES},
+            },
+            "roaster_url": {"type": "STRING"},
+            "image_candidates": string_list,
+            "product_image_urls": string_list,
+            "product_image_url": {"type": "STRING"},
+        },
+    }
 
 
 def _gemini_prompt(lang: str = "da") -> str:
@@ -1193,7 +1366,7 @@ def _gemini_prompt(lang: str = "da") -> str:
     grind_fine = GRIND_LOCALES["Fin"].get(code, "Fine")
     grind_med_fine = GRIND_LOCALES["Medium-fin"].get(code, "Medium-fine")
     grind_coarse = GRIND_LOCALES["Grov"].get(code, "Coarse")
-    suitable = ", ".join(f'"{name}"' for name in suitable_for_catalog(code))
+    suitable_line = _suitable_for_schema_line(code, story_lang)
     return (
         "You are a specialty-coffee label reader and cupping journalist for BeanNote. "
         "STEP 1 — STRICT OPTICAL READING. "
@@ -1242,10 +1415,7 @@ def _gemini_prompt(lang: str = "da") -> str:
         '  Example: {"da": ["Mørk chokolade", "Mandel", "Mandarin", "Karamel", "Frugtsødme"], '
         '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}. '
         "Use empty arrays when no flavor words are printed.\n"
-        f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
-        f"[{suitable}]. Read printed brew icons such as FOR MACHINES (Espresso), FOR FILTER, "
-        "IDEAL FOR LATTE MACCHIATO (milk drinks), and French Press / Stempelkande. "
-        "Empty array if no brew icons are printed.\n"
+        f"{suitable_line}\n"
         f'- "official_notes": tasting-notes text copied from the bag and rewritten in {story_lang}. '
         "Empty string if none are printed.\n"
         f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
@@ -1268,8 +1438,9 @@ def _gemini_prompt(lang: str = "da") -> str:
         "during this optical pass.\n"
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
         "brew_recommendation. Adding another ISO key later (de, fr, es) uses the same shape. "
-        f"Scalar fields (origin, process, roast_level, suitable_for, official_notes) stay in "
-        f"{story_lang} because lang={code}.\n"
+        f"Scalar fields (origin, process, roast_level, official_notes) stay in "
+        f"{story_lang} because lang={code}. "
+        '"suitable_for" is always a JSON array of strings in that language, never a scalar.\n'
         "Read printed text and icons only. If a field is missing on the label, "
         "use an empty string, empty array, empty map, or null. "
         "Never invent a roaster, bean_name, farm, URL, or bean-meter score.\n"
@@ -1322,6 +1493,7 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
             f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}", '
             f'"usage": 2–3 sentences in that language on mouthfeel, crema, and recommended use}}'
         )
+    suitable_line = _suitable_for_schema_line(code, story_lang)
     return (
         "You are BeanNote's official product-page researcher and specialty-coffee journalist. "
         "STEP 2 — OFFICIAL WEB LOOKUP. "
@@ -1358,6 +1530,7 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
         f"{flavor_lines}\n"
         '  Example: {"da": ["Mørk chokolade", "Mandel", "Mandarin", "Karamel", "Frugtsødme"], '
         '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}.\n'
+        f"{suitable_line}\n"
         f'- "official_notes": official tasting blurb rewritten in {story_lang}\n'
         f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
         "background story for a coffee journal — origin, why the roaster made it, blend "
@@ -1373,7 +1546,8 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
         '"Fyldig, blød og med en kraftig, naturlig crema. Fremragende til espresso og '
         'mælkedrikke, men fungerer også på fuldautomatiske maskiner."\n'
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
-        "brew_recommendation.\n"
+        "brew_recommendation. "
+        '"suitable_for" is always a JSON array of strings, never a scalar.\n'
         '- "product_page_url": official https product page you used. Never invent a URL.\n'
         '- "roaster_url": official https homepage. Homepage only — never a product image.\n'
         '- "image_candidates": up to 3 real official studio packshot https URLs from that page.\n'
@@ -1467,9 +1641,15 @@ def ensure_scan_schema(parsed: dict[str, Any], lang: str = "da") -> dict[str, An
         elif isinstance(default, str):
             out[key] = str(out[key] or "").strip() if not isinstance(out[key], str) else out[key]
     for key in SCAN_LIST_KEYS:
-        value = out.get(key)
-        if not isinstance(value, list):
-            out[key] = [value] if isinstance(value, str) and value.strip() else []
+        out[key] = _as_string_list(out.get(key))
+    out["suitable_for"] = extract_suitable_for(out.get("suitable_for"), lang=out["lang"])
+    if not out["suitable_for"]:
+        out["suitable_for"] = infer_suitable_from_roast(
+            out.get("roast_level") or "",
+            out.get("name") or out.get("bean_name") or "",
+            out.get("official_notes") or out.get("roaster_notes") or "",
+            lang=out["lang"],
+        )
     for key in SCAN_MAP_KEYS:
         if not isinstance(out.get(key), dict):
             out[key] = {}
@@ -1518,7 +1698,9 @@ def merge_optical_and_official(
     out["body_score"] = out["roaster_body"]
     out["roast_level_score"] = out["roaster_roast_level"]
 
-    out["suitable_for"] = _prefer_optical(bag.get("suitable_for"), web.get("suitable_for"))
+    out["suitable_for"] = _as_string_list(
+        _prefer_optical(bag.get("suitable_for"), web.get("suitable_for"))
+    )
     out["roast_date"] = _prefer_optical(bag.get("roast_date"), web.get("roast_date"))
     for key in ("origin", "process", "roast_level", "altitude", "varietal", "region_full"):
         out[key] = _prefer_optical(bag.get(key), web.get(key))
@@ -1807,10 +1989,18 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
     # thought/search parts instead of JSON and 422s the whole scan.
     client = genai.Client(api_key=key, http_options={"timeout": 45_000})
     image_part = _gemini_image_part(image)
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json",
-        temperature=0.0,
-    )
+
+    def _content_config(with_schema: bool):
+        kwargs: dict[str, Any] = {
+            "response_mime_type": "application/json",
+            "temperature": 0.0,
+        }
+        if with_schema:
+            kwargs["response_schema"] = _gemini_output_schema()
+        return types.GenerateContentConfig(**kwargs)
+
+    use_schema = True
+    config = _content_config(True)
     last_error: Exception | None = None
     quota_hit = False
     for model_name in GEMINI_MODELS:
@@ -1828,6 +2018,12 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
                 if _quota_gemini_error(exc):
                     quota_hit = True
                     break
+                if use_schema and (
+                    "schema" in str(exc).lower() or "invalid_argument" in str(exc).lower()
+                ):
+                    use_schema = False
+                    config = _content_config(False)
+                    continue
                 if "404" in str(exc) or "NOT_FOUND" in str(exc):
                     break
                 if _transient_gemini_error(exc) and attempt < 2:
@@ -1847,17 +2043,28 @@ def _scan_with_generativeai(image: Image.Image, key: str, prompt: str) -> dict[s
     genai.configure(api_key=key)
     image_blob = {"mime_type": "image/jpeg", "data": _image_jpeg_bytes(image)}
     last_error: Exception | None = None
+    with_schema = True
     for model_name in GEMINI_MODELS:
         try:
             model = genai.GenerativeModel(model_name)
+            gen_config: dict[str, Any] = {
+                "response_mime_type": "application/json",
+                "temperature": 0,
+            }
+            if with_schema:
+                gen_config["response_schema"] = _gemini_output_schema()
             response = model.generate_content(
                 [prompt, image_blob],
-                generation_config={"response_mime_type": "application/json", "temperature": 0},
+                generation_config=gen_config,
             )
             data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
             return _with_grounded_images(data, response)
         except Exception as exc:
             last_error = exc
+            if with_schema and (
+                "schema" in str(exc).lower() or "invalid_argument" in str(exc).lower()
+            ):
+                with_schema = False
             continue
     if last_error:
         raise last_error
