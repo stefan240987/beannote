@@ -9,6 +9,7 @@ All notable BeanNote changes are recorded here.
 - Bean Detail always shows 📖 Kaffens Historie, flavor pills, and usage inside Risteriets Profil. `POST /api/beans/{id}/enrich` plus ✨ Hent AI Historie & Profil backfills existing beans.
 - Bottom nav is three tabs (Udforsk, Scan, Profil). Rate lives at the top of the bean modal. Scanning an archived bag prompts "Kaffen findes allerede i dit arkiv!" with a one-tap open-and-rate action.
 - Brew logs store selected `espresso_machine` and `grinder`; those badges appear on Min Kaffe-Dagbog and Fællesskabets Opskrifter. `POST /api/gear/lookup` caches results in memory.
+- Gemini gear lookup timeout increased from 8s to 10s (API minimum requirement).
 
 ## [5.6.1] - 2026-08-23
 

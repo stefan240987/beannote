@@ -2711,7 +2711,7 @@ def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> list[
     from google.genai import types
 
     prompt = _gear_lookup_prompt(query, kind, lang)
-    client = genai.Client(api_key=key, http_options={"timeout": 8_000})
+    client = genai.Client(api_key=key, http_options={"timeout": 10_000})
     tools = _google_search_tools(types)
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
