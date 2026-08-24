@@ -19,8 +19,8 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "5.6.0"
-_BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio")
+VERSION = "6.0.0"
+_BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
     re.IGNORECASE,
@@ -303,6 +303,114 @@ def normalize_gear_catalog(raw: Any, query: str = "", kind: str = "") -> list[di
     return out
 
 
+def _fold_gear_text(text: str) -> str:
+    table = str.maketrans({
+        "ö": "o",
+        "ä": "a",
+        "ü": "u",
+        "ø": "o",
+        "å": "a",
+        "é": "e",
+        "è": "e",
+        "ê": "e",
+        "ó": "o",
+        "ñ": "n",
+    })
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower().translate(table)).strip()
+
+
+# Instant brand/model index so Profile search never waits on Gemini.
+GEAR_CATALOG: tuple[dict[str, Any], ...] = (
+    {"name": "Profitec Drive", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("drive",), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary", "group": "E61"}},
+    {"name": "Profitec Pro 700", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 700", "pro700"), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary", "group": "E61"}},
+    {"name": "Profitec Go", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("go",), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True, "pump": "Vibratory", "group": "E61"}},
+    {"name": "Profitec Pro 400", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 400", "pro400"), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True, "group": "E61"}},
+    {"name": "Profitec Pro 600", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 600",), "highlights": ["Heat Exchanger", "PID", "Rotary"], "specs": {"boiler": "Heat Exchanger", "pid": True, "pump": "Rotary"}},
+    {"name": "Lelit Bianca", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("bianca", "pl162t"), "highlights": ["Dual Boiler", "PID", "Flow Control"], "specs": {"boiler": "Dual Boiler", "pid": True, "group": "E61"}},
+    {"name": "Lelit Mara X", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("mara x", "marax"), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True}},
+    {"name": "Lelit Victoria", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("victoria",), "highlights": ["Single Boiler", "PID"], "specs": {"boiler": "Single Boiler", "pid": True}},
+    {"name": "La Marzocco Linea Mini", "brand": "La Marzocco", "kind": "espresso_machine", "aliases": ("linea mini", "lm linea"), "highlights": ["Dual Boiler", "PID"], "specs": {"boiler": "Dual Boiler", "pid": True}},
+    {"name": "Rocket Appartamento", "brand": "Rocket", "kind": "espresso_machine", "aliases": ("appartamento",), "highlights": ["Heat Exchanger"], "specs": {"boiler": "Heat Exchanger", "group": "E61"}},
+    {"name": "ECM Synchronika", "brand": "ECM", "kind": "espresso_machine", "aliases": ("synchronika",), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary"}},
+    {"name": "Decent DE1", "brand": "Decent", "kind": "espresso_machine", "aliases": ("de1", "decent de1"), "highlights": ["Profile", "Tablet"], "specs": {"boiler": "Thermocoil", "pid": True}},
+    {"name": "Gaggia Classic Pro", "brand": "Gaggia", "kind": "espresso_machine", "aliases": ("classic pro", "gcp"), "highlights": ["Single Boiler"], "specs": {"boiler": "Single Boiler", "pump": "Vibratory"}},
+    {"name": "Sage Barista Express", "brand": "Sage", "kind": "espresso_machine", "aliases": ("breville barista express", "bes870"), "highlights": ["Thermocoil", "Built-in Grinder"], "specs": {"boiler": "Thermocoil", "pid": True}},
+    {"name": "Sage Dual Boiler", "brand": "Sage", "kind": "espresso_machine", "aliases": ("breville dual boiler", "bes920"), "highlights": ["Dual Boiler", "PID"], "specs": {"boiler": "Dual Boiler", "pid": True}},
+    {"name": "Rancilio Silvia", "brand": "Rancilio", "kind": "espresso_machine", "aliases": ("silvia", "silvia pro"), "highlights": ["Single Boiler"], "specs": {"boiler": "Single Boiler"}},
+    {"name": "Mahlkönig E65S", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig e65s", "e65s", "e65"), "highlights": ["65mm Flat Burrs", "Grind by Time"], "specs": {"burrs": "Flat", "burr_size": "65mm"}},
+    {"name": "Mahlkönig E80S", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig e80s", "e80s", "e80"), "highlights": ["80mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "80mm"}},
+    {"name": "Mahlkönig X54", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig x54", "x54"), "highlights": ["54mm Flat Burrs", "Home"], "specs": {"burrs": "Flat", "burr_size": "54mm"}},
+    {"name": "Mahlkönig EK43", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig ek43", "ek43", "ek 43"), "highlights": ["98mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "98mm"}},
+    {"name": "DF64 Gen 2", "brand": "Turin", "kind": "grinder", "aliases": ("df64", "df64 gen2", "df 64"), "highlights": ["64mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
+    {"name": "DF64V", "brand": "Turin", "kind": "grinder", "aliases": ("df64v", "df64 v"), "highlights": ["64mm Flat Burrs", "Variable RPM"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
+    {"name": "DF83V", "brand": "Turin", "kind": "grinder", "aliases": ("df83", "df83v"), "highlights": ["83mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "83mm"}},
+    {"name": "Niche Zero", "brand": "Niche", "kind": "grinder", "aliases": ("zero",), "highlights": ["63mm Conical", "Single Dose"], "specs": {"burrs": "Conical", "burr_size": "63mm"}},
+    {"name": "Niche Duo", "brand": "Niche", "kind": "grinder", "aliases": ("duo",), "highlights": ["83mm Conical", "Single Dose"], "specs": {"burrs": "Conical", "burr_size": "83mm"}},
+    {"name": "Eureka Mignon Specialita", "brand": "Eureka", "kind": "grinder", "aliases": ("specialita", "mignon specialita"), "highlights": ["55mm Flat Burrs", "Silent"], "specs": {"burrs": "Flat", "burr_size": "55mm"}},
+    {"name": "Eureka Mignon Libra", "brand": "Eureka", "kind": "grinder", "aliases": ("libra", "mignon libra"), "highlights": ["Grind by Weight"], "specs": {"burrs": "Flat", "burr_size": "65mm"}},
+    {"name": "Eureka Mignon Silenzio", "brand": "Eureka", "kind": "grinder", "aliases": ("silenzio",), "highlights": ["50mm Flat Burrs", "Silent"], "specs": {"burrs": "Flat", "burr_size": "50mm"}},
+    {"name": "Fellow Ode Gen 2", "brand": "Fellow", "kind": "grinder", "aliases": ("ode", "ode gen 2"), "highlights": ["64mm Flat Burrs", "Filter"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
+    {"name": "Fellow Opus", "brand": "Fellow", "kind": "grinder", "aliases": ("opus",), "highlights": ["Espresso + Filter"], "specs": {"burrs": "Conical"}},
+    {"name": "Comandante C40", "brand": "Comandante", "kind": "grinder", "aliases": ("c40", "nitro blade"), "highlights": ["Hand Grinder", "Nitro Blade"], "specs": {"burrs": "Conical"}},
+    {"name": "1Zpresso J-Max", "brand": "1Zpresso", "kind": "grinder", "aliases": ("j-max", "jmax"), "highlights": ["Hand Grinder", "Espresso"], "specs": {"burrs": "Conical"}},
+    {"name": "Timemore Chestnut C3", "brand": "Timemore", "kind": "grinder", "aliases": ("chestnut", "c3"), "highlights": ["Hand Grinder"], "specs": {"burrs": "Conical"}},
+    {"name": "Weber EG-1", "brand": "Weber", "kind": "grinder", "aliases": ("eg-1", "eg1"), "highlights": ["80mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "80mm"}},
+    {"name": "Option-O Lagom P64", "brand": "Option-O", "kind": "grinder", "aliases": ("lagom", "p64", "lagom p64"), "highlights": ["64mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
+    {"name": "Fellow Stagg EKG", "brand": "Fellow", "kind": "brewer", "aliases": ("stagg", "ekg"), "highlights": ["Variable Temp Kettle"], "specs": {"pid": True}},
+    {"name": "Hario V60", "brand": "Hario", "kind": "brewer", "aliases": ("v60", "v-60"), "highlights": ["Pour Over"], "specs": {}},
+    {"name": "Chemex", "brand": "Chemex", "kind": "brewer", "aliases": ("chemex 6 cup",), "highlights": ["Pour Over"], "specs": {}},
+    {"name": "AeroPress", "brand": "AeroPress", "kind": "brewer", "aliases": ("aeropress go",), "highlights": ["Immersion"], "specs": {}},
+    {"name": "Origami Dripper", "brand": "Origami", "kind": "brewer", "aliases": ("origami",), "highlights": ["Pour Over"], "specs": {}},
+)
+
+
+def search_local_gear(query: str, kind: str = "") -> list[dict[str, Any]]:
+    """Return up to 4 catalog models for a brand or partial model name."""
+    q = _fold_gear_text(query)
+    if len(q) < 2:
+        return []
+    slot = canonical_gear_kind(kind) if kind else ""
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for raw in GEAR_CATALOG:
+        name = _fold_gear_text(str(raw.get("name") or ""))
+        brand = _fold_gear_text(str(raw.get("brand") or ""))
+        aliases = [_fold_gear_text(str(alias)) for alias in (raw.get("aliases") or ()) if str(alias).strip()]
+        hay = " ".join([brand, name, *aliases])
+        score = 0.0
+        if q == name or q in aliases:
+            score = 4.0
+        elif name.startswith(q) or any(alias.startswith(q) for alias in aliases):
+            score = 3.4
+        elif q in name or any(q in alias for alias in aliases):
+            score = 3.0
+        elif q == brand or brand.startswith(q) or q in brand:
+            score = 2.6
+        elif q in hay:
+            score = 2.0
+        else:
+            tokens = [part for part in (name, brand, *aliases, hay) if part]
+            if difflib.get_close_matches(q, tokens, n=1, cutoff=0.78):
+                score = 1.4
+        if score <= 0:
+            continue
+        item_kind = canonical_gear_kind(str(raw.get("kind") or ""))
+        if slot and item_kind == slot:
+            score += 0.35
+        ranked.append((score, raw))
+    ranked.sort(key=lambda row: (-row[0], str(row[1].get("name") or "")))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for _score, raw in ranked:
+        card = normalize_gear_item(raw)
+        if not card or card["id"] in seen:
+            continue
+        seen.add(card["id"])
+        out.append(card)
+        if len(out) >= 4:
+            break
+    return out
+
+
 def normalize_gear_specs(raw: Any) -> list[dict[str, Any]]:
     parsed = _maybe_json(raw)
     items: list[Any] = []
@@ -414,6 +522,21 @@ def coerce_brew_map(
 ) -> dict[str, dict[str, str]]:
     parsed = _maybe_json(value)
     extra = extra or {}
+    if isinstance(parsed, dict) and parsed and all(isinstance(item, str) for item in parsed.values()):
+        if not any(key in parsed for key in _BREW_KEYS):
+            usage_map = {
+                str(code).lower().strip(): {
+                    "recommended_method": "",
+                    "grind_size": "",
+                    "water_temp": "",
+                    "brew_ratio": "",
+                    "usage": str(text or "").strip(),
+                }
+                for code, text in parsed.items()
+                if str(text or "").strip()
+            }
+            if usage_map:
+                return _complete_brew_map(usage_map)
     if isinstance(parsed, dict) and any(
         isinstance(item, dict) and _is_flat_brew(item) for item in parsed.values()
     ):
@@ -492,10 +615,18 @@ def _story_blank(story: Any) -> bool:
     return not str(text or "").strip()
 
 
-def merge_text_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, str]:
+def merge_text_map(
+    existing: Any,
+    incoming: Any,
+    lang: str | None = None,
+    overwrite: bool = False,
+) -> dict[str, str]:
     merged = dict(coerce_text_map(existing, lang))
     for code, text in coerce_text_map(incoming, lang).items():
-        if text and not (merged.get(code) or "").strip():
+        if not text:
+            continue
+        current = (merged.get(code) or "").strip()
+        if overwrite or not current or (len(text) > len(current) + 40):
             merged[code] = text
     return merged
 
@@ -503,23 +634,38 @@ def merge_text_map(existing: Any, incoming: Any, lang: str | None = None) -> dic
 def merge_list_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, list[str]]:
     current = coerce_list_map(existing, lang)
     extra = coerce_list_map(incoming, lang)
-    if current:
-        for code, tags in extra.items():
-            if tags and not current.get(code):
-                current[code] = tags
-        return current
-    return extra
+    if not current:
+        return extra
+    out: dict[str, list[str]] = dict(current)
+    for code, tags in extra.items():
+        merged = list(out.get(code) or [])
+        seen = {str(tag).strip().lower() for tag in merged}
+        for tag in tags:
+            key = str(tag).strip().lower()
+            if not key or key in seen:
+                continue
+            merged.append(tag)
+            seen.add(key)
+        if merged:
+            out[code] = merged
+    return out
 
 
 def merge_brew_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, dict[str, str]]:
     current = coerce_brew_map(existing, lang=lang)
     extra = coerce_brew_map(incoming, lang=lang)
-    if current:
-        for code, brew in extra.items():
-            if any(brew.values()) and not any((current.get(code) or {}).values()):
-                current[code] = brew
-        return current
-    return extra
+    if not current:
+        return extra
+    for code, brew in extra.items():
+        if code not in current:
+            current[code] = dict(brew)
+            continue
+        merged = dict(current[code])
+        for key, val in brew.items():
+            if str(val or "").strip() and not str(merged.get(key) or "").strip():
+                merged[key] = val
+        current[code] = merged
+    return current
 
 
 def should_auto_flush() -> bool:
@@ -633,6 +779,8 @@ def init_db() -> None:
                 coffee_grams REAL,
                 water_grams REAL,
                 brew_time TEXT DEFAULT '',
+                espresso_machine TEXT DEFAULT '',
+                grinder TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -706,7 +854,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
-    for column in ("grind_setting", "brew_time"):
+    for column in ("grind_setting", "brew_time", "espresso_machine", "grinder"):
         if column not in ratings:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} TEXT DEFAULT ''")
     for column in ("coffee_grams", "water_grams"):
@@ -969,6 +1117,8 @@ def _rating_public(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] |
     data["grind_setting"] = (data.get("grind_setting") or "").strip()
     data["brew_time"] = (data.get("brew_time") or "").strip()
     data["brew_method"] = (data.get("brew_method") or "").strip()
+    data["espresso_machine"] = (data.get("espresso_machine") or "").strip()
+    data["grinder"] = (data.get("grinder") or "").strip()
     return data
 
 
@@ -997,6 +1147,8 @@ def _recipe_anonymous(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any
         "coffee_grams": coffee,
         "water_grams": water,
         "brew_time": data.get("brew_time") or "",
+        "espresso_machine": data.get("espresso_machine") or "",
+        "grinder": data.get("grinder") or "",
         "ratio": ratio,
         "created_at": data.get("created_at") or "",
     }
@@ -1265,7 +1417,7 @@ def classify_matches(similar: list[dict[str, Any]]) -> str:
 
 
 def scan_destination(similar: list[dict[str, Any]]) -> str:
-    """Camera-first: jump to Rate when the top match is at least 85%."""
+    """Camera-first: prompt to open the existing profile when the top match is at least 85%."""
     if similar and float(similar[0].get("confidence") or 0) >= SCAN_MATCH_CUTOFF:
         return "rate"
     return "add"
@@ -1631,6 +1783,84 @@ def update_bean(
     return get_bean(bean_id)
 
 
+def _richer_text(current: Any, incoming: Any) -> str:
+    old = str(current or "").strip()
+    new = str(incoming or "").strip()
+    if not new:
+        return old
+    if not old:
+        return new
+    if len(new) > len(old) + 3:
+        return new
+    return old
+
+
+def apply_bean_enrichment(
+    bean_id: int,
+    payload: dict[str, Any],
+    lang: str | None = None,
+) -> dict[str, Any] | None:
+    """Merge grounded AI metadata onto an existing bean without wiping printed meters."""
+    bean = get_bean(bean_id)
+    if not bean:
+        return None
+    story_map = merge_text_map(bean.get("story"), payload.get("story"), lang, overwrite=True)
+    flavor_map = merge_list_map(bean.get("flavor_tags"), payload.get("flavor_tags"), lang)
+    brew_map = merge_brew_map(bean.get("brew_recommendation"), payload.get("brew_recommendation"), lang)
+    origin = _richer_text(bean.get("origin"), payload.get("origin"))
+    process = _richer_text(bean.get("process"), payload.get("process"))
+    roast_level = _richer_text(bean.get("roast_level"), payload.get("roast_level"))
+    varietal = _richer_text(bean.get("varietal"), payload.get("varietal"))
+    altitude = _richer_text(bean.get("altitude"), payload.get("altitude"))
+    region_full = _richer_text(bean.get("region_full"), payload.get("region_full"))
+    notes = _richer_text(
+        bean.get("roaster_notes"),
+        payload.get("official_notes") or payload.get("roaster_notes"),
+    )
+    roaster_url = sanitize_roaster_url(
+        payload.get("roaster_url") or payload.get("product_page_url")
+    ) or (bean.get("roaster_url") or "")
+    suitable = bean.get("suitable_for") or []
+    incoming_suitable = payload.get("suitable_for") or []
+    if incoming_suitable and not suitable:
+        suitable = incoming_suitable
+    brew_flat = get_localized(brew_map, FALLBACK_LANG) if brew_map else {}
+    if not isinstance(brew_flat, dict):
+        brew_flat = {}
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE beans SET
+                story = ?, flavor_tags = ?, brew_recommendation = ?,
+                origin = ?, process = ?, roast_level = ?, varietal = ?,
+                altitude = ?, region_full = ?, roaster_notes = ?, roaster_url = ?,
+                suitable_for = ?, recommended_method = ?, grind_size = ?,
+                water_temp = ?, brew_ratio = ?
+            WHERE id = ?
+            """,
+            (
+                _dump_lang_map(story_map),
+                _dump_lang_map(flavor_map),
+                _dump_lang_map(brew_map),
+                origin,
+                process,
+                roast_level,
+                varietal,
+                altitude,
+                region_full,
+                notes,
+                roaster_url,
+                json.dumps(suitable),
+                _normalize(brew_flat.get("recommended_method") or bean.get("recommended_method") or ""),
+                _normalize(brew_flat.get("grind_size") or bean.get("grind_size") or ""),
+                str(brew_flat.get("water_temp") or bean.get("water_temp") or "").strip(),
+                str(brew_flat.get("brew_ratio") or bean.get("brew_ratio") or "").strip(),
+                bean_id,
+            ),
+        )
+    return get_bean(bean_id)
+
+
 def get_bean(bean_id: int, user_id: int | None = None) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM beans WHERE id = ?", (bean_id,)).fetchone()
@@ -1755,6 +1985,8 @@ def insert_rating(
     coffee_grams: float | None = None,
     water_grams: float | None = None,
     brew_time: str = "",
+    espresso_machine: str = "",
+    grinder: str = "",
 ) -> dict[str, Any]:
     with connect() as conn:
         cur = conn.execute(
@@ -1762,8 +1994,8 @@ def insert_rating(
             INSERT INTO ratings (
                 bean_id, user_id, brew_method, rating, acidity, sweetness, body,
                 aftertaste, notes, grind_setting, coffee_grams, water_grams,
-                brew_time, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                brew_time, espresso_machine, grinder, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 bean_id,
@@ -1779,6 +2011,8 @@ def insert_rating(
                 _as_float(coffee_grams),
                 _as_float(water_grams),
                 (brew_time or "").strip(),
+                (espresso_machine or "").strip(),
+                (grinder or "").strip(),
                 _now(),
             ),
         )
@@ -1841,7 +2075,7 @@ def list_community_recipes(
     sql = """
         SELECT r.id, r.bean_id, r.brew_method, r.rating, r.acidity, r.sweetness,
                r.body, r.aftertaste, r.notes, r.grind_setting, r.coffee_grams,
-               r.water_grams, r.brew_time, r.created_at
+               r.water_grams, r.brew_time, r.espresso_machine, r.grinder, r.created_at
         FROM ratings r
         WHERE r.bean_id = ?
     """

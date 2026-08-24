@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from io import BytesIO
 from pathlib import Path
@@ -21,6 +22,8 @@ from db import (
     get_localized,
     infer_intensity_scores,
     normalize_gear_catalog,
+    normalize_gear_item,
+    search_local_gear,
     resolve_origin_geo,
     sanitize_roaster_url,
     scan_destination,
@@ -201,6 +204,9 @@ FLAVOR_NOTES = [
     "Jordbær",
     "Grapefrugt",
     "Tropisk",
+    "Mandel",
+    "Mandarin",
+    "Frugtsødme",
 ]
 
 FLAVOR_ALIASES: dict[str, list[str]] = {
@@ -226,6 +232,9 @@ FLAVOR_ALIASES: dict[str, list[str]] = {
     "Jordbær": ["jordbær", "strawberry"],
     "Grapefrugt": ["grapefrugt", "grapefruit"],
     "Tropisk": ["tropisk", "tropical"],
+    "Mandel": ["mandel", "almond", "almonds", "mandler"],
+    "Mandarin": ["mandarin", "mandarine", "clementine"],
+    "Frugtsødme": ["frugtsødme", "fruit sweetness", "fruity sweetness", "frugt sødme"],
 }
 
 FLAVOR_LOCALES: dict[str, dict[str, str]] = {
@@ -251,6 +260,9 @@ FLAVOR_LOCALES: dict[str, dict[str, str]] = {
     "Jordbær": {"da": "Jordbær", "en": "Strawberry"},
     "Grapefrugt": {"da": "Grapefrugt", "en": "Grapefruit"},
     "Tropisk": {"da": "Tropisk", "en": "Tropical"},
+    "Mandel": {"da": "Mandel", "en": "Almond"},
+    "Mandarin": {"da": "Mandarin", "en": "Mandarin"},
+    "Frugtsødme": {"da": "Frugtsødme", "en": "Fruit sweetness"},
 }
 
 PROCESS_LOCALES = {
@@ -430,28 +442,96 @@ def _flatten_i18n_sources(*sources: Any) -> list[Any]:
 
 
 def flavor_tags_lang_map(*sources: Any) -> dict[str, list[str]]:
-    """Canonicalize flavor pills, then emit a language → tags dictionary."""
+    """Canonicalize known pills and keep extra official notes as free-form tags."""
     canons = extract_flavor_canons(*sources)
-    if not canons:
-        return {}
-    return {code: [localize_flavor(tag, code) for tag in canons] for code in SUPPORTED_LANGUAGES}
+    free_by_lang: dict[str, list[str]] = {code: [] for code in SUPPORTED_LANGUAGES}
+    for source in sources:
+        if isinstance(source, dict) and any(isinstance(item, list) for item in source.values()):
+            for code, tags in source.items():
+                key = str(code).lower().strip()
+                if key not in SUPPORTED_LANGUAGES or not isinstance(tags, list):
+                    continue
+                for item in tags:
+                    text = _pretty_flavor(item)
+                    if not text or _canonical_flavor(text) or not is_short_flavor(text):
+                        continue
+                    if text not in free_by_lang[key]:
+                        free_by_lang[key].append(text)
+            continue
+        if isinstance(source, (list, tuple)):
+            for item in source:
+                text = _pretty_flavor(item)
+                if not text or _canonical_flavor(text) or not is_short_flavor(text):
+                    continue
+                for code in SUPPORTED_LANGUAGES:
+                    if text not in free_by_lang[code]:
+                        free_by_lang[code].append(text)
+    seed_free = next((free_by_lang[code] for code in SUPPORTED_LANGUAGES if free_by_lang[code]), [])
+    out: dict[str, list[str]] = {}
+    for code in SUPPORTED_LANGUAGES:
+        tags = [localize_flavor(tag, code) for tag in canons]
+        seen = {tag.lower() for tag in tags}
+        for extra in (free_by_lang[code] or seed_free):
+            if extra.lower() in seen:
+                continue
+            tags.append(extra)
+            seen.add(extra.lower())
+        if tags:
+            out[code] = tags[:12]
+    return out
 
 
 def brew_recommendation_lang_map(raw: Any) -> dict[str, dict[str, str]]:
-    """Expand a flat or partial brew object into a language map."""
+    """Expand a flat or partial brew object into a language map, including usage copy."""
     if not raw:
         return {}
+    usage = ""
     if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
         seed = next((item for item in raw.values() if isinstance(item, dict)), {})
         method = str(seed.get("recommended_method") or "")
         grind = str(seed.get("grind_size") or "")
         temp = str(seed.get("water_temp") or "")
         ratio = str(seed.get("brew_ratio") or "")
+        usage = str(seed.get("usage") or seed.get("mouthfeel") or "")
+    elif isinstance(raw, dict) and any(
+        str(item or "").strip() and not isinstance(item, dict) and key not in {
+            "recommended_method", "grind_size", "water_temp", "brew_ratio", "usage", "mouthfeel",
+        }
+        for key, item in raw.items()
+    ) and not any(k in raw for k in ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")):
+        return {
+            str(code).lower().strip(): {
+                "recommended_method": "",
+                "grind_size": "",
+                "water_temp": "",
+                "brew_ratio": "",
+                "usage": str(text or "").strip(),
+            }
+            for code, text in raw.items()
+            if str(text or "").strip()
+        }
     elif isinstance(raw, dict):
         method = str(raw.get("recommended_method") or "")
         grind = str(raw.get("grind_size") or "")
         temp = str(raw.get("water_temp") or "")
         ratio = str(raw.get("brew_ratio") or "")
+        usage = str(raw.get("usage") or raw.get("mouthfeel") or "")
+        if not any((method, grind, temp, ratio, usage)) and all(
+            not isinstance(item, dict) for item in raw.values()
+        ):
+            out_text = {
+                str(code).lower().strip(): {
+                    "recommended_method": "",
+                    "grind_size": "",
+                    "water_temp": "",
+                    "brew_ratio": "",
+                    "usage": str(text or "").strip(),
+                }
+                for code, text in raw.items()
+                if str(text or "").strip()
+            }
+            if out_text:
+                return out_text
     else:
         return {}
     method = _canon_listed(method, BREW_METHODS_REC, METHOD_ALIASES) or method
@@ -463,17 +543,29 @@ def brew_recommendation_lang_map(raw: Any) -> dict[str, dict[str, str]]:
             "grind_size": localize_mapped(grind, GRIND_LOCALES, code) if grind else "",
             "water_temp": temp,
             "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else "",
+            "usage": usage.strip(),
         }
     if isinstance(raw, dict):
         for code, item in raw.items():
-            if isinstance(item, dict) and any(str(item.get(key) or "").strip() for key in item):
-                key = str(code).lower().strip()
+            key = str(code).lower().strip()
+            if isinstance(item, dict) and any(str(item.get(field) or "").strip() for field in item):
                 out[key] = {
                     "recommended_method": str(item.get("recommended_method") or out.get(key, {}).get("recommended_method") or ""),
                     "grind_size": str(item.get("grind_size") or out.get(key, {}).get("grind_size") or ""),
                     "water_temp": str(item.get("water_temp") or temp),
                     "brew_ratio": str(item.get("brew_ratio") or out.get(key, {}).get("brew_ratio") or ""),
+                    "usage": str(item.get("usage") or item.get("mouthfeel") or out.get(key, {}).get("usage") or ""),
                 }
+            elif isinstance(item, str) and item.strip() and key in SUPPORTED_LANGUAGES:
+                current = out.get(key, {
+                    "recommended_method": "",
+                    "grind_size": "",
+                    "water_temp": "",
+                    "brew_ratio": "",
+                    "usage": "",
+                })
+                current["usage"] = item.strip()
+                out[key] = current
     return {code: brew for code, brew in out.items() if any(brew.values())}
 
 
@@ -722,8 +814,18 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
     out["name"] = name
     out["roaster"] = (parsed.get("roaster") or "").strip()
     out["origin"] = (parsed.get("origin") or "").strip()
-    out["process"] = localize_mapped(_canon_process(parsed.get("process") or ""), PROCESS_LOCALES, lang)
-    out["roast_level"] = localize_mapped(_canon_roast(parsed.get("roast_level") or ""), ROAST_LOCALES, lang)
+    raw_process = (parsed.get("process") or "").strip()
+    canon_process = _canon_process(raw_process)
+    out["process"] = _prefer_rich_label(
+        raw_process,
+        localize_mapped(canon_process, PROCESS_LOCALES, lang) if canon_process else "",
+    )
+    raw_roast = (parsed.get("roast_level") or "").strip()
+    canon_roast = _canon_roast(raw_roast)
+    out["roast_level"] = _prefer_rich_label(
+        raw_roast,
+        localize_mapped(canon_roast, ROAST_LOCALES, lang) if canon_roast else "",
+    )
     out["roaster_notes"] = notes
     out["official_notes"] = notes
     out["flavor_notes"] = flavors
@@ -809,6 +911,25 @@ def _as_story_map(value: Any, lang: str) -> dict[str, str]:
         except json.JSONDecodeError:
             pass
     return {_copy_lang(lang): text}
+
+
+def _pretty_flavor(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip(" -:.,"))
+
+
+def _prefer_rich_label(raw: str, localized: str) -> str:
+    """Keep official blend/roast prose when it adds detail beyond a catalog token."""
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    simple = re.sub(r"\s+", " ", (localized or "").strip())
+    if not text:
+        return simple
+    if not simple:
+        return text
+    if text.lower() == simple.lower():
+        return simple
+    if len(text) >= len(simple) + 3 or any(mark in text for mark in "/%("):
+        return text
+    return simple
 
 
 def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]]) -> str:
@@ -901,6 +1022,7 @@ def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[
             "grind_size": localize_mapped(grind, GRIND_LOCALES, code),
             "water_temp": temp,
             "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else BREW_RATIO_COPY[inferred["brew_key"]].get(code) or BREW_RATIO_COPY[inferred["brew_key"]].get(FALLBACK_LANG, ""),
+            "usage": str(seed.get("usage") or seed.get("mouthfeel") or "").strip(),
         }
     if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
         for code, item in raw.items():
@@ -912,7 +1034,13 @@ def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[
                     "grind_size": str(item.get("grind_size") or current.get("grind_size") or ""),
                     "water_temp": str(item.get("water_temp") or current.get("water_temp") or temp),
                     "brew_ratio": str(item.get("brew_ratio") or current.get("brew_ratio") or ""),
+                    "usage": str(item.get("usage") or item.get("mouthfeel") or current.get("usage") or ""),
                 }
+            elif isinstance(item, str) and item.strip():
+                key = str(code).lower().strip()
+                current = dict(out.get(key) or {})
+                current["usage"] = item.strip()
+                out[key] = current
     return out
 
 
@@ -1014,12 +1142,16 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
         out["altitude"] = altitude
 
     varietal = (out.get("varietal") or out.get("variety") or "").strip()
-    varietal = varietal.replace("í", "i").replace("Í", "I")
-    variety_parts = [
-        _pretty(part) for part in re.split(r"\s*(?:&|/|,| og | and )\s*", varietal) if part.strip()
-    ]
-    if variety_parts:
-        out["varietal"] = " & ".join(variety_parts)
+    varietal = re.sub(r"\s+", " ", varietal)
+    if "%" in varietal or "(" in varietal:
+        out["varietal"] = varietal
+    else:
+        varietal = varietal.replace("í", "i").replace("Í", "I")
+        variety_parts = [
+            _pretty(part) for part in re.split(r"\s*(?:&|/|,| og | and )\s*", varietal) if part.strip()
+        ]
+        if variety_parts:
+            out["varietal"] = " & ".join(variety_parts)
 
     if out.get("suitable_for"):
         out["suitable_for"] = extract_suitable_for(out.get("suitable_for"), lang=code)
@@ -1032,9 +1164,9 @@ def _gemini_prompt(lang: str = "da") -> str:
     story_lang = STORY_LANG.get(code, "Danish")
     lang_keys = ", ".join(f'"{item}"' for item in SUPPORTED_LANGUAGES)
     flavor_lines = "\n".join(
-        f'    "{item}": array of 1–6 descriptors chosen only from ['
-        + ", ".join(f'"{name}"' for name in flavor_notes_for(item))
-        + "]"
+        f'    "{item}": array of 1–12 specific tasting notes in that language '
+        '(e.g. dark chocolate, almond, mandarin, caramel, fruit sweetness). '
+        "Copy every printed note — do not limit yourself to a short catalog."
         for item in SUPPORTED_LANGUAGES
     )
     processes = ", ".join(f'"{name}"' for name in processes_for(code))
@@ -1048,7 +1180,8 @@ def _gemini_prompt(lang: str = "da") -> str:
         brew_lines.append(
             f'    "{item}": {{"recommended_method": one of [{methods}], '
             f'"grind_size": one of [{grinds}], "water_temp": e.g. "92-94°C", '
-            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}"}}'
+            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}", '
+            f'"usage": 2–3 sentences in that language on mouthfeel, crema, and how to brew it}}'
         )
     espresso_ratio = BREW_RATIO_COPY["espresso"].get(code, BREW_RATIO_COPY["espresso"]["en"])
     pour_ratio = BREW_RATIO_COPY["pour_over"].get(code, BREW_RATIO_COPY["pour_over"]["en"])
@@ -1058,14 +1191,11 @@ def _gemini_prompt(lang: str = "da") -> str:
     grind_med_fine = GRIND_LOCALES["Medium-fin"].get(code, "Medium-fine")
     grind_coarse = GRIND_LOCALES["Grov"].get(code, "Coarse")
     suitable = ", ".join(f'"{name}"' for name in suitable_for_catalog(code))
-    da_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("da"))
-    en_flavors = ", ".join(f'"{name}"' for name in flavor_notes_for("en"))
     return (
-        "You are a specialty-coffee label reader for BeanNote. "
+        "You are a specialty-coffee label reader and cupping journalist for BeanNote. "
         "STEP 1 — STRICT OPTICAL READING. "
-        "Inspect this coffee bag photo and extract only values that are visibly "
-        "printed or shown as icons. Do not browse the web and do not guess from "
-        "typical-origin knowledge. Return ONE JSON object only (no markdown) "
+        "Inspect this coffee bag photo and extract values that are visibly "
+        "printed or shown as icons. Do not browse the web. Return ONE JSON object only (no markdown) "
         "with these keys:\n"
         '- "roaster": roaster / brand name\n'
         '- "bean_name": the exact primary product name rendered on the bag. '
@@ -1081,11 +1211,15 @@ def _gemini_prompt(lang: str = "da") -> str:
         '- "longitude": float WGS84 longitude only if printed, else null\n'
         '- "roast_date": roast date string if printed, else ""\n'
         '- "altitude": copy the printed MASL string exactly, e.g. "800 - 2100 M."\n'
-        '- "varietal": copy printed varieties in ASCII '
-        '(e.g. "Catuai & Heirloom", never "Catuaí")\n'
-        f'- "process": exactly one of [{processes}] if printed — write this in {story_lang}. '
-        "Empty string if the bag does not name a process.\n"
-        f'- "roast_level": exactly one of [{roasts}] if printed, else ""\n'
+        '- "varietal": detailed blend/variety spec in ASCII, e.g. '
+        '"100% Arabica (Brazilian base)", "Catuai & Heirloom". Keep species, '
+        "origin-base, and blend language printed on the bag.\n"
+        f'- "process": processing method in {story_lang}. Prefer a catalog token '
+        f"[{processes}] when that is all the bag says, but keep extra printed "
+        "detail (e.g. anaerobic natural, pulped natural).\n"
+        f'- "roast_level": roast depth in {story_lang}. Catalog tokens are '
+        f"[{roasts}], but keep richer printed names such as "
+        '"Mellemmørk / Full City" or "Medium-dark espresso roast".\n'
         '- "roaster_acidity": integer 1–5 counted from printed bean-meters / dots / bars '
         "for acidity / brightness (filled icons out of 5). "
         "null if the bag does not print this meter. "
@@ -1098,11 +1232,12 @@ def _gemini_prompt(lang: str = "da") -> str:
         "Map a printed Medium-Light meter to 2 and Medium-Dark to 4. "
         "null if not printed. "
         'Alias: "roast_level_score".\n'
-        f'- "flavor_tags": language map keyed by {lang_keys}. Same flavors, same order, '
-        "translated per key, taken only from printed tasting notes. Schema:\n"
+        f'- "flavor_tags": language map keyed by {lang_keys}. Extract ALL specific '
+        "tasting notes printed on the bag (chocolate, almond, mandarin, caramel, "
+        "fruit sweetness, etc.) — every distinct note, same order, translated per key. Schema:\n"
         f"{flavor_lines}\n"
-        f'  Example: {{"da": ["Mørk chokolade"], "en": ["Dark chocolate"]}}. '
-        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}]. "
+        '  Example: {"da": ["Mørk chokolade", "Mandel", "Mandarin", "Karamel", "Frugtsødme"], '
+        '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}. '
         "Use empty arrays when no flavor words are printed.\n"
         f'- "suitable_for": array of 1–4 brew-suitability labels in {story_lang} chosen only from '
         f"[{suitable}]. Read printed brew icons such as FOR MACHINES (Espresso), FOR FILTER, "
@@ -1110,24 +1245,31 @@ def _gemini_prompt(lang: str = "da") -> str:
         "Empty array if no brew icons are printed.\n"
         f'- "official_notes": tasting-notes text copied from the bag and rewritten in {story_lang}. '
         "Empty string if none are printed.\n"
-        f'- "story": language map keyed by {lang_keys}. Copy a printed producer/farm story only. '
-        "Otherwise use empty strings — a later official-page lookup writes the coffee story. "
-        'Example: {"da": "Høstet i 1.900 meters højde i Yirgacheffe-regionen...", '
-        '"en": "Harvested at 1,900 meters in the Yirgacheffe region..."}. '
-        "Each language key must stay in that language only — no mixed languages inside a key.\n"
-        f'- "brew_recommendation": language map keyed by {lang_keys} with localized text fields:\n'
+        f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
+        "specialty-coffee background in each language from what the bag actually prints "
+        "(roaster signature, blend character, origin, tasting personality). "
+        "Example DA: \"Risteriets signatur-espresso udviklet i 2004. En fyldig blanding "
+        "af 100% Arabica med noter af mørk chokolade og mandarin.\" "
+        "Each language key stays in that language only. Empty strings if the bag has no story.\n"
+        f'- "brew_recommendation": language map keyed by {lang_keys} with localized fields:\n'
         f'{chr(10).join(brew_lines)}\n'
-        "Copy printed brew advice only. If the bag does not print a recipe, "
-        "use empty strings for recommended_method, grind_size, water_temp, and brew_ratio. "
-        f"Do not infer V60 / {grind_med_fine} / {grind_fine} / {press_name} / {grind_coarse} "
-        f"or ratios such as {espresso_ratio} / {pour_ratio} during this optical pass.\n"
+        "Copy printed brew advice into the recipe fields. Also fill \"usage\" with explicit "
+        "mouthfeel and usage details when the bag describes crema, body, espresso, milk drinks, "
+        "or superautomatic machines. Example DA usage: "
+        '"Fyldig, blød og med en kraftig, naturlig crema. Fremragende til espresso og '
+        'mælkedrikke, men fungerer også på fuldautomatiske maskiner." '
+        "If the bag does not print a recipe, use empty strings for recommended_method, "
+        "grind_size, water_temp, and brew_ratio — but still write usage when mouthfeel "
+        f"or brew-style words are printed. Do not invent V60 / {grind_med_fine} / {grind_fine} / "
+        f"{press_name} / {grind_coarse} or ratios such as {espresso_ratio} / {pour_ratio} "
+        "during this optical pass.\n"
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
         "brew_recommendation. Adding another ISO key later (de, fr, es) uses the same shape. "
         f"Scalar fields (origin, process, roast_level, suitable_for, official_notes) stay in "
         f"{story_lang} because lang={code}.\n"
         "Read printed text and icons only. If a field is missing on the label, "
         "use an empty string, empty array, empty map, or null. "
-        "Never invent a roaster, bean_name, farm, URL, bean-meter score, or story.\n"
+        "Never invent a roaster, bean_name, farm, URL, or bean-meter score.\n"
         '- "roaster_url": official https homepage of the roaster if printed on the bag '
         "(www.example.com or https://…). Homepage only — never a product "
         "image, CDN asset, or marketplace listing. Empty string if unknown. Never invent a URL.\n"
@@ -1160,12 +1302,9 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
     query = official_product_search_query(roaster, name)
     processes = ", ".join(f'"{name}"' for name in processes_for(code))
     roasts = ", ".join(f'"{name}"' for name in roast_levels_for(code))
-    da_flavors = ", ".join(f'"{item}"' for item in flavor_notes_for("da"))
-    en_flavors = ", ".join(f'"{item}"' for item in flavor_notes_for("en"))
     flavor_lines = "\n".join(
-        f'    "{item}": array of 1–6 descriptors chosen only from ['
-        + ", ".join(f'"{tag}"' for tag in flavor_notes_for(item))
-        + "]"
+        f'    "{item}": array of 1–12 specific tasting notes in that language, '
+        "taken from the official page and reviews — every distinct note, same order"
         for item in SUPPORTED_LANGUAGES
     )
     brew_lines = []
@@ -1177,19 +1316,21 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
         brew_lines.append(
             f'    "{item}": {{"recommended_method": one of [{methods}], '
             f'"grind_size": one of [{grinds}], "water_temp": e.g. "92-94°C", '
-            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}"}}'
+            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}", '
+            f'"usage": 2–3 sentences in that language on mouthfeel, crema, and recommended use}}'
         )
     return (
-        "You are BeanNote's official product-page researcher. "
+        "You are BeanNote's official product-page researcher and specialty-coffee journalist. "
         "STEP 2 — OFFICIAL WEB LOOKUP. "
         "Enable Google Search grounding and query Google for the official product page:\n"
         f"{query}\n"
         "Prefer the roaster's own shop or official site over marketplaces "
         "(Amazon, eBay, comparison sites) unless that marketplace is the brand's "
         "only official product page. "
-        "STEP 3 — DATA VERIFICATION & ENRICHMENT. "
-        "Extract metadata published on that official page. "
-        "Return ONE JSON object only (no markdown) with these keys:\n"
+        "STEP 3 — DEEP DATA ENRICHMENT. "
+        "Write with the same depth as a knowledgeable Gemini chat about this coffee. "
+        "Extract every published tasting note, blend spec, roast style, and brew/mouthfeel "
+        "detail. Return ONE JSON object only (no markdown) with these keys:\n"
         '- "roaster": official brand / roaster name\n'
         '- "bean_name": official product name\n'
         f'- "origin": origin country or countries in {story_lang}, joined with " & "\n'
@@ -1197,30 +1338,44 @@ def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
         '- "latitude": float WGS84 if the official page publishes coordinates, else null\n'
         '- "longitude": float WGS84 if published, else null\n'
         '- "altitude": official MASL string, e.g. "1700 - 1900 M."\n'
-        '- "varietal": official varieties in ASCII\n'
-        f'- "process": exactly one of [{processes}] — Washed/Vasket, Natural, Anaerobic/Anaerob, or Honey\n'
-        f'- "roast_level": exactly one of [{roasts}]\n'
+        '- "varietal": detailed blend/variety spec in ASCII, e.g. '
+        '"100% Arabica (Brazilian base)" or "Bourbon & Caturra". Keep species and blend notes.\n'
+        f'- "process": processing method in {story_lang}. Catalog tokens [{processes}] '
+        "are fine when that is all that is published; keep extra detail when present.\n"
+        f'- "roast_level": roast depth in {story_lang}. Catalog tokens [{roasts}], '
+        'or richer names such as "Mellemmørk / Full City".\n'
         '- "roaster_acidity": official 1–5 acidity / brightness if the page publishes a meter. '
         'Alias: "acidity_score". null if unpublished.\n'
         '- "roaster_body": official 1–5 body / mouthfeel if published. '
         'Alias: "body_score". null if unpublished.\n'
         '- "roaster_roast_level": official 1–5 roast depth if published. '
         'Alias: "roast_level_score". null if unpublished.\n'
-        f'- "flavor_tags": language map keyed by {lang_keys}. Full official tasting-notes map:\n'
+        f'- "flavor_tags": language map keyed by {lang_keys}. Extract ALL specific tasting '
+        "notes mentioned on the official page or printed reviews:\n"
         f"{flavor_lines}\n"
-        f"Danish catalog: [{da_flavors}]. English catalog: [{en_flavors}].\n"
+        '  Example: {"da": ["Mørk chokolade", "Mandel", "Mandarin", "Karamel", "Frugtsødme"], '
+        '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}.\n'
         f'- "official_notes": official tasting blurb rewritten in {story_lang}\n'
-        f'- "story": language map keyed by {lang_keys}. 2–4 sentences from the official '
-        "coffee story / producer notes. Each language key stays in that language only.\n"
-        f'- "brew_recommendation": language map keyed by {lang_keys} for the official brew recipe:\n'
+        f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
+        "background story for a coffee journal — origin, why the roaster made it, blend "
+        "character, and signature notes. Match Gemini-chat depth, grounded in the official "
+        "page. Example DA: \"Risteriets signatur-espresso udviklet i 2004. En fyldig blanding "
+        "af 100% Arabica med noter af mørk chokolade og mandarin.\" "
+        "Each language key stays in that language only.\n"
+        f'- "brew_recommendation": language map keyed by {lang_keys} for the official brew '
+        "recipe PLUS mouthfeel/usage copy:\n"
         f"{chr(10).join(brew_lines)}\n"
+        "usage must spell out body, crema, and what the coffee is excellent for "
+        "(espresso, milk drinks, filter, superautomatic). Example DA: "
+        '"Fyldig, blød og med en kraftig, naturlig crema. Fremragende til espresso og '
+        'mælkedrikke, men fungerer også på fuldautomatiske maskiner."\n'
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
         "brew_recommendation.\n"
         '- "product_page_url": official https product page you used. Never invent a URL.\n'
         '- "roaster_url": official https homepage. Homepage only — never a product image.\n'
         '- "image_candidates": up to 3 real official studio packshot https URLs from that page.\n'
         "If you cannot find a real official page, return empty strings, empty maps, and null scores. "
-        "Never invent a farm, score, URL, or flavor that the official page does not publish."
+        "Never invent a farm, score, URL, or flavor that sources do not support."
     )
 
 
@@ -1254,25 +1409,16 @@ def _printed_score(*values: Any) -> int | None:
 
 def _merge_flavor_sources(optical: dict[str, Any], official: dict[str, Any]) -> dict[str, list[str]]:
     """Official tasting notes first, then any extra pills printed on the bag."""
-    web = extract_flavor_canons(
+    return flavor_tags_lang_map(
         official.get("flavor_tags"),
         official.get("flavor_notes"),
         official.get("official_notes"),
         official.get("roaster_notes"),
-    )
-    bag = extract_flavor_canons(
         optical.get("flavor_tags"),
         optical.get("flavor_notes"),
         optical.get("official_notes"),
         optical.get("roaster_notes"),
     )
-    ordered: list[str] = []
-    for tag in (*web, *bag):
-        if tag not in ordered:
-            ordered.append(tag)
-    if not ordered:
-        return {}
-    return {code: [localize_flavor(tag, code) for tag in ordered] for code in SUPPORTED_LANGUAGES}
 
 
 SCAN_SCALAR_DEFAULTS = {
@@ -1858,6 +2004,23 @@ def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") ->
     return merge_optical_and_official(bag, official)
 
 
+def enrich_bean_from_web(name: str, roaster: str, lang: str = "da") -> dict[str, Any]:
+    """Grounded lookup for an existing archive bean that is missing a full story/profile."""
+    optical = {
+        "name": (name or "").strip(),
+        "bean_name": (name or "").strip(),
+        "roaster": (roaster or "").strip(),
+    }
+    if not optical["name"] and not optical["roaster"]:
+        raise ValueError("name_roaster_required")
+    if not get_gemini_api_key():
+        raise RuntimeError("ocr_missing")
+    merged = enrich_scan_with_official_page(optical, lang=lang)
+    parsed = normalize_scan_fields(merged, lang=lang)
+    parsed["scan_enrichment"] = merged.get("scan_enrichment") or "optical+web"
+    return parsed
+
+
 def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | None:
     """Optical Vision pass, then grounded official-page enrichment, then normalize."""
     key = get_gemini_api_key()
@@ -2333,8 +2496,8 @@ def _find_bean_name(lines: list[str], roaster: str, origin: str) -> str:
     return ""
 
 
-MAX_FLAVOR_WORDS = 2
-MAX_FLAVOR_CHARS = 28
+MAX_FLAVOR_WORDS = 4
+MAX_FLAVOR_CHARS = 42
 
 
 def is_short_flavor(tag: str) -> bool:
@@ -2363,21 +2526,33 @@ def _canonical_flavor(token: str) -> str:
 
 
 def _dedupe_flavors(tags: list[str]) -> list[str]:
-    """Keep official pills only; drop generics covered by a longer official tag."""
+    """Keep official pills; drop generics covered by a longer official tag."""
     order = {name: index for index, name in enumerate(FLAVOR_NOTES)}
     unique: list[str] = []
     seen: set[str] = set()
+    extras: list[str] = []
     for tag in tags:
-        if tag not in order or tag in seen:
+        compact = _pretty_flavor(tag)
+        if not compact:
             continue
-        seen.add(tag)
-        unique.append(tag)
+        key = compact.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if compact in order:
+            unique.append(compact)
+        else:
+            extras.append(compact)
     kept = [
         tag
         for tag in unique
         if not any(tag != other and tag.lower() in other.lower() for other in unique)
     ]
-    kept.sort(key=lambda name: order[name])
+    kept.sort(key=lambda name: order.get(name, 999))
+    for extra in extras:
+        if any(extra.lower() == other.lower() or extra.lower() in other.lower() for other in kept):
+            continue
+        kept.append(extra)
     return kept
 
 
@@ -2413,14 +2588,14 @@ def extract_flavor_canons(*sources: Any) -> list[str]:
                 if canon:
                     hits.append(canon)
                 elif is_short_flavor(text):
-                    hits.extend(_match_flavors(text))
+                    hits.append(_pretty_flavor(text))
                 blobs.append(text)
             continue
         blobs.append(str(source))
     blob = " ".join(blobs)
     if blob:
         hits.extend(_match_flavors(blob))
-    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag) and tag in FLAVOR_NOTES]
+    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag)]
 
 
 def extract_flavor_tags(*sources: Any, lang: str = "da") -> list[str]:
@@ -2536,7 +2711,7 @@ def _gear_lookup_with_genai(query: str, kind: str, key: str, lang: str) -> list[
     from google.genai import types
 
     prompt = _gear_lookup_prompt(query, kind, lang)
-    client = genai.Client(api_key=key, http_options={"timeout": 28_000})
+    client = genai.Client(api_key=key, http_options={"timeout": 8_000})
     tools = _google_search_tools(types)
     last_error: Exception | None = None
     for model_name in GEMINI_MODELS:
@@ -2599,8 +2774,40 @@ def _gear_lookup_with_generativeai(query: str, kind: str, key: str, lang: str) -
     return []
 
 
+_GEAR_LOOKUP_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_GEAR_CACHE_LOCK = threading.Lock()
+_GEAR_CACHE_TTL = 60 * 60
+_GEAR_CACHE_MISS_TTL = 45
+_GEAR_CACHE_MAX = 128
+
+
+def _gear_cache_key(query: str, kind: str, lang: str) -> str:
+    folded = re.sub(r"[^a-z0-9]+", " ", (query or "").lower()).strip()
+    return f"{folded}|{(kind or '').strip().lower()}|{_copy_lang(lang)}"
+
+
+def _gear_cache_get(key: str) -> list[dict[str, Any]] | None:
+    with _GEAR_CACHE_LOCK:
+        hit = _GEAR_LOOKUP_CACHE.get(key)
+        if not hit:
+            return None
+        expires, payload = hit
+        if expires < time.monotonic():
+            _GEAR_LOOKUP_CACHE.pop(key, None)
+            return None
+        return [dict(item) for item in payload]
+
+
+def _gear_cache_set(key: str, payload: list[dict[str, Any]], ttl: float = _GEAR_CACHE_TTL) -> None:
+    with _GEAR_CACHE_LOCK:
+        if len(_GEAR_LOOKUP_CACHE) >= _GEAR_CACHE_MAX:
+            oldest = min(_GEAR_LOOKUP_CACHE, key=lambda item: _GEAR_LOOKUP_CACHE[item][0])
+            _GEAR_LOOKUP_CACHE.pop(oldest, None)
+        _GEAR_LOOKUP_CACHE[key] = (time.monotonic() + ttl, [dict(item) for item in payload])
+
+
 def lookup_gear_catalog(query: str, kind: str = "", lang: str = "da") -> list[dict[str, Any]]:
-    """Grounded Gemini catalog: up to 4 brand/model candidates with studio images."""
+    """Local catalog first, then cached Gemini; never block the picker on a long timeout."""
     q = " ".join((query or "").split())
     if len(q) < 2:
         raise ValueError("gear_query_required")
@@ -2609,33 +2816,29 @@ def lookup_gear_catalog(query: str, kind: str = "", lang: str = "da") -> list[di
         slot = "espresso_machine"
     if slot not in {"espresso_machine", "grinder", "brewer", "other"}:
         slot = ""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-
+    cache_key = _gear_cache_key(q, slot, lang)
+    cached = _gear_cache_get(cache_key)
+    if cached:
+        return cached[:4]
+    local = search_local_gear(q, slot)
+    if local:
+        hits = local[:4]
+        _gear_cache_set(cache_key, hits)
+        return hits
     key = get_gemini_api_key()
-    if not key:
-        raise RuntimeError("ocr_missing")
-    data: list[dict[str, Any]] = []
-    errors: list[str] = []
-
-    def _run() -> list[dict[str, Any]]:
+    if key:
         try:
-            return _gear_lookup_with_genai(q, slot, key, lang)
+            remote = _gear_lookup_with_genai(q, slot, key, lang)[:4]
+            if remote:
+                _gear_cache_set(cache_key, remote)
+                return remote
         except Exception as exc:
-            errors.append(f"google.genai: {exc}")
-            return _gear_lookup_with_generativeai(q, slot, key, lang)
-
-    try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            data = pool.submit(_run).result(timeout=40)
-    except FuturesTimeout as exc:
-        raise ValueError("gear_lookup_fail") from exc
-    except Exception as exc:
-        errors.append(str(exc))
-    if not data:
-        if errors:
-            raise RuntimeError("; ".join(errors))
-        raise ValueError("gear_lookup_fail")
-    return data[:4]
+            print(f"gear lookup gemini skipped: {exc}")
+    fallback = normalize_gear_item({"name": q, "kind": slot or "other"})
+    hits = [fallback] if fallback else []
+    if hits:
+        _gear_cache_set(cache_key, hits, ttl=_GEAR_CACHE_MISS_TTL)
+    return hits
 
 
 def lookup_gear_specs(query: str, kind: str = "", lang: str = "da") -> dict[str, Any]:

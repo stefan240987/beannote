@@ -37,6 +37,7 @@ from db import (
     insert_rating,
     list_beans,
     list_user_journal,
+    apply_bean_enrichment,
     resolve_image_path,
     toggle_favorite,
     save_bean_image,
@@ -61,6 +62,7 @@ from ocr import (
     roast_levels_for,
     scan_available,
     scan_label,
+    enrich_bean_from_web,
 )
 from translations import (
     FALLBACK_LANG,
@@ -470,6 +472,8 @@ class RatingIn(BaseModel):
     water_grams: Optional[float] = None
     brew_time: str = ""
     tasting_notes_user: str = ""
+    espresso_machine: str = ""
+    grinder: str = ""
 
 
 class GearLookupIn(BaseModel):
@@ -829,6 +833,36 @@ def favorite_bean(bean_id: int, user: dict[str, Any] = Depends(current_user)) ->
     return {"is_favorite": toggle_favorite(user["id"], bean_id), "bean_id": bean_id}
 
 
+@app.post("/api/beans/{bean_id}/enrich")
+def enrich_bean(
+    bean_id: int,
+    request: Request,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    bean = get_bean(bean_id, user_id=user["id"])
+    if not bean:
+        raise HTTPException(status_code=404, detail="not_found")
+    chosen = (request.query_params.get("lang") or "da").lower().strip()
+    if chosen not in SUPPORTED_LANGUAGES:
+        chosen = "da"
+    try:
+        payload = enrich_bean_from_web(bean.get("name") or "", bean.get("roaster") or "", lang=chosen)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if str(exc) == "ocr_missing":
+            raise HTTPException(status_code=503, detail="ocr_missing") from exc
+        raise HTTPException(status_code=422, detail="enrich_fail") from exc
+    except Exception as exc:
+        print(f"bean enrich failed: {exc}")
+        raise HTTPException(status_code=422, detail="enrich_fail") from exc
+    updated = apply_bean_enrichment(bean_id, payload, lang=chosen)
+    if not updated:
+        raise HTTPException(status_code=404, detail="not_found")
+    profile = get_flavor_profile(bean_id, user_id=user["id"])
+    return {"status": "enriched", "bean": updated, "profile": profile}
+
+
 @app.post("/api/scan")
 async def scan(
     request: Request,
@@ -908,6 +942,8 @@ def create_rating(payload: RatingIn, user: dict[str, Any] = Depends(current_user
         coffee_grams=payload.coffee_grams,
         water_grams=payload.water_grams,
         brew_time=payload.brew_time,
+        espresso_machine=payload.espresso_machine,
+        grinder=payload.grinder,
     )
     return {"rating": rating, "profile": get_flavor_profile(payload.bean_id, user_id=user["id"])}
 

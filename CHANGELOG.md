@@ -2,6 +2,19 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.0.0] - 2026-08-24
+
+- snapshot: v6.0.0 - deep coffee metadata enrichment, 3-tab navigation, gear-linked logs, and bean enrichment endpoint
+- Gemini optical + grounded lookup now writes a captivating `story` lang map, all specific `flavor_tags`, mouthfeel/usage copy in `brew_recommendation.usage`, and detailed `varietal` / roast-process specs (e.g. 100% Arabica blend, Mellemmørk / Full City).
+- Bean Detail always shows 📖 Kaffens Historie, flavor pills, and usage inside Risteriets Profil. `POST /api/beans/{id}/enrich` plus ✨ Hent AI Historie & Profil backfills existing beans.
+- Bottom nav is three tabs (Udforsk, Scan, Profil). Rate lives at the top of the bean modal. Scanning an archived bag prompts "Kaffen findes allerede i dit arkiv!" with a one-tap open-and-rate action.
+- Brew logs store selected `espresso_machine` and `grinder`; those badges appear on Min Kaffe-Dagbog and Fællesskabets Opskrifter. `POST /api/gear/lookup` caches results in memory.
+
+## [5.6.1] - 2026-08-23
+
+- snapshot: v5.6.1 - fixed gear search doing nothing while Gemini timed out
+- `POST /api/gear/lookup` matches Profitec, Mahlkönig, DF64 and other catalog brands instantly instead of waiting ~40s for grounded Gemini. Unknown queries still try a short Gemini pass, then open the typed name as a card.
+
 ## [5.6.0] - 2026-08-23
 
 - snapshot: v5.6.0 - added visual gear catalog search with product images and model selection
