@@ -4,6 +4,12 @@ All notable BeanNote changes are recorded here.
 
 ## [fix] - 2026-08-24
 
+- snapshot: fix - rendered suitable_for brew method tags in bean detail modal
+- Bean Detail parses `suitable_for` as either an array or a JSON string and renders cream/terracotta pills next to flavor tags (`🎯 Egnet til`).
+- `suitable_for` i18n stays present in DA / EN / DE / FR / ES.
+
+## [fix] - 2026-08-24
+
 - snapshot: fix - diagnosed gear image path and added automatic img fallback
 - Origami Dripper now uses `/static/img/gear/origami-dripper.jpg` (file exists on disk; FastAPI already mounts `/static` from `static/`).
 - Gear `<img>` tags keep `/static/` URLs (instead of rewriting them to `/media/`) and swap to `/static/icon.svg` on load error so a missing product photo never shows a broken frame.

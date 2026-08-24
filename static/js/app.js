@@ -185,6 +185,15 @@ const activeLang = () => i18nManager.active();
 const applyLanguage = (lang) => i18nManager.setLanguage(lang);
 const isAdmin = () => !!state.user?.is_admin;
 
+function parseSuitableFor(value) {
+  try {
+    const parsed = Array.isArray(value) ? value : JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function localizeSuitable(tag) {
   const raw = String(tag || "").trim();
   if (!raw) return raw;
@@ -201,7 +210,7 @@ function matchesSuitable(tags, filter) {
     milk: ["mælkedrikke", "milk", "latte", "macchiato"],
   };
   const needles = aliases[filter] || [filter];
-  return (tags || []).some((tag) => {
+  return parseSuitableFor(tags).some((tag) => {
     const low = String(tag || "").toLowerCase();
     return needles.some((needle) => low.includes(needle));
   });
@@ -711,9 +720,11 @@ function suitabilityBar() {
 }
 
 function suitabilityLine(tags) {
-  const labels = (tags || []).map(localizeSuitable).filter(Boolean);
+  const labels = parseSuitableFor(tags).map(localizeSuitable).filter(Boolean);
   if (!labels.length) return "";
-  const chips = labels.map((label) => `<span class="suitable-pill">${esc(label)}</span>`).join("");
+  const chips = labels.map((label) =>
+    `<span class="suitable-pill rounded-full bg-cream px-2.5 py-1 text-xs font-semibold text-terracotta ring-1 ring-terracotta">${esc(label)}</span>`
+  ).join("");
   return `<div class="inline-flex max-w-full flex-wrap items-center gap-1.5">
     <span class="text-sm font-semibold text-espresso">${esc(t("suitable_for"))}:</span>
     ${chips}
@@ -1040,6 +1051,13 @@ function beanModal(profile) {
   const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
   const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
   const flavorPills = pills(bean.flavor_tags);
+  let suitableFor = [];
+  try {
+    suitableFor = Array.isArray(bean.suitable_for) ? bean.suitable_for : JSON.parse(bean.suitable_for || "[]");
+  } catch {
+    suitableFor = [];
+  }
+  const suitableLine = suitabilityLine(suitableFor);
   return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
     <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
       <div class="modal-close-bar">
@@ -1056,7 +1074,7 @@ function beanModal(profile) {
           <button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>
           ${state.rateOpen ? rateForm() : ""}
           ${retailerActions(bean)}
-          ${flavorPills || (bean.suitable_for || []).length ? `<div class="flex flex-wrap items-center gap-1.5">${flavorPills}${suitabilityLine(bean.suitable_for)}</div>` : ""}
+          ${flavorPills || parseSuitableFor(suitableFor).length ? `<div class="flex flex-wrap items-center gap-1.5">${flavorPills}${suitableLine}</div>` : ""}
           ${metaBadges(bean)}
           ${storyBlock(bean.story)}
         </section>
