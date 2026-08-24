@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.2.0] - 2026-08-24
+
+- snapshot: v6.2.0 - modularized routes/frontend, local gear catalog, and iOS zoom fix
+- Split `main.py` into `deps.py`, `schemas.py`, and `routes/` (`auth`, `beans`, `scan`, `brews`, `gear`, `meta`). `main.py` is the FastAPI composition root only.
+- Extracted PWA CSS/JS to `static/css/styles.css` and `static/js/app.js`. Inputs use `font-size: 16px !important` so iOS Safari does not zoom on focus. Service worker cache is `beannote-v6.2`.
+- Equipment index lives in `gear_catalog.json` and is loaded by `db.py` before Gemini gear lookup.
+
 ## [cleanup] - 2026-08-24
 
 - snapshot: cleanup - removed legacy streamlit and test fixtures

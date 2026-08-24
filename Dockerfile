@@ -24,7 +24,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY db.py ocr.py image_search.py translations.py main.py entrypoint.sh ./
+COPY db.py ocr.py image_search.py translations.py main.py deps.py schemas.py gear_catalog.json entrypoint.sh ./
+COPY routes ./routes
 COPY static ./static
 
 RUN chmod +x /app/entrypoint.sh && mkdir -p /app/data

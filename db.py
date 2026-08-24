@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.0.0"
+VERSION = "6.2.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -320,48 +320,18 @@ def _fold_gear_text(text: str) -> str:
 
 
 # Instant brand/model index so Profile search never waits on Gemini.
-GEAR_CATALOG: tuple[dict[str, Any], ...] = (
-    {"name": "Profitec Drive", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("drive",), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary", "group": "E61"}},
-    {"name": "Profitec Pro 700", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 700", "pro700"), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary", "group": "E61"}},
-    {"name": "Profitec Go", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("go",), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True, "pump": "Vibratory", "group": "E61"}},
-    {"name": "Profitec Pro 400", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 400", "pro400"), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True, "group": "E61"}},
-    {"name": "Profitec Pro 600", "brand": "Profitec", "kind": "espresso_machine", "aliases": ("pro 600",), "highlights": ["Heat Exchanger", "PID", "Rotary"], "specs": {"boiler": "Heat Exchanger", "pid": True, "pump": "Rotary"}},
-    {"name": "Lelit Bianca", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("bianca", "pl162t"), "highlights": ["Dual Boiler", "PID", "Flow Control"], "specs": {"boiler": "Dual Boiler", "pid": True, "group": "E61"}},
-    {"name": "Lelit Mara X", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("mara x", "marax"), "highlights": ["Heat Exchanger", "PID"], "specs": {"boiler": "Heat Exchanger", "pid": True}},
-    {"name": "Lelit Victoria", "brand": "Lelit", "kind": "espresso_machine", "aliases": ("victoria",), "highlights": ["Single Boiler", "PID"], "specs": {"boiler": "Single Boiler", "pid": True}},
-    {"name": "La Marzocco Linea Mini", "brand": "La Marzocco", "kind": "espresso_machine", "aliases": ("linea mini", "lm linea"), "highlights": ["Dual Boiler", "PID"], "specs": {"boiler": "Dual Boiler", "pid": True}},
-    {"name": "Rocket Appartamento", "brand": "Rocket", "kind": "espresso_machine", "aliases": ("appartamento",), "highlights": ["Heat Exchanger"], "specs": {"boiler": "Heat Exchanger", "group": "E61"}},
-    {"name": "ECM Synchronika", "brand": "ECM", "kind": "espresso_machine", "aliases": ("synchronika",), "highlights": ["Dual Boiler", "PID", "Rotary"], "specs": {"boiler": "Dual Boiler", "pid": True, "pump": "Rotary"}},
-    {"name": "Decent DE1", "brand": "Decent", "kind": "espresso_machine", "aliases": ("de1", "decent de1"), "highlights": ["Profile", "Tablet"], "specs": {"boiler": "Thermocoil", "pid": True}},
-    {"name": "Gaggia Classic Pro", "brand": "Gaggia", "kind": "espresso_machine", "aliases": ("classic pro", "gcp"), "highlights": ["Single Boiler"], "specs": {"boiler": "Single Boiler", "pump": "Vibratory"}},
-    {"name": "Sage Barista Express", "brand": "Sage", "kind": "espresso_machine", "aliases": ("breville barista express", "bes870"), "highlights": ["Thermocoil", "Built-in Grinder"], "specs": {"boiler": "Thermocoil", "pid": True}},
-    {"name": "Sage Dual Boiler", "brand": "Sage", "kind": "espresso_machine", "aliases": ("breville dual boiler", "bes920"), "highlights": ["Dual Boiler", "PID"], "specs": {"boiler": "Dual Boiler", "pid": True}},
-    {"name": "Rancilio Silvia", "brand": "Rancilio", "kind": "espresso_machine", "aliases": ("silvia", "silvia pro"), "highlights": ["Single Boiler"], "specs": {"boiler": "Single Boiler"}},
-    {"name": "Mahlkönig E65S", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig e65s", "e65s", "e65"), "highlights": ["65mm Flat Burrs", "Grind by Time"], "specs": {"burrs": "Flat", "burr_size": "65mm"}},
-    {"name": "Mahlkönig E80S", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig e80s", "e80s", "e80"), "highlights": ["80mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "80mm"}},
-    {"name": "Mahlkönig X54", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig x54", "x54"), "highlights": ["54mm Flat Burrs", "Home"], "specs": {"burrs": "Flat", "burr_size": "54mm"}},
-    {"name": "Mahlkönig EK43", "brand": "Mahlkönig", "kind": "grinder", "aliases": ("mahlkonig ek43", "ek43", "ek 43"), "highlights": ["98mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "98mm"}},
-    {"name": "DF64 Gen 2", "brand": "Turin", "kind": "grinder", "aliases": ("df64", "df64 gen2", "df 64"), "highlights": ["64mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
-    {"name": "DF64V", "brand": "Turin", "kind": "grinder", "aliases": ("df64v", "df64 v"), "highlights": ["64mm Flat Burrs", "Variable RPM"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
-    {"name": "DF83V", "brand": "Turin", "kind": "grinder", "aliases": ("df83", "df83v"), "highlights": ["83mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "83mm"}},
-    {"name": "Niche Zero", "brand": "Niche", "kind": "grinder", "aliases": ("zero",), "highlights": ["63mm Conical", "Single Dose"], "specs": {"burrs": "Conical", "burr_size": "63mm"}},
-    {"name": "Niche Duo", "brand": "Niche", "kind": "grinder", "aliases": ("duo",), "highlights": ["83mm Conical", "Single Dose"], "specs": {"burrs": "Conical", "burr_size": "83mm"}},
-    {"name": "Eureka Mignon Specialita", "brand": "Eureka", "kind": "grinder", "aliases": ("specialita", "mignon specialita"), "highlights": ["55mm Flat Burrs", "Silent"], "specs": {"burrs": "Flat", "burr_size": "55mm"}},
-    {"name": "Eureka Mignon Libra", "brand": "Eureka", "kind": "grinder", "aliases": ("libra", "mignon libra"), "highlights": ["Grind by Weight"], "specs": {"burrs": "Flat", "burr_size": "65mm"}},
-    {"name": "Eureka Mignon Silenzio", "brand": "Eureka", "kind": "grinder", "aliases": ("silenzio",), "highlights": ["50mm Flat Burrs", "Silent"], "specs": {"burrs": "Flat", "burr_size": "50mm"}},
-    {"name": "Fellow Ode Gen 2", "brand": "Fellow", "kind": "grinder", "aliases": ("ode", "ode gen 2"), "highlights": ["64mm Flat Burrs", "Filter"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
-    {"name": "Fellow Opus", "brand": "Fellow", "kind": "grinder", "aliases": ("opus",), "highlights": ["Espresso + Filter"], "specs": {"burrs": "Conical"}},
-    {"name": "Comandante C40", "brand": "Comandante", "kind": "grinder", "aliases": ("c40", "nitro blade"), "highlights": ["Hand Grinder", "Nitro Blade"], "specs": {"burrs": "Conical"}},
-    {"name": "1Zpresso J-Max", "brand": "1Zpresso", "kind": "grinder", "aliases": ("j-max", "jmax"), "highlights": ["Hand Grinder", "Espresso"], "specs": {"burrs": "Conical"}},
-    {"name": "Timemore Chestnut C3", "brand": "Timemore", "kind": "grinder", "aliases": ("chestnut", "c3"), "highlights": ["Hand Grinder"], "specs": {"burrs": "Conical"}},
-    {"name": "Weber EG-1", "brand": "Weber", "kind": "grinder", "aliases": ("eg-1", "eg1"), "highlights": ["80mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "80mm"}},
-    {"name": "Option-O Lagom P64", "brand": "Option-O", "kind": "grinder", "aliases": ("lagom", "p64", "lagom p64"), "highlights": ["64mm Flat Burrs"], "specs": {"burrs": "Flat", "burr_size": "64mm"}},
-    {"name": "Fellow Stagg EKG", "brand": "Fellow", "kind": "brewer", "aliases": ("stagg", "ekg"), "highlights": ["Variable Temp Kettle"], "specs": {"pid": True}},
-    {"name": "Hario V60", "brand": "Hario", "kind": "brewer", "aliases": ("v60", "v-60"), "highlights": ["Pour Over"], "specs": {}},
-    {"name": "Chemex", "brand": "Chemex", "kind": "brewer", "aliases": ("chemex 6 cup",), "highlights": ["Pour Over"], "specs": {}},
-    {"name": "AeroPress", "brand": "AeroPress", "kind": "brewer", "aliases": ("aeropress go",), "highlights": ["Immersion"], "specs": {}},
-    {"name": "Origami Dripper", "brand": "Origami", "kind": "brewer", "aliases": ("origami",), "highlights": ["Pour Over"], "specs": {}},
-)
+def _load_gear_catalog() -> tuple[dict[str, Any], ...]:
+    catalog_path = Path(__file__).resolve().parent / "gear_catalog.json"
+    try:
+        raw = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(raw, list):
+        return ()
+    return tuple(item for item in raw if isinstance(item, dict))
+
+
+GEAR_CATALOG: tuple[dict[str, Any], ...] = _load_gear_catalog()
 
 
 def search_local_gear(query: str, kind: str = "") -> list[dict[str, Any]]:

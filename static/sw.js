@@ -1,5 +1,11 @@
-const CACHE = "beannote-v2.6";
-const SHELL = ["/", "/static/icon.svg", "/manifest.webmanifest"];
+const CACHE = "beannote-v6.2";
+const SHELL = [
+  "/",
+  "/static/icon.svg",
+  "/static/css/styles.css",
+  "/static/js/app.js",
+  "/manifest.webmanifest",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
