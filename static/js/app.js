@@ -253,16 +253,35 @@ function photoImg(url, fallback, className, extraAttrs = "") {
   return `<img src="${esc(primary)}" alt="" class="${className}"${extra}${extraAttrs}>`;
 }
 
+function errorDetail(data) {
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail[0]) {
+    const first = detail[0];
+    if (typeof first === "string" && first.trim()) return first;
+    if (typeof first?.msg === "string" && first.msg.trim()) return first.msg;
+  }
+  if (typeof data?.message === "string" && data.message.trim()) return data.message;
+  return "";
+}
+
 async function api(path, options = {}) {
-  const headers = options.headers || {};
-  if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+  const headers = { ...(options.headers || {}) };
+  const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (isForm) {
+    delete headers["Content-Type"];
+    delete headers["content-type"];
+  } else if (!headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   if (token()) headers.Authorization = `Bearer ${token()}`;
   const res = await fetch(path, { credentials: "include", ...options, headers });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(data.detail || data.message || "error");
-    err.detail = data.detail;
+    const detail = errorDetail(data) || "error";
+    const err = new Error(detail);
+    err.detail = detail;
     throw err;
   }
   return data;
@@ -1772,7 +1791,7 @@ async function uploadScan(file) {
   try {
     const body = new FormData();
     const lang = activeLang();
-    body.append("file", file);
+    body.append("file", file, file.name || "scan.jpg");
     body.append("lang", lang);
     state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
     state.busy = false;
@@ -1781,7 +1800,7 @@ async function uploadScan(file) {
     render();
   } catch (err) {
     state.busy = false;
-    const detail = err.detail || "";
+    const detail = typeof err.detail === "string" ? err.detail : "";
     const offline = !detail && /failed to fetch|networkerror|load failed|err_connection/i.test(String(err.message || err));
     toast(t(offline ? "scan_offline" : (detail || "ocr_fail")));
     render();

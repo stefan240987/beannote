@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [fix] - 2026-08-24
+
+- snapshot: fix - resolved post-modularization scanning crash
+- `POST /api/scan` keeps multipart `UploadFile = File(...)`, passes the JPEG buffer to `ocr.scan_label`, and always returns JSON `{"detail": "..."}` when Gemini/Tesseract or image decoding fails instead of crashing the worker.
+- Scan route imports `PIL.Image` / `PIL.ImageOps` plus `ocr` and `db`. Tesseract fallback and official-packshot attach are wrapped so a missing binary or import cannot 500 the request. The PWA strips `Content-Type` on FormData uploads and reads string `detail` for toasts.
+
 ## [6.2.0] - 2026-08-24
 
 - snapshot: v6.2.0 - modularized routes/frontend, local gear catalog, and iOS zoom fix

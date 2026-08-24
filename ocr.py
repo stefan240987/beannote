@@ -757,7 +757,10 @@ def gemini_available() -> bool:
 
 
 def scan_available() -> bool:
-    return gemini_available() or bool(configure_tesseract())
+    try:
+        return gemini_available() or bool(configure_tesseract())
+    except Exception:
+        return gemini_available()
 
 
 def _canon_choice(value: str, mapping: dict[str, list[str]], options: list[str]) -> str:
@@ -2053,7 +2056,10 @@ def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | 
 
 def configure_tesseract() -> str | None:
     """Prefer Homebrew paths on Mac local, then PATH / container install."""
-    import pytesseract
+    try:
+        import pytesseract
+    except Exception:
+        return None
 
     candidates = [
         os.getenv("TESSERACT_CMD", ""),
@@ -2070,9 +2076,13 @@ def configure_tesseract() -> str | None:
 
 
 def extract_text(image_bytes: bytes) -> str:
-    import pytesseract
+    try:
+        import pytesseract
+    except Exception as exc:
+        raise RuntimeError("ocr_missing") from exc
 
-    configure_tesseract()
+    if not configure_tesseract():
+        raise RuntimeError("ocr_missing")
     image = open_oriented_image(image_bytes)
     width, height = image.size
     shortest = min(width, height)
@@ -2082,7 +2092,10 @@ def extract_text(image_bytes: bytes) -> str:
     try:
         raw = pytesseract.image_to_string(image, lang="eng+dan")
     except Exception:
-        raw = pytesseract.image_to_string(image, lang="eng")
+        try:
+            raw = pytesseract.image_to_string(image, lang="eng")
+        except Exception as exc:
+            raise RuntimeError("ocr_fail") from exc
     return _cleanup_ocr_text(raw)
 
 
@@ -2239,15 +2252,25 @@ def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
         if parsed is None and gemini_error is None:
             gemini_error = RuntimeError("Gemini Vision scan failed")
     if parsed is None:
-        raw = extract_text(image_bytes)
-        parsed = normalize_scan_fields(parse_label(raw), lang=lang)
-        parsed["scan_source"] = "tesseract"
-        if gemini_error is not None:
-            parsed["scan_fallback"] = (
-                "gemini_quota" if _quota_gemini_error(gemini_error) else "gemini_fail"
-            )
-    parsed = attach_official_bag_image(parsed)
-    similar = find_similar_beans(parsed["name"], parsed["roaster"]) if parsed["name"] else []
+        try:
+            raw = extract_text(image_bytes)
+            parsed = normalize_scan_fields(parse_label(raw), lang=lang)
+            parsed["scan_source"] = "tesseract"
+            if gemini_error is not None:
+                parsed["scan_fallback"] = (
+                    "gemini_quota" if _quota_gemini_error(gemini_error) else "gemini_fail"
+                )
+        except Exception as tess_exc:
+            print(f"tesseract scan failed: {tess_exc}")
+            raise RuntimeError("ocr_fail") from tess_exc
+    try:
+        parsed = attach_official_bag_image(parsed)
+    except Exception as exc:
+        print(f"official bag image attach failed: {exc}")
+        parsed = parsed or {}
+    name = str((parsed or {}).get("name") or "")
+    roaster = str((parsed or {}).get("roaster") or "")
+    similar = find_similar_beans(name, roaster) if name else []
     parsed["similar"] = similar
     parsed["match_tier"] = classify_matches(similar)
     parsed["scan_match"] = similar[0] if similar else None
