@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [cleanup] - 2026-08-24
+
+- snapshot: cleanup - removed legacy streamlit and test fixtures
+- Deleted Streamlit leftover `app.py` and `.streamlit/config.toml`. FastAPI + PWA is the only UI. `.streamlit/secrets.toml` is kept as the Gemini key fallback.
+- Deleted ad-hoc `test_gemini.py`, `test_image_search.py`, and bag-photo fixtures (`IMG_9354.jpg`, `Screenshot 2026-08-23 at 11.07.28.jpg`).
+
 ## [6.0.0] - 2026-08-24
 
 - snapshot: v6.0.0 - deep coffee metadata enrichment, 3-tab navigation, gear-linked logs, and bean enrichment endpoint
