@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [fix] - 2026-08-24
+
+- snapshot: fix - diagnosed gear image path and added automatic img fallback
+- Origami Dripper now uses `/static/img/gear/origami-dripper.jpg` (file exists on disk; FastAPI already mounts `/static` from `static/`).
+- Gear `<img>` tags keep `/static/` URLs (instead of rewriting them to `/media/`) and swap to `/static/icon.svg` on load error so a missing product photo never shows a broken frame.
+
 ## [6.2.0] - 2026-08-24
 
 - snapshot: v6.2.0 - added brew method badges, local gear catalog, and iOS zoom fix

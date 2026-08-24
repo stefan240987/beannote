@@ -2,17 +2,65 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from db import save_bean_image, search_local_gear, update_user_gear
+import db as db_mod
+from db import GEAR_CATALOG, save_bean_image, search_local_gear, update_user_gear
 from deps import current_user
 from ocr import encode_scan_jpeg, lookup_gear_catalog
 from schemas import GearIn, GearLookupIn
 from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/gear", tags=["gear"])
+
+_STATIC_GEAR_PREFIX = "/static/img/gear/"
+_GEAR_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
+
+
+def local_gear_image_url(url: str) -> str:
+    """Keep curated /static/img/gear/ photos that the generic URL sanitizer would drop."""
+    raw = str(url or "").strip()
+    if not raw.startswith(_STATIC_GEAR_PREFIX) or ".." in raw:
+        return ""
+    name = raw[len(_STATIC_GEAR_PREFIX) :]
+    if not name or "/" in name or name.startswith("."):
+        return ""
+    if Path(name).suffix.lower() not in _GEAR_IMAGE_SUFFIXES:
+        return ""
+    return raw
+
+
+_orig_sanitize_gear_image_url = db_mod.sanitize_gear_image_url
+
+
+def _sanitize_gear_image_url(url: str) -> str:
+    return local_gear_image_url(url) or _orig_sanitize_gear_image_url(url)
+
+
+db_mod.sanitize_gear_image_url = _sanitize_gear_image_url
+
+
+def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    catalog_urls: dict[str, str] = {}
+    for raw in GEAR_CATALOG:
+        url = local_gear_image_url(str(raw.get("image_url") or ""))
+        key = str(raw.get("name") or raw.get("model_name") or "").strip().lower()
+        if url and key:
+            catalog_urls[key] = url
+    restored: list[dict[str, Any]] = []
+    for card in cards:
+        item = dict(card)
+        key = str(item.get("name") or item.get("model_name") or "").strip().lower()
+        current = local_gear_image_url(str(item.get("image_url") or ""))
+        if current:
+            item["image_url"] = current
+        elif key in catalog_urls:
+            item["image_url"] = catalog_urls[key]
+        restored.append(item)
+    return restored
 
 
 @router.post("/lookup")
@@ -25,7 +73,7 @@ def gear_lookup(
     chosen = (payload.lang or request.query_params.get("lang") or "da").lower().strip()
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
-    local = search_local_gear(payload.query, kind=payload.kind)
+    local = restore_catalog_images(search_local_gear(payload.query, kind=payload.kind))
     if local:
         return {"gear_candidates": local, "specs": local[0]}
     try:
@@ -42,7 +90,8 @@ def gear_lookup(
     except Exception as exc:
         print(f"gear lookup failed: {exc}")
         raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
-    return {"gear_candidates": candidates, "specs": candidates[0] if candidates else None}
+    restored = restore_catalog_images(candidates)
+    return {"gear_candidates": restored, "specs": restored[0] if restored else None}
 
 
 @router.post("/photo")
@@ -73,4 +122,7 @@ def save_gear(payload: GearIn, user: dict[str, Any] = Depends(current_user)) -> 
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    specs = updated.get("gear_specs")
+    if isinstance(specs, list):
+        updated["gear_specs"] = restore_catalog_images(specs)
     return {"user": updated}

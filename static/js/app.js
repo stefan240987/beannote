@@ -235,9 +235,10 @@ function refreshFlavorCatalog(lang) {
 }
 
 const token = () => localStorage.getItem(TOKEN_KEY) || "";
+const GEAR_IMG_FALLBACK = "/static/icon.svg";
 const mediaSrc = (url) => {
   if (!url) return "";
-  if (url.startsWith("data:") || url.startsWith("http")) return url;
+  if (url.startsWith("data:") || url.startsWith("http") || url.startsWith("/static/")) return url;
   const name = url.split("/").pop();
   return `/media/${encodeURIComponent(name)}`;
 };
@@ -1312,8 +1313,12 @@ function gearSpecChips(item) {
   }).slice(0, 6);
 }
 
+function gearImgFallback() {
+  return ` onerror="this.onerror=null;this.src='${GEAR_IMG_FALLBACK}';"`;
+}
+
 function gearThumb(item) {
-  const img = photoImg(item?.image_url, "", "h-full w-full object-contain");
+  const img = photoImg(item?.image_url, "", "h-full w-full object-contain", gearImgFallback());
   if (img) return img;
   return `<span class="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</span>`;
 }
@@ -1400,7 +1405,7 @@ function gearPickerModal() {
 function gearCustomModal() {
   if (!state.gearCustomOpen) return "";
   const preview = state.gearCustomImage
-    ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearCustomImage, "", "h-full w-full object-contain")}</div>`
+    ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearCustomImage, "", "h-full w-full object-contain", gearImgFallback())}</div>`
     : `<p class="text-center text-sm text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</p>`;
   return `<div id="gear-custom" data-close-gear-custom class="fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
     <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-custom-sheet>
