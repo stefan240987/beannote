@@ -2,6 +2,14 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.3.0] - 2026-08-26
+
+- snapshot: v6.3.0 - grounded coffee profiles from official/sales pages
+- Scan still reads brand and name from the bag, then Gemini finds the roasted product page, BeanNote fetches that HTML, and Gemini copies only published fields.
+- Flavor pills come from risteri/shop tasting text (e.g. Uno: mandarin, mørk chokolade, mandel, karamel). Mouthfeel words and unpublished flavors are dropped (Companero no longer gets invented dark chocolate).
+- Factory 1–5 meters are counted from the page when present and are never guessed from roast or origin. Missing brew ratios stay empty.
+- Product lookup caches by name+roaster, skips green-bean/gift URLs, and avoids extra Gemini image search when packshots already exist.
+
 ## [fix] - 2026-08-24
 
 - snapshot: fix - explicit suitable_for extraction in OCR prompt

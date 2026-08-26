@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.2.0"
+VERSION = "6.3.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -1047,35 +1047,12 @@ def infer_intensity_scores(
     process: str = "",
     name: str = "",
 ) -> dict[str, int | None]:
-    """Prefer explicit 1–5 scores; otherwise infer from roast, origin, and process."""
-    roast = clamp_intensity_score(roast_level_score) or roast_level_to_score(roast_level)
-    acidity = clamp_intensity_score(acidity_score)
-    body = clamp_intensity_score(body_score)
-    blob = f"{origin} {process} {name} {roast_level}".lower()
-    african = any(token in blob for token in ("ethiopia", "etiopien", "kenya", "rwanda", "burundi"))
-    washed = any(token in blob for token in ("vasket", "washed"))
-    natural = any(token in blob for token in ("natural", "anaerob", "anaerobic", "honey"))
-    espresso = any(token in blob for token in ("espresso", "mørk", "dark"))
-    if roast is None:
-        roast = 5 if espresso and not african else 3
-    if acidity is None:
-        if roast <= 2:
-            acidity = 5 if african or washed else 4
-        elif roast == 3:
-            acidity = 4 if african else 3
-        else:
-            acidity = 2
-    if body is None:
-        if roast >= 4 or espresso:
-            body = 5
-        elif roast == 3:
-            body = 4 if natural or espresso else 3
-        else:
-            body = 2 if washed and not natural else 3
+    """Keep explicit 1–5 factory meters. Never invent scores from roast or origin."""
+    del roast_level, origin, process, name
     return {
-        "acidity_score": acidity,
-        "body_score": body,
-        "roast_level_score": roast,
+        "acidity_score": clamp_intensity_score(acidity_score),
+        "body_score": clamp_intensity_score(body_score),
+        "roast_level_score": clamp_intensity_score(roast_level_score),
     }
 
 

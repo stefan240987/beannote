@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import difflib
+import html as html_module
 import json
 import os
 import re
 import shutil
 import threading
 import time
+import urllib.error
+import urllib.request
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
 
@@ -31,6 +35,8 @@ from db import (
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 from image_search import (
     MAX_IMAGE_CANDIDATES,
+    _BROWSER_HEADERS,
+    _host_is_public,
     collect_image_urls,
     curated_packshot_urls,
     fetch_official_image_bytes,
@@ -93,6 +99,11 @@ GEMINI_MODELS = (
     "gemini-3.5-flash",
     "gemini-flash-latest",
 )
+LOOKUP_MODELS = ("gemini-flash-latest", GEMINI_STABLE_MODEL)
+MAX_PRODUCT_PAGE_CHARS = 16000
+_RAW_HTML_LIMIT = 900_000
+_PRODUCT_LOOKUP_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_PRODUCT_LOOKUP_LOCK = threading.Lock()
 ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
 
 KNOWN_ROASTERS = [
@@ -207,16 +218,18 @@ FLAVOR_NOTES = [
     "Mandel",
     "Mandarin",
     "Frugtsødme",
+    "Frugtagtig",
+    "Jordagtig",
 ]
 
 FLAVOR_ALIASES: dict[str, list[str]] = {
     "Mørk chokolade": ["mørk chokolade", "dark chocolate", "mork chokolade"],
     "Chokolade": ["chokolade", "chocolate"],
-    "Karamel": ["karamel", "caramel", "karameliseret"],
+    "Karamel": ["karamel", "caramel", "karameliseret", "karamel note"],
     "Blåbær": ["blåbær", "blaabaer", "blueberry", "blueberries"],
     "Citrus": ["citrus", "citron", "lemon", "lime"],
     "Nødder": ["nødder", "nuts"],
-    "Nøddet": ["nøddet", "nutty"],
+    "Nøddet": ["nøddet", "nutty", "nøddeagtig", "nøddeagtige", "nøddeagtigt"],
     "Honning": ["honning", "honey"],
     "Jasmin": ["jasmin", "jasmine"],
     "Fersken": ["fersken", "peach"],
@@ -235,6 +248,8 @@ FLAVOR_ALIASES: dict[str, list[str]] = {
     "Mandel": ["mandel", "almond", "almonds", "mandler"],
     "Mandarin": ["mandarin", "mandarine", "clementine"],
     "Frugtsødme": ["frugtsødme", "fruit sweetness", "fruity sweetness", "frugt sødme"],
+    "Frugtagtig": ["frugtagtig", "frugtagtige", "frugtagtigt", "fruity", "fruitiness", "frugt fornemmelse"],
+    "Jordagtig": ["jordagtig", "jordagtige", "jordagtigt", "earthy", "earthiness", "jord"],
 }
 
 FLAVOR_LOCALES: dict[str, dict[str, str]] = {
@@ -263,7 +278,33 @@ FLAVOR_LOCALES: dict[str, dict[str, str]] = {
     "Mandel": {"da": "Mandel", "en": "Almond"},
     "Mandarin": {"da": "Mandarin", "en": "Mandarin"},
     "Frugtsødme": {"da": "Frugtsødme", "en": "Fruit sweetness"},
+    "Frugtagtig": {"da": "Frugtagtig", "en": "Fruity"},
+    "Jordagtig": {"da": "Jordagtig", "en": "Earthy"},
 }
+
+# Mouthfeel / marketing / meter labels — never saved as tasting-note pills.
+MOUTHFEEL_TAGS = {
+    "blød", "bloed", "soft", "smooth", "kraftig", "kraftfuld", "powerful",
+    "fyldig", "full-bodied", "full bodied", "crema", "rund", "round",
+    "dyb", "deep", "dyb smag", "blød & rund", "bloed & rund", "balanceret",
+    "balanced", "balanceret eftersmag", "sød", "soed", "sweet", "bitter",
+    "bittersød", "bitter-sød", "syrlig", "acidity", "harmonisk", "harmonious",
+    "naturlig", "afrundet", "vedvarende", "vanedannende", "friskhed",
+    "aromatisk", "flot", "mættet", "punchy", "bold", "silky", "creamy",
+}
+
+
+def is_mouthfeel_tag(tag: str) -> bool:
+    lowered = re.sub(r"\s+", " ", (tag or "").strip()).lower()
+    if not lowered:
+        return False
+    if lowered in MOUTHFEEL_TAGS:
+        return True
+    compact = lowered.replace("&", " ").replace("-", " ")
+    compact = re.sub(r"\s+", " ", compact).strip()
+    return compact in MOUTHFEEL_TAGS or all(
+        part in MOUTHFEEL_TAGS for part in compact.split() if part
+    )
 
 PROCESS_LOCALES = {
     "Vasket": {"da": "Vasket", "en": "Washed"},
@@ -477,13 +518,12 @@ def flavor_tags_lang_map(*sources: Any) -> dict[str, list[str]]:
                 for code in SUPPORTED_LANGUAGES:
                     if text not in free_by_lang[code]:
                         free_by_lang[code].append(text)
-    seed_free = next((free_by_lang[code] for code in SUPPORTED_LANGUAGES if free_by_lang[code]), [])
     out: dict[str, list[str]] = {}
     for code in SUPPORTED_LANGUAGES:
-        tags = [localize_flavor(tag, code) for tag in canons]
+        tags = [localize_flavor(tag, code) for tag in canons if not is_mouthfeel_tag(tag)]
         seen = {tag.lower() for tag in tags}
-        for extra in (free_by_lang[code] or seed_free):
-            if extra.lower() in seen:
+        for extra in free_by_lang[code]:
+            if extra.lower() in seen or is_mouthfeel_tag(extra):
                 continue
             tags.append(extra)
             seen.add(extra.lower())
@@ -698,13 +738,6 @@ def infer_suitable_from_roast(
         hits.append("Mælkedrikke")
     if any(token in blob for token in ("stempel", "french press", "plunger")):
         hits.append("Stempelkande")
-    if not hits and roast:
-        dark = any(token in roast for token in ("espresso", "mørk", "dark", "full city", "mellemmørk"))
-        light = any(token in roast for token in ("lys", "light"))
-        if dark and not light:
-            hits.append("Espresso")
-        else:
-            hits.append("Filter")
     seen: set[str] = set()
     ordered: list[str] = []
     for canon in SUITABLE_FOR:
@@ -960,10 +993,6 @@ def normalize_scan_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str,
             out.get("roast_level_score"),
             parsed.get("roast_level_score"),
         ),
-        out.get("roast_level") or "",
-        out.get("origin") or "",
-        out.get("process") or "",
-        out.get("name") or "",
     )
     out.update(scores)
     out["roaster_acidity"] = scores["acidity_score"]
@@ -1036,19 +1065,22 @@ def _canon_listed(value: str, options: list[str], aliases: dict[str, list[str]])
 
 
 def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[str, dict[str, str]]:
-    """Use Gemini's brew object when present; otherwise infer from roast/origin/process."""
+    """Keep published brew copy. Never invent method, grind, temperature, or ratio."""
     raw = parsed.get("brew_recommendation")
     seed: dict[str, Any] = {}
     if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
         mapped = brew_recommendation_lang_map(raw)
-        if mapped and all(
-            mapped.get(code, {}).get("recommended_method")
-            and mapped.get(code, {}).get("grind_size")
-            and mapped.get(code, {}).get("water_temp")
-            and mapped.get(code, {}).get("brew_ratio")
-            for code in SUPPORTED_LANGUAGES
-        ):
-            return mapped
+        if mapped:
+            return {
+                code: {
+                    "recommended_method": str(item.get("recommended_method") or ""),
+                    "grind_size": str(item.get("grind_size") or ""),
+                    "water_temp": str(item.get("water_temp") or ""),
+                    "brew_ratio": str(item.get("brew_ratio") or ""),
+                    "usage": str(item.get("usage") or item.get("mouthfeel") or ""),
+                }
+                for code, item in mapped.items()
+            }
         seed = next((item for item in raw.values() if isinstance(item, dict)), {})
     elif isinstance(raw, dict):
         seed = raw
@@ -1058,60 +1090,23 @@ def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[
             "grind_size": parsed.get("grind_size") or "",
             "water_temp": parsed.get("water_temp") or "",
             "brew_ratio": parsed.get("brew_ratio") or "",
+            "usage": parsed.get("usage") or "",
         }
     method = _canon_listed(str(seed.get("recommended_method") or ""), BREW_METHODS_REC, METHOD_ALIASES)
     grind = _canon_listed(str(seed.get("grind_size") or ""), GRIND_SIZES, GRIND_ALIASES)
     temp = re.sub(r"\s+", " ", str(seed.get("water_temp") or "").strip())
     ratio = re.sub(r"\s+", " ", str(seed.get("brew_ratio") or "").strip())
-
-    roast = (parsed.get("roast_level") or "").lower()
-    process = (parsed.get("process") or "").lower()
-    origin = (parsed.get("origin") or "").lower()
-    name = (parsed.get("name") or parsed.get("bean_name") or "").lower()
-    notes = (parsed.get("roaster_notes") or parsed.get("official_notes") or "").lower()
-    espresso_hint = any(
-        token in f"{name} {roast} {notes}"
-        for token in ("espresso", "mørk", "dark", "medium-mørk", "medium-dark")
-    )
-    african = any(token in origin for token in ("ethiopia", "etiopien", "kenya", "rwanda", "burundi"))
-    light = any(token in roast for token in ("lys", "light"))
-    natural = any(token in process for token in ("natural", "anaerob", "anaerobic"))
-
-    if espresso_hint and not light:
-        inferred = {
-            "recommended_method": "Espresso",
-            "grind_size": "Fin",
-            "brew_key": "espresso",
-        }
-    elif light or african:
-        inferred = {
-            "recommended_method": "V60 / Pour-over",
-            "grind_size": "Medium-fin",
-            "brew_key": "pour_over",
-        }
-    elif natural:
-        inferred = {
-            "recommended_method": "Stempelkande (French Press)",
-            "grind_size": "Grov",
-            "brew_key": "press",
-        }
-    else:
-        inferred = {
-            "recommended_method": "Filter",
-            "grind_size": "Medium",
-            "brew_key": "filter",
-        }
-    method = method or inferred["recommended_method"]
-    grind = grind or inferred["grind_size"]
-    temp = temp or "92-94°C"
+    usage = str(seed.get("usage") or seed.get("mouthfeel") or "").strip()
+    if not any((method, grind, temp, ratio, usage)):
+        return {}
     out: dict[str, dict[str, str]] = {}
     for code in SUPPORTED_LANGUAGES:
         out[code] = {
-            "recommended_method": localize_mapped(method, METHOD_LOCALES, code),
-            "grind_size": localize_mapped(grind, GRIND_LOCALES, code),
+            "recommended_method": localize_mapped(method, METHOD_LOCALES, code) if method else "",
+            "grind_size": localize_mapped(grind, GRIND_LOCALES, code) if grind else "",
             "water_temp": temp,
-            "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else BREW_RATIO_COPY[inferred["brew_key"]].get(code) or BREW_RATIO_COPY[inferred["brew_key"]].get(FALLBACK_LANG, ""),
-            "usage": str(seed.get("usage") or seed.get("mouthfeel") or "").strip(),
+            "brew_ratio": _localize_brew_ratio(ratio, code) if ratio else "",
+            "usage": usage,
         }
     if isinstance(raw, dict) and any(isinstance(item, dict) for item in raw.values()):
         for code, item in raw.items():
@@ -1121,7 +1116,7 @@ def infer_brew_recommendation(parsed: dict[str, Any], lang: str = "da") -> dict[
                 out[key] = {
                     "recommended_method": str(item.get("recommended_method") or current.get("recommended_method") or ""),
                     "grind_size": str(item.get("grind_size") or current.get("grind_size") or ""),
-                    "water_temp": str(item.get("water_temp") or current.get("water_temp") or temp),
+                    "water_temp": str(item.get("water_temp") or current.get("water_temp") or ""),
                     "brew_ratio": str(item.get("brew_ratio") or current.get("brew_ratio") or ""),
                     "usage": str(item.get("usage") or item.get("mouthfeel") or current.get("usage") or ""),
                 }
@@ -1138,7 +1133,7 @@ def _localize_brew_ratio(ratio: str, lang: str) -> str:
     code = _copy_lang(lang)
     text = re.sub(r"\s+", " ", (ratio or "").strip())
     if not text:
-        return BREW_RATIO_COPY["espresso"][code] if code else text
+        return ""
     if code == "en":
         text = re.sub(r"\bkaffe\b", "coffee", text, flags=re.IGNORECASE)
         text = re.sub(r"\bvand\b", "water", text, flags=re.IGNORECASE)
@@ -1416,14 +1411,11 @@ def _gemini_prompt(lang: str = "da") -> str:
         '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}. '
         "Use empty arrays when no flavor words are printed.\n"
         f"{suitable_line}\n"
-        f'- "official_notes": tasting-notes text copied from the bag and rewritten in {story_lang}. '
-        "Empty string if none are printed.\n"
-        f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
-        "specialty-coffee background in each language from what the bag actually prints "
-        "(roaster signature, blend character, origin, tasting personality). "
-        "Example DA: \"Risteriets signatur-espresso udviklet i 2004. En fyldig blanding "
-        "af 100% Arabica med noter af mørk chokolade og mandarin.\" "
-        "Each language key stays in that language only. Empty strings if the bag has no story.\n"
+        f'- "official_notes": tasting-notes text copied from the bag in {story_lang}. '
+        "Do not rewrite or add flavors that are not printed.\n"
+        f'- "story": language map keyed by {lang_keys}. Copy a short background from printed '
+        "bag text only (origin, blend, tasting words that are actually on the bag). "
+        "Empty strings if the bag has no story.\n"
         f'- "brew_recommendation": language map keyed by {lang_keys} with localized fields:\n'
         f'{chr(10).join(brew_lines)}\n'
         "Copy printed brew advice into the recipe fields. Also fill \"usage\" with explicit "
@@ -1461,98 +1453,93 @@ def official_product_search_query(roaster: str, name: str) -> str:
     brand = re.sub(r"\s+", " ", (roaster or "").strip())
     product = re.sub(r"\s+", " ", (name or "").strip())
     if brand and product:
-        return f'"{brand}" "{product}" official site / product details'
+        return f'"{brand}" "{product}" roasted coffee beans official product page'
     if brand:
-        return f'"{brand}" official site / product details'
+        return f'"{brand}" official coffee shop product page'
     if product:
-        return f'"{product}" official site / product details'
+        return f'"{product}" roasted coffee official product page'
     return ""
 
 
-def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
+def _extract_schema_instructions(lang: str = "da") -> str:
     code = _copy_lang(lang)
     story_lang = STORY_LANG.get(code, "Danish")
     lang_keys = ", ".join(f'"{item}"' for item in SUPPORTED_LANGUAGES)
-    query = official_product_search_query(roaster, name)
-    processes = ", ".join(f'"{name}"' for name in processes_for(code))
-    roasts = ", ".join(f'"{name}"' for name in roast_levels_for(code))
-    flavor_lines = "\n".join(
-        f'    "{item}": array of 1–12 specific tasting notes in that language, '
-        "taken from the official page and reviews — every distinct note, same order"
-        for item in SUPPORTED_LANGUAGES
-    )
-    brew_lines = []
-    for item in SUPPORTED_LANGUAGES:
-        methods = ", ".join(f'"{METHOD_LOCALES[name].get(item, name)}"' for name in BREW_METHODS_REC)
-        grinds = ", ".join(f'"{GRIND_LOCALES[name].get(item, name)}"' for name in GRIND_SIZES)
-        espresso_ratio = BREW_RATIO_COPY["espresso"].get(item, BREW_RATIO_COPY["espresso"]["en"])
-        pour_ratio = BREW_RATIO_COPY["pour_over"].get(item, BREW_RATIO_COPY["pour_over"]["en"])
-        brew_lines.append(
-            f'    "{item}": {{"recommended_method": one of [{methods}], '
-            f'"grind_size": one of [{grinds}], "water_temp": e.g. "92-94°C", '
-            f'"brew_ratio": e.g. "{espresso_ratio}" or "{pour_ratio}", '
-            f'"usage": 2–3 sentences in that language on mouthfeel, crema, and recommended use}}'
-        )
+    processes = ", ".join(f'"{item}"' for item in processes_for(code))
+    roasts = ", ".join(f'"{item}"' for item in roast_levels_for(code))
     suitable_line = _suitable_for_schema_line(code, story_lang)
     return (
-        "You are BeanNote's official product-page researcher and specialty-coffee journalist. "
-        "STEP 2 — OFFICIAL WEB LOOKUP. "
-        "Enable Google Search grounding and query Google for the official product page:\n"
-        f"{query}\n"
-        "Prefer the roaster's own shop or official site over marketplaces "
-        "(Amazon, eBay, comparison sites) unless that marketplace is the brand's "
-        "only official product page. "
-        "STEP 3 — DEEP DATA ENRICHMENT. "
-        "Write with the same depth as a knowledgeable Gemini chat about this coffee. "
-        "Extract every published tasting note, blend spec, roast style, and brew/mouthfeel "
-        "detail. Return ONE JSON object only (no markdown) with these keys:\n"
-        '- "roaster": official brand / roaster name\n'
+        "Return ONE JSON object only (no markdown) with these keys:\n"
+        '- "roaster": brand / roaster name from the source\n'
         '- "bean_name": official product name\n'
-        f'- "origin": origin country or countries in {story_lang}, joined with " & "\n'
-        '- "region_full": region / farm / washing station, e.g. "Yirgacheffe, Gedeo, Ethiopia"\n'
-        '- "latitude": float WGS84 if the official page publishes coordinates, else null\n'
-        '- "longitude": float WGS84 if published, else null\n'
-        '- "altitude": official MASL string, e.g. "1700 - 1900 M."\n'
-        '- "varietal": detailed blend/variety spec in ASCII, e.g. '
-        '"100% Arabica (Brazilian base)" or "Bourbon & Caturra". Keep species and blend notes.\n'
+        f'- "origin": origin country or countries in {story_lang}, joined with " & ". '
+        'Empty if unpublished. For a secret blend write "Blend" rather than guessing countries.\n'
+        '- "region_full": region / farm / co-op if published, else ""\n'
+        '- "latitude": float only if the page publishes coordinates, else null\n'
+        '- "longitude": float only if published, else null\n'
+        '- "altitude": published MASL string, else ""\n'
+        '- "varietal": published blend/variety spec, else ""\n'
         f'- "process": processing method in {story_lang}. Catalog tokens [{processes}] '
-        "are fine when that is all that is published; keep extra detail when present.\n"
-        f'- "roast_level": roast depth in {story_lang}. Catalog tokens [{roasts}], '
-        'or richer names such as "Mellemmørk / Full City".\n'
-        '- "roaster_acidity": official 1–5 acidity / brightness if the page publishes a meter. '
-        'Alias: "acidity_score". null if unpublished.\n'
-        '- "roaster_body": official 1–5 body / mouthfeel if published. '
-        'Alias: "body_score". null if unpublished.\n'
-        '- "roaster_roast_level": official 1–5 roast depth if published. '
-        'Alias: "roast_level_score". null if unpublished.\n'
-        f'- "flavor_tags": language map keyed by {lang_keys}. Extract ALL specific tasting '
-        "notes mentioned on the official page or printed reviews:\n"
-        f"{flavor_lines}\n"
-        '  Example: {"da": ["Mørk chokolade", "Mandel", "Mandarin", "Karamel", "Frugtsødme"], '
-        '"en": ["Dark chocolate", "Almond", "Mandarin", "Caramel", "Fruit sweetness"]}.\n'
+        "when that is all that is published.\n"
+        f'- "roast_level": roast depth in {story_lang}. Catalog [{roasts}] or richer printed names.\n'
+        '- "roaster_acidity": 1–5 only if the page shows a filled meter for acidity. null otherwise.\n'
+        '- "roaster_body": 1–5 only if a body meter is shown. null otherwise.\n'
+        '- "roaster_roast_level": 1–5 only if a roast meter is shown. null otherwise.\n'
+        '- "acidity_score" / "body_score" / "roast_level_score": same as the roaster_* meters.\n'
+        f'- "flavor_tags": language map keyed by {lang_keys}. Tasting notes copied from the '
+        "source text (chocolate, almond, mandarin, nutty, fruity, earthy, caramel, …). "
+        "Do not turn mouthfeel words (soft, smooth, powerful, sweet, bitter, balanced, creamy) "
+        "or meter labels into tags. Omit anything not present in the text.\n"
         f"{suitable_line}\n"
-        f'- "official_notes": official tasting blurb rewritten in {story_lang}\n'
-        f'- "story": language map keyed by {lang_keys}. Write a captivating 2–3 sentence '
-        "background story for a coffee journal — origin, why the roaster made it, blend "
-        "character, and signature notes. Match Gemini-chat depth, grounded in the official "
-        "page. Example DA: \"Risteriets signatur-espresso udviklet i 2004. En fyldig blanding "
-        "af 100% Arabica med noter af mørk chokolade og mandarin.\" "
-        "Each language key stays in that language only.\n"
-        f'- "brew_recommendation": language map keyed by {lang_keys} for the official brew '
-        "recipe PLUS mouthfeel/usage copy:\n"
-        f"{chr(10).join(brew_lines)}\n"
-        "usage must spell out body, crema, and what the coffee is excellent for "
-        "(espresso, milk drinks, filter, superautomatic). Example DA: "
-        '"Fyldig, blød og med en kraftig, naturlig crema. Fremragende til espresso og '
-        'mælkedrikke, men fungerer også på fuldautomatiske maskiner."\n'
-        f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
-        "brew_recommendation. "
-        '"suitable_for" is always a JSON array of strings, never a scalar.\n'
-        '- "product_page_url": official https product page you used. Never invent a URL.\n'
-        '- "roaster_url": official https homepage. Homepage only — never a product image.\n'
-        '- "image_candidates": up to 3 real official studio packshot https URLs from that page.\n'
-        "If you cannot find a real official page, return empty strings, empty maps, and null scores. "
-        "Never invent a farm, score, URL, or flavor that sources do not support."
+        f'- "official_notes": tasting blurb copied from the source in {story_lang}. Do not add flavors.\n'
+        f'- "story": language map keyed by {lang_keys}. 2–3 sentences using only facts from the source. '
+        "Empty if the source has no background.\n"
+        f'- "brew_recommendation": language map keyed by {lang_keys} with recommended_method, '
+        "grind_size, water_temp, brew_ratio, usage. Fill recipe numbers only when published. "
+        "usage may copy brew-style sentences (espresso, milk, filter, superautomatic).\n"
+        '- "product_page_url": https page used. Never invent a URL.\n'
+        '- "roaster_url": official https homepage.\n'
+        '- "image_candidates": up to 3 real packshot https URLs from that page.\n'
+        "Empty string / empty map / null when unpublished. Never invent a farm, score, URL, or flavor."
+    )
+
+
+def _find_product_page_prompt(name: str, roaster: str) -> str:
+    query = official_product_search_query(roaster, name)
+    return (
+        "Find the official roasted-coffee product page for this bag. "
+        "Use Google Search. Return ONE JSON object only:\n"
+        '{"product_page_url":"https://...","roaster_url":"https://...","bean_name":"","roaster":""}\n'
+        f"Query: {query}\n"
+        f'Roaster: "{roaster}". Product: "{name}".\n'
+        "Prefer the roaster's own shop over marketplaces. "
+        "Prefer roasted / nyristede beans, not green/raw beans, gift boxes, or subscriptions. "
+        "Never invent a URL. Empty strings if no real page exists."
+    )
+
+
+def _extract_from_page_prompt(name: str, roaster: str, page_text: str, page_url: str, lang: str = "da") -> str:
+    schema = _extract_schema_instructions(lang)
+    return (
+        "Extract BeanNote coffee metadata from THIS PAGE TEXT only. "
+        "No outside knowledge, no other coffees, no reviews unless they appear below.\n"
+        f'Product: "{name}". Roaster: "{roaster}". Page: {page_url}\n\n'
+        f"{schema}\n\n"
+        "PAGE TEXT:\n"
+        f"{page_text}"
+    )
+
+
+def _grounded_product_prompt(name: str, roaster: str, lang: str = "da") -> str:
+    query = official_product_search_query(roaster, name)
+    schema = _extract_schema_instructions(lang)
+    return (
+        "Find the official roasted-coffee product page, then extract only what that page publishes. "
+        f"Google query: {query}\n"
+        f'Roaster: "{roaster}". Product: "{name}".\n'
+        "Prefer the roaster shop. Skip green/raw beans and gift sets. "
+        "Do not complete missing fields from memory or other brands.\n"
+        f"{schema}"
     )
 
 
@@ -1844,7 +1831,7 @@ def _transient_gemini_error(exc: Exception) -> bool:
     if _quota_gemini_error(exc):
         return False
     text = str(exc).lower()
-    return any(token in text for token in ("503", "unavailable", "high demand"))
+    return any(token in text for token in ("503", "unavailable", "high demand", "timeout", "timed out", "deadline", "504", "502"))
 
 
 def _tools_unsupported(exc: Exception) -> bool:
@@ -2117,43 +2104,365 @@ def _attach_grounded_pages(data: dict[str, Any], response: Any | None) -> dict[s
     return out
 
 
+def is_unwanted_product_url(url: str, name: str = "") -> bool:
+    """Drop green-bean, gift-box, and blog URLs unless the product name itself is that SKU."""
+    raw = (url or "").lower()
+    blob = f"{name}".lower()
+    skips = (
+        "raa-kaffe",
+        "rå-kaffe",
+        "raw-coffee",
+        "green-coffee",
+        "green-beans",
+        "groenne",
+        "/blog/",
+        "smagspakke",
+        "gift-set",
+        "kaffeabonnement",
+    )
+    for token in skips:
+        if token in raw and token.replace("-", " ") not in blob and token not in blob:
+            return True
+    return False
+
+
+def html_to_visible_text(html: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", html or "", flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</(p|div|h[1-6]|li|tr|section|article)>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html_module.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:_RAW_HTML_LIMIT]
+
+
+def focus_product_text(text: str, name: str = "", roaster: str = "") -> str:
+    """Keep the product body, not the shop chrome at the top of a large page."""
+    blob = text or ""
+    if not blob:
+        return ""
+    lowered = blob.lower()
+
+    def _hits(needle: str) -> list[int]:
+        token = re.sub(r"\s+", " ", (needle or "").strip()).lower()
+        if len(token) < 3:
+            return []
+        found: list[int] = []
+        start = 0
+        while True:
+            idx = lowered.find(token, start)
+            if idx < 0:
+                return found
+            found.append(idx)
+            start = idx + len(token)
+            if len(found) >= 6:
+                return found
+
+    content_hits: list[int] = []
+    for token in ("smagsprofil", "kaffeprofil", "tasting notes", "smagsnoter", "coffee profile"):
+        content_hits.extend(_hits(token))
+    if content_hits:
+        start = max(0, min(content_hits) - 500)
+        return blob[start:start + MAX_PRODUCT_PAGE_CHARS]
+    name_hits = _hits(name)
+    if len(name_hits) >= 2:
+        start = max(0, name_hits[1] - 200)
+        return blob[start:start + MAX_PRODUCT_PAGE_CHARS]
+    roaster_hits = _hits(roaster)
+    title_hits = name_hits or roaster_hits
+    if title_hits:
+        start = title_hits[0]
+        if start < 120 and len(blob) > MAX_PRODUCT_PAGE_CHARS:
+            start = 0
+        else:
+            start = max(0, start - 200)
+        return blob[start:start + MAX_PRODUCT_PAGE_CHARS]
+    return blob[:MAX_PRODUCT_PAGE_CHARS]
+
+
+_METER_WORD_LABELS = {
+    "chokolade", "chocolate", "syrlighed", "acidity", "krop", "body",
+    "ristning", "roast", "krydret", "spicy", "sød", "sweet", "süße",
+}
+
+
+def strip_meter_label_lines(text: str) -> str:
+    """Drop icon-meter captions so 'Chokolade' as a bar label is not a tasting note."""
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        low = line.lower()
+        hits = sum(1 for label in _METER_WORD_LABELS if re.search(rf"\b{re.escape(label)}\b", low))
+        words = line.split()
+        if hits >= 2 or (hits == 1 and len(words) <= 3):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+_METER_LABELS = {
+    "roast": ("ristning", "roast", "röstung", "roestung"),
+    "body": ("krop", "body", "körper", "koerper"),
+    "sweet": ("sød", "soed", "sweet", "süße", "suesse"),
+    "acidity": ("syrlighed", "acidity", "säure", "saeure", "syre"),
+    "spicy": ("krydret", "spicy", "würzig", "wuerzig"),
+    "chocolate": ("chokolade", "chocolate", "schokolade"),
+}
+
+
+def count_circle_meters(html: str) -> dict[str, int]:
+    """Count filled vs outline UIKit circles next to roast/body/acidity labels."""
+    if not html:
+        return {}
+    pattern = re.compile(
+        r"((?:<i[^>]*uk-icon-circle(?:-o)?[^>]*>\s*</i>\s*){1,8})(?:&nbsp;|\s)*([^<\n]{1,40})",
+        re.I,
+    )
+    found: dict[str, int] = {}
+    for icons, label in pattern.findall(html):
+        filled = len(re.findall(r"uk-icon-circle", icons, flags=re.I))
+        empty = len(re.findall(r"uk-icon-circle-o", icons, flags=re.I))
+        filled = max(0, filled - empty)
+        label_key = html_module.unescape(label).strip().lower()
+        for field, names in _METER_LABELS.items():
+            if any(name in label_key for name in names) and field not in found:
+                found[field] = max(0, min(5, filled))
+                break
+    return found
+
+
+def flavor_appears_in_text(tag: str, text: str) -> bool:
+    blob = (text or "").lower()
+    if not blob:
+        return False
+    canon = _canonical_flavor(tag) or tag
+    needles = {re.sub(r"\s+", " ", str(tag or "")).strip().lower(), canon.lower()}
+    names = FLAVOR_LOCALES.get(canon) or {}
+    needles.update(str(item).lower() for item in names.values())
+    needles.update(alias.lower() for alias in FLAVOR_ALIASES.get(canon, []))
+    tasting = re.compile(r"noter|smag|aroma|tasting|flavour|flavor|profil", re.I)
+    for needle in needles:
+        compact = needle.strip(" \"'")
+        if len(compact) < 3:
+            continue
+        for match in re.finditer(rf"\b{re.escape(compact)}\b", blob):
+            start = blob.rfind("\n", 0, match.start())
+            end = blob.find("\n", match.end())
+            line = blob[start + 1 if start >= 0 else 0 : end if end >= 0 else len(blob)].strip()
+            words = line.split()
+            if len(words) >= 6 or "," in line or tasting.search(line):
+                return True
+            if " " in compact and compact in blob:
+                return True
+    return False
+
+
+def grounded_flavor_tags(*sources: Any, page_text: str = "", lang: str = "da") -> dict[str, list[str]]:
+    """Keep tasting notes that actually appear in the source text."""
+    mapped = flavor_tags_lang_map(*sources)
+    if not page_text:
+        return mapped
+    verify = strip_meter_label_lines(page_text) or page_text
+    out: dict[str, list[str]] = {}
+    for code, tags in mapped.items():
+        kept = [
+            tag for tag in tags
+            if not is_mouthfeel_tag(tag) and flavor_appears_in_text(tag, verify)
+        ]
+        if kept:
+            out[code] = kept[:12]
+    return out
+
+
+def ground_extracted_fields(
+    data: dict[str, Any],
+    page_text: str = "",
+    html: str = "",
+    lang: str = "da",
+) -> dict[str, Any]:
+    """Drop invented tags/scores and prefer HTML-counted meters when present."""
+    out = dict(data or {})
+    meters = count_circle_meters(html)
+    if meters.get("acidity") is not None:
+        out["roaster_acidity"] = meters["acidity"]
+        out["acidity_score"] = meters["acidity"]
+    if meters.get("body") is not None:
+        out["roaster_body"] = meters["body"]
+        out["body_score"] = meters["body"]
+    if meters.get("roast") is not None:
+        out["roaster_roast_level"] = meters["roast"]
+        out["roast_level_score"] = meters["roast"]
+    notes = out.get("official_notes") or out.get("roaster_notes") or ""
+    verify = page_text or notes
+    flavors = grounded_flavor_tags(
+        out.get("flavor_tags"),
+        out.get("flavor_notes"),
+        notes,
+        page_text=verify,
+        lang=lang,
+    )
+    out["flavor_tags"] = flavors
+    out["flavor_notes"] = get_localized(flavors, lang) or []
+    url = sanitize_roaster_url(out.get("product_page_url"))
+    if url and is_unwanted_product_url(url, str(out.get("bean_name") or out.get("name") or "")):
+        out["product_page_url"] = ""
+    return out
+
+
+def fetch_product_page(url: str, name: str = "", roaster: str = "", timeout: float = 8.0) -> tuple[str, str]:
+    """Download a public product page. Returns (html, focused visible text)."""
+    clean = sanitize_roaster_url(url)
+    if not clean:
+        return "", ""
+    host = (urlparse(clean).hostname or "").lower()
+    if not _host_is_public(host):
+        return "", ""
+    request = urllib.request.Request(clean, headers=_BROWSER_HEADERS, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(_RAW_HTML_LIMIT)
+            charset = response.headers.get_content_charset() or "utf-8"
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return "", ""
+    html = raw.decode(charset, errors="ignore")
+    return html, focus_product_text(html_to_visible_text(html), name, roaster)
+
+
+def _lookup_cache_key(name: str, roaster: str, lang: str) -> tuple[str, str, str]:
+    return (name.strip().lower(), roaster.strip().lower(), _copy_lang(lang))
+
+
+def _gemini_generate_json(
+    key: str,
+    prompt: str,
+    timeout_ms: int,
+    tools: list[Any] | None = None,
+) -> dict[str, Any]:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=key, http_options={"timeout": timeout_ms})
+    for model_name in LOOKUP_MODELS:
+        kwargs: dict[str, Any] = {"temperature": 0.0}
+        if tools:
+            kwargs["tools"] = tools
+        else:
+            kwargs["response_mime_type"] = "application/json"
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(**kwargs),
+            )
+            try:
+                data = _parse_gemini_json(_response_text(response))
+            except (ValueError, json.JSONDecodeError):
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            attached = _attach_grounded_pages(data, response)
+            if tools and not sanitize_roaster_url(attached.get("product_page_url")):
+                for match in re.findall(r"https://[^\s\"'<>]+", _response_text(response) or ""):
+                    clean = sanitize_roaster_url(match)
+                    if clean:
+                        attached["product_page_url"] = clean
+                        break
+            return attached if isinstance(attached, dict) else {}
+        except Exception as exc:
+            if "404" in str(exc) or "NOT_FOUND" in str(exc):
+                continue
+            if tools and _tools_unsupported(exc):
+                tools = None
+                continue
+            if _transient_gemini_error(exc):
+                continue
+            break
+    return {}
+
+
+def _gemini_find_product_page(name: str, roaster: str, key: str) -> dict[str, Any]:
+    from google.genai import types
+
+    tools = _google_search_tools(types)
+    if not tools:
+        return {}
+    data = _gemini_generate_json(key, _find_product_page_prompt(name, roaster), 30_000, tools)
+    url = sanitize_roaster_url(data.get("product_page_url") or data.get("roaster_url"))
+    if url and is_unwanted_product_url(url, name):
+        url = ""
+    return {
+        "product_page_url": url,
+        "roaster_url": sanitize_roaster_url(data.get("roaster_url") or url),
+        "bean_name": str(data.get("bean_name") or "").strip(),
+        "roaster": str(data.get("roaster") or "").strip(),
+    }
+
+
+def _gemini_extract_from_page(
+    name: str,
+    roaster: str,
+    page_text: str,
+    page_url: str,
+    key: str,
+    lang: str,
+) -> dict[str, Any]:
+    prompt = _extract_from_page_prompt(name, roaster, page_text, page_url, lang)
+    data = _gemini_generate_json(key, prompt, 25_000, tools=None)
+    data["product_page_url"] = sanitize_roaster_url(data.get("product_page_url")) or page_url
+    return data
+
+
 def _gemini_official_product_lookup(
     name: str,
     roaster: str,
     key: str,
     lang: str = "da",
 ) -> dict[str, Any]:
-    """Google-grounded official product page → BeanNote metadata JSON."""
-    from google import genai
-    from google.genai import types
+    """Find official URL, fetch the page, extract only published fields."""
+    cache_key = _lookup_cache_key(name, roaster, lang)
+    with _PRODUCT_LOOKUP_LOCK:
+        cached = _PRODUCT_LOOKUP_CACHE.get(cache_key)
+    if cached:
+        return dict(cached)
 
-    prompt = _grounded_product_prompt(name, roaster, lang)
-    client = genai.Client(api_key=key, http_options={"timeout": 35_000})
-    tools = _google_search_tools(types)
-    if not tools:
-        return {}
-    for model_name in GEMINI_MODELS:
-        config = types.GenerateContentConfig(temperature=0.1, tools=tools)
+    found = _gemini_find_product_page(name, roaster, key)
+    page_url = sanitize_roaster_url(found.get("product_page_url"))
+    html, page_text = fetch_product_page(page_url, name, roaster) if page_url else ("", "")
+    data: dict[str, Any] = {}
+    if page_text:
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config,
-            )
-            try:
-                data = _parse_gemini_json(_response_text(response))
-            except (ValueError, json.JSONDecodeError):
-                data = {}
-            return _attach_grounded_pages(data if isinstance(data, dict) else {}, response)
-        except Exception as exc:
-            if "404" in str(exc) or "NOT_FOUND" in str(exc):
-                continue
-            if _tools_unsupported(exc):
-                return {}
-            if _transient_gemini_error(exc):
-                continue
-            break
-    return {}
+            data = _gemini_extract_from_page(name, roaster, page_text, page_url, key, lang)
+        except Exception:
+            data = {}
+        if _blank(data.get("flavor_tags")) and _blank(data.get("official_notes")):
+            data = {
+                **data,
+                "roaster": data.get("roaster") or found.get("roaster") or roaster,
+                "bean_name": data.get("bean_name") or found.get("bean_name") or name,
+                "flavor_tags": flavor_tags_lang_map(page_text),
+                "product_page_url": page_url,
+            }
+    elif _blank(data):
+        from google.genai import types
+
+        tools = _google_search_tools(types)
+        data = _gemini_generate_json(key, _grounded_product_prompt(name, roaster, lang), 30_000, tools)
+        page_url = page_url or sanitize_roaster_url(data.get("product_page_url"))
+        if page_url and not html:
+            html, page_text = fetch_product_page(page_url, name, roaster)
+            if page_text and _blank(data.get("flavor_tags")):
+                data["flavor_tags"] = flavor_tags_lang_map(page_text)
+    if found.get("roaster_url") and not data.get("roaster_url"):
+        data["roaster_url"] = found["roaster_url"]
+    if page_url:
+        data["product_page_url"] = page_url
+    data = ground_extracted_fields(data, page_text=page_text, html=html, lang=lang)
+    data["_source_page_text"] = page_text
+    data["_source_html"] = html
+    with _PRODUCT_LOOKUP_LOCK:
+        _PRODUCT_LOOKUP_CACHE[cache_key] = dict(data)
+    return data
 
 
 def _lookup_official_with_generativeai(
@@ -2162,35 +2471,12 @@ def _lookup_official_with_generativeai(
     key: str,
     lang: str = "da",
 ) -> dict[str, Any]:
-    import google.generativeai as genai
-
-    prompt = _grounded_product_prompt(name, roaster, lang)
-    genai.configure(api_key=key)
-    tools = _legacy_google_search_tools()
-    for model_name in GEMINI_MODELS:
-        try:
-            kwargs: dict[str, Any] = {}
-            if tools:
-                kwargs["tools"] = tools
-            model = genai.GenerativeModel(model_name, **kwargs)
-            response = model.generate_content(prompt, generation_config={"temperature": 0.1})
-            try:
-                data = _parse_gemini_json(_response_text(response) or getattr(response, "text", None) or "")
-            except (ValueError, json.JSONDecodeError):
-                data = {}
-            return _attach_grounded_pages(data if isinstance(data, dict) else {}, response)
-        except Exception as exc:
-            if tools and _tools_unsupported(exc):
-                tools = None
-                continue
-            if "404" in str(exc) or "NOT_FOUND" in str(exc):
-                continue
-            break
+    del name, roaster, key, lang
     return {}
 
 
 def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") -> dict[str, Any]:
-    """Step 2–3: grounded official-page lookup, then merge onto optical fields."""
+    """Find official/sales page from bag name, then copy published profile fields."""
     bag = dict(optical or {})
     name = (bag.get("name") or bag.get("bean_name") or "").strip()
     roaster = (bag.get("roaster") or "").strip()
@@ -2206,12 +2492,12 @@ def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") ->
         official = _gemini_official_product_lookup(name, roaster, key, lang)
     except Exception:
         official = {}
-    if _blank(official):
-        try:
-            official = _lookup_official_with_generativeai(name, roaster, key, lang)
-        except Exception:
-            official = {}
-    return merge_optical_and_official(bag, official)
+    page_text = str(official.pop("_source_page_text", "") or "")
+    html = str(official.pop("_source_html", "") or "")
+    merged = merge_optical_and_official(bag, official)
+    if page_text or html:
+        merged = ground_extracted_fields(merged, page_text=page_text, html=html, lang=lang)
+    return merged
 
 
 def enrich_bean_from_web(name: str, roaster: str, lang: str = "da") -> dict[str, Any]:
@@ -2815,17 +3101,15 @@ def extract_flavor_canons(*sources: Any) -> list[str]:
                     blobs.append(text)
                     continue
                 canon = _canonical_flavor(text)
-                if canon:
+                if canon and not is_mouthfeel_tag(canon):
                     hits.append(canon)
-                elif is_short_flavor(text):
-                    hits.append(_pretty_flavor(text))
                 blobs.append(text)
             continue
         blobs.append(str(source))
     blob = " ".join(blobs)
     if blob:
         hits.extend(_match_flavors(blob))
-    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag)]
+    return [tag for tag in _dedupe_flavors(hits) if is_short_flavor(tag) and not is_mouthfeel_tag(tag)]
 
 
 def extract_flavor_tags(*sources: Any, lang: str = "da") -> list[str]:
