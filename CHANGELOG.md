@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.7.1] - 2026-08-26
+
+- snapshot: fix - precise brew time input, auto brew-method locking, and conditional gear dropdowns
+- Brew time is a text field that accepts `27s`, `28 sec`, and `2:30 min` instead of a 15-second step dropdown.
+- Machine and grinder render as static badges when the user has only one of each; dropdowns appear only when more than one is registered.
+- Brew method locks to the active gear (espresso machine → Espresso) and stays manually selectable when there is no gear or the user overrides it.
+
 ## [6.7.0] - 2026-08-26
 
 - snapshot: refactor - added decimal dose support, brew time picker dropdown, and streamlined rating popup UI

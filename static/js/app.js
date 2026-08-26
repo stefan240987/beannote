@@ -165,7 +165,7 @@ const state = {
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
     notes: "", grind_setting: "", coffee_grams: "", water_grams: "", brew_time: "",
-    espresso_machine: "", grinder: "",
+    espresso_machine: "", grinder: "", brewMethodManual: false,
   },
 };
 let originMap = null;
@@ -516,10 +516,12 @@ async function openBean(id, tab = "explore") {
     grind_setting: user?.grind_setting || "",
     coffee_grams: user?.coffee_grams ?? "",
     water_grams: user?.water_grams ?? "",
-    brew_time: user?.brew_time || "",
+    brew_time: normalizeBrewTime(user?.brew_time || ""),
     espresso_machine: user?.espresso_machine || gear.espresso_machine || "",
     grinder: user?.grinder || gear.grinder || "",
+    brewMethodManual: false,
   };
+  applyRecipeDefaults(user);
   state.rateOpen = tab === "rate";
   state.tab = tab === "rate" || tab === "explore" ? "explore" : tab;
   if (state.tab === "rate") state.tab = "explore";
@@ -548,34 +550,58 @@ function formatBrewClock(totalSec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function brewTimeSeconds(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const labeled = text.match(/^(\d+(?:[.,]\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|min|m)$/i);
+  if (labeled) {
+    const n = Number(String(labeled[1]).replace(",", "."));
+    if (!Number.isFinite(n)) return null;
+    return labeled[2].toLowerCase().startsWith("m") ? Math.round(n * 60) : Math.round(n);
+  }
+  const clock = text.match(/^(\d+)\s*[:]\s*(\d{1,2})(?:\s*(mins?|minutes?|m|secs?|seconds?|s))?$/i);
+  if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
+  const dotted = text.match(/^(\d+)\s*[.]\s*(\d{2})(?:\s*(mins?|minutes?|m|secs?|seconds?|s))?$/i);
+  if (dotted) return Number(dotted[1]) * 60 + Number(dotted[2]);
+  return null;
+}
+
+function formatBrewDuration(totalSec) {
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  if (sec < 60) return `${sec}s`;
+  return formatBrewClock(sec);
+}
+
 function normalizeBrewTime(raw) {
   const text = String(raw || "").trim();
   if (!text) return "";
-  const match = text.match(/(\d+)\s*[:.]\s*(\d{1,2})/);
-  if (!match) return text;
-  return formatBrewClock(Number(match[1]) * 60 + Number(match[2]));
+  const sec = brewTimeSeconds(text);
+  return sec == null ? text : formatBrewDuration(sec);
 }
 
-function brewTimeChoices() {
-  const tpl = document.getElementById("brew-time-picker");
-  const min = Number(tpl?.dataset.min || 30);
-  const max = Number(tpl?.dataset.max || 480);
-  const step = Number(tpl?.dataset.step || 15);
-  const out = [];
-  for (let sec = min; sec <= max; sec += Math.max(1, step)) out.push(formatBrewClock(sec));
-  return out;
+function brewTimeInput() {
+  return `<input id="brew_time" value="${esc(state.rate.brew_time || "")}" class="time-input mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="brew_time_ph" placeholder="${esc(t("brew_time_ph"))}" autocomplete="off" spellcheck="false">`;
 }
 
-function brewTimeSelect() {
-  const current = normalizeBrewTime(state.rate.brew_time);
-  const choices = brewTimeChoices();
-  if (current && !choices.includes(current)) choices.unshift(current);
-  const opts = [`<option value="">${esc(t("brew_time_none"))}</option>`].concat(
-    choices.map((time) =>
-      `<option value="${esc(time)}" ${time === current ? "selected" : ""}>${esc(t("brew_time_min", { time }))}</option>`
-    )
-  );
-  return `<select id="brew_time" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm time-select">${opts.join("")}</select>`;
+function applyRecipeDefaults(existing) {
+  const machines = gearItemsOfKind("espresso_machine");
+  const grinders = gearItemsOfKind("grinder");
+  if (machines.length === 1) state.rate.espresso_machine = machines[0];
+  if (grinders.length === 1) state.rate.grinder = grinders[0];
+  const implied = impliedBrewMethod();
+  const saved = String(existing?.brew_method || "").trim();
+  if (saved && implied && saved !== implied) {
+    state.rate.brewMethodManual = true;
+    state.rate.brew_method = saved;
+    return;
+  }
+  if (implied) {
+    state.rate.brewMethodManual = false;
+    state.rate.brew_method = implied;
+    return;
+  }
+  state.rate.brewMethodManual = true;
+  state.rate.brew_method = saved || state.rate.brew_method || "V60";
 }
 
 function clampHalf(value, min = 0.5, max = 5) {
@@ -997,7 +1023,7 @@ function recipeMeta(row) {
     if (coffee) bits.push(`☕ ${coffee}g`);
     if (water) bits.push(`💧 ${water}g`);
   }
-  if (row.brew_time) bits.push(`⏱️ ${normalizeBrewTime(row.brew_time) || row.brew_time}`);
+  if (row.brew_time) bits.push(`⏱️ ${normalizeBrewTime(row.brew_time)}`);
   return bits;
 }
 
@@ -1391,7 +1417,7 @@ function scanEditor(scan) {
   </form>`;
 }
 
-function gearOptions(kind) {
+function gearItemsOfKind(kind) {
   const gear = userGear();
   const names = [];
   const push = (name) => {
@@ -1403,54 +1429,122 @@ function gearOptions(kind) {
   (gear.gear_specs || []).forEach((item) => {
     if (gearKindOf(item) === kind) push(gearNameOf(item));
   });
-  const selected = kind === "grinder" ? state.rate.grinder : state.rate.espresso_machine;
-  push(selected);
-  const opts = [`<option value="">${esc(t("gear_none"))}</option>`]
-    .concat(names.map((name) => `<option value="${esc(name)}" ${name === selected ? "selected" : ""}>${esc(name)}</option>`));
-  return opts.join("");
+  return names;
 }
 
-function rateForm() {
+function methodFromGearName(name) {
+  const hay = String(name || "").toLowerCase();
+  if (!hay) return "";
+  const methods = state.config?.brew_methods || [];
+  const aliases = [
+    ["aeropress", "AeroPress"],
+    ["chemex", "Chemex"],
+    ["french press", "French Press"],
+    ["stempel", "French Press"],
+    ["kalita", "Kalita"],
+    ["moka", "Moka"],
+    ["cold brew", "Cold Brew"],
+    ["batch", "Batch Brew"],
+    ["v60", "V60"],
+    ["espresso", "Espresso"],
+  ];
+  const canon = (method) => {
+    if (!method) return "";
+    if (!methods.length || methods.includes(method)) return method;
+    return methods.find((item) => item.toLowerCase() === method.toLowerCase()) || "";
+  };
+  for (const [needle, method] of aliases) {
+    if (hay.includes(needle)) return canon(method);
+  }
+  for (const method of methods) {
+    if (hay.includes(method.toLowerCase())) return method;
+  }
+  return "";
+}
+
+function impliedBrewMethod() {
+  const machine = String(state.rate.espresso_machine || "").trim();
+  if (machine) return methodFromGearName(machine) || "Espresso";
+  const brewers = gearItemsOfKind("brewer");
+  if (brewers.length === 1) return methodFromGearName(brewers[0]);
+  return "";
+}
+
+function renderGearControl(kind, id, valueKey, ariaKey) {
+  const registered = gearItemsOfKind(kind);
+  const selected = String(state.rate[valueKey] || "").trim();
+  const names = registered.slice();
+  if (selected && !names.includes(selected)) names.push(selected);
+  if (!names.length) return "";
+  if (names.length === 1) {
+    return `<div>
+              <span class="gear-badge">${esc(names[0])}</span>
+              <input type="hidden" id="${id}" value="${esc(names[0])}">
+            </div>`;
+  }
+  const opts = [`<option value="">${esc(t("gear_none"))}</option>`]
+    .concat(names.map((name) => `<option value="${esc(name)}" ${name === selected ? "selected" : ""}>${esc(name)}</option>`));
+  return `<select id="${id}" class="min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm" aria-label="${esc(t(ariaKey))}">${opts.join("")}</select>`;
+}
+
+function brewMethodControl() {
+  const implied = impliedBrewMethod();
+  const locked = !!(implied && !state.rate.brewMethodManual);
+  if (locked) {
+    return `<div>
+              <button type="button" id="unlock-brew-method" class="gear-badge gear-badge-locked mt-1" aria-label="${esc(t("recipe_brew"))}">${esc(localizeBrewMethod(state.rate.brew_method))}</button>
+              <input type="hidden" id="brew" value="${esc(state.rate.brew_method)}">
+            </div>`;
+  }
   const methods = (state.config?.brew_methods || []).map((m) =>
     `<option value="${esc(m)}" ${m === state.rate.brew_method ? "selected" : ""}>${esc(localizeBrewMethod(m))}</option>`
   ).join("");
+  return `<select id="brew" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm">${methods}</select>`;
+}
+
+function rateForm() {
+  const machine = renderGearControl("espresso_machine", "rate_espresso_machine", "espresso_machine", "gear_machine");
+  const grinder = renderGearControl("grinder", "rate_grinder", "grinder", "gear_grinder");
+  const gearRow = (machine || grinder)
+    ? `<label class="col-span-2 block text-xs font-semibold">
+          <span data-i18n="gear_for_brew">${t("gear_for_brew")}</span>
+          <div class="mt-1 grid ${machine && grinder ? "grid-cols-2" : "grid-cols-1"} gap-2">
+            ${machine}${grinder}
+          </div>
+        </label>`
+    : "";
   return `<div id="rate-form" class="space-y-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
     ${starControl(state.rate.rating)}
     ${sensorySelectors()}
-    <fieldset class="rounded-2xl bg-foam p-3">
+    <fieldset class="recipe-block rounded-2xl bg-foam p-3">
       <legend class="px-1 text-sm font-semibold" data-i18n="my_recipe">${t("my_recipe")}</legend>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="recipe-grid">
         <label class="block text-xs font-semibold">
           <span data-i18n="recipe_brew">${t("recipe_brew")}</span>
-          <select id="brew" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm">${methods}</select>
+          ${brewMethodControl()}
         </label>
         <label class="block text-xs font-semibold">
           <span data-i18n="recipe_grind">${t("recipe_grind")}</span>
           <input id="grind_setting" value="${esc(state.rate.grind_setting || "")}" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-3 text-sm" placeholder="${esc(t("grind_setting_ph"))}">
         </label>
-        <label class="col-span-2 block text-xs font-semibold">
-          <span data-i18n="gear_for_brew">${t("gear_for_brew")}</span>
-          <div class="mt-1 grid grid-cols-2 gap-2">
-            <select id="rate_espresso_machine" class="min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm" aria-label="${esc(t("gear_machine"))}">${gearOptions("espresso_machine")}</select>
-            <select id="rate_grinder" class="min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm" aria-label="${esc(t("gear_grinder"))}">${gearOptions("grinder")}</select>
+        ${gearRow}
+        <label class="block text-xs font-semibold">
+          <span data-i18n="coffee_grams">${t("coffee_grams")}</span>
+          <div class="relative mt-1">
+            <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
+            <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
           </div>
         </label>
-        <label class="col-span-2 block text-xs font-semibold">
-          <span data-i18n="recipe_dose">${t("recipe_dose")}</span>
-          <div class="mt-1 grid grid-cols-2 gap-2">
-            <div class="relative">
-              <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
-              <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
-            </div>
-            <div class="relative">
-              <input id="water_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.water_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
-              <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
-            </div>
+        <label class="block text-xs font-semibold">
+          <span data-i18n="water_grams">${t("water_grams")}</span>
+          <div class="relative mt-1">
+            <input id="water_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.water_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
+            <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
           </div>
         </label>
         <label class="col-span-2 block text-xs font-semibold">
           <span data-i18n="recipe_time">${t("recipe_time")}</span>
-          ${brewTimeSelect()}
+          ${brewTimeInput()}
         </label>
       </div>
     </fieldset>
@@ -2302,12 +2396,31 @@ function bindApp() {
       syncRateUi();
     });
   });
-  $("#brew")?.addEventListener("change", (event) => { state.rate.brew_method = event.target.value; });
-  $("#rate_espresso_machine")?.addEventListener("change", (event) => { state.rate.espresso_machine = event.target.value; });
+  $("#brew")?.addEventListener("change", (event) => {
+    state.rate.brew_method = event.target.value;
+    state.rate.brewMethodManual = true;
+  });
+  $("#unlock-brew-method")?.addEventListener("click", () => {
+    state.rate.brewMethodManual = true;
+    render();
+    $("#brew")?.focus();
+  });
+  $("#rate_espresso_machine")?.addEventListener("change", (event) => {
+    state.rate.espresso_machine = event.target.value;
+    state.rate.brewMethodManual = false;
+    const implied = impliedBrewMethod();
+    if (implied) state.rate.brew_method = implied;
+    render();
+  });
   $("#rate_grinder")?.addEventListener("change", (event) => { state.rate.grinder = event.target.value; });
   $("#notes")?.addEventListener("input", (event) => { state.rate.notes = event.target.value; });
   $("#grind_setting")?.addEventListener("input", (event) => { state.rate.grind_setting = event.target.value; });
-  $("#brew_time")?.addEventListener("change", (event) => { state.rate.brew_time = event.target.value; });
+  $("#brew_time")?.addEventListener("input", (event) => { state.rate.brew_time = event.target.value; });
+  $("#brew_time")?.addEventListener("blur", (event) => {
+    const next = normalizeBrewTime(event.target.value);
+    state.rate.brew_time = next;
+    event.target.value = next;
+  });
   ["coffee_grams", "water_grams"].forEach((key) => {
     const el = $(`#${key}`);
     if (!el) return;
@@ -2345,15 +2458,19 @@ function bindApp() {
     try {
       const coffee = parseGrams($("#coffee_grams")?.value ?? state.rate.coffee_grams);
       const water = parseGrams($("#water_grams")?.value ?? state.rate.water_grams);
+      const { brewMethodManual, ...ratePayload } = state.rate;
       const result = await api("/api/ratings", {
         method: "POST",
         body: JSON.stringify({
           bean_id: Number(state.selectedId),
-          ...state.rate,
+          ...ratePayload,
           tasting_notes_user: state.rate.notes,
           coffee_grams: coffee,
           water_grams: water,
-          brew_time: $("#brew_time")?.value ?? state.rate.brew_time,
+          brew_time: normalizeBrewTime($("#brew_time")?.value ?? state.rate.brew_time),
+          brew_method: $("#brew")?.value ?? state.rate.brew_method,
+          espresso_machine: $("#rate_espresso_machine")?.value ?? state.rate.espresso_machine,
+          grinder: $("#rate_grinder")?.value ?? state.rate.grinder,
         }),
       });
       state.profile = result.profile;
