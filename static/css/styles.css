@@ -155,6 +155,32 @@ body.modal-open { overflow: hidden; }
   justify-content: center;
   overflow: hidden;
 }
+.gear-kind-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: #f3ebe3;
+}
+@media (min-width: 420px) {
+  .gear-kind-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.gear-kind-tabs button {
+  min-height: 2.5rem;
+  border-radius: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #8c7a6b;
+}
+.gear-kind-tabs button.is-active {
+  background: #fff;
+  color: #3c2a21;
+  box-shadow: 0 1px 2px rgba(60, 42, 33, 0.08);
+}
 .gear-picker-photo {
   height: 7.5rem;
   border-radius: 0.75rem;

@@ -361,7 +361,7 @@ function refreshFlavorCatalog(lang) {
 }
 
 const token = () => localStorage.getItem(TOKEN_KEY) || "";
-const GEAR_IMG_FALLBACK = "/static/icon.svg";
+const GEAR_IMG_FALLBACK = "/static/img/gear/placeholder.svg";
 const mediaSrc = (url) => {
   if (!url) return "";
   if (url.startsWith("data:") || url.startsWith("http") || url.startsWith("/static/")) return url;
@@ -1419,17 +1419,48 @@ function userGear() {
 }
 
 function gearKindOf(item) {
-  const raw = String(item?.kind || item?.gear_type || item?.type || "other").toLowerCase().trim();
-  if (["machine", "espresso", "espresso_machine", "espresso-machine"].includes(raw)) return "espresso_machine";
+  const raw = String(item?.type || item?.kind || item?.gear_type || "other").toLowerCase().trim().replace(/[-\s]+/g, "_");
+  if (["machine", "espresso", "espresso_machine"].includes(raw)) return "espresso_machine";
   if (["grinder", "mill"].includes(raw)) return "grinder";
   if (["brewer", "brew", "filter"].includes(raw)) return "brewer";
+  if (["scale_kettle", "scale", "kettle", "scales"].includes(raw)) return "scale_kettle";
   return raw || "other";
 }
 
+const GEAR_SLOTS = ["espresso_machine", "grinder", "brewer", "scale_kettle"];
+const GEAR_KIND_FALLBACKS = {
+  gear_scale_kettle: { da: "Vægt & Kedel", en: "Scale & Kettle", de: "Waage & Kessel", fr: "Balance & bouilloire", es: "Báscula y hervidor" },
+};
+
+function gearKindTabDefs() {
+  const tpl = document.getElementById("gear-kind-tabs");
+  if (tpl) {
+    return [...tpl.content.querySelectorAll("[data-gear-kind]")].map((btn) => ({
+      id: btn.dataset.gearKind || "espresso_machine",
+      key: btn.getAttribute("data-i18n") || "",
+      fallback: (btn.textContent || "").trim(),
+    }));
+  }
+  return [
+    { id: "espresso_machine", key: "gear_machine", fallback: "Espressomaskine" },
+    { id: "grinder", key: "gear_grinder", fallback: "Kværn" },
+    { id: "brewer", key: "gear_brewer", fallback: "Brygger" },
+    { id: "scale_kettle", key: "gear_scale_kettle", fallback: "Vægt & Kedel" },
+  ];
+}
+
+function gearTabLabel(key, fallback) {
+  const localized = key ? t(key) : "";
+  if (localized && localized !== key) return localized;
+  const map = GEAR_KIND_FALLBACKS[key];
+  if (map) return map[activeLang()] || map.da || fallback;
+  return fallback || key;
+}
+
 function filterGearByKind(items, kind) {
-  const slot = gearKindOf({ kind });
+  const slot = gearKindOf({ kind, type: kind });
   const rows = Array.isArray(items) ? items : [];
-  if (!["espresso_machine", "grinder", "brewer"].includes(slot)) return rows;
+  if (!GEAR_SLOTS.includes(slot)) return [];
   return rows.filter((item) => gearKindOf(item) === slot);
 }
 
@@ -1438,14 +1469,17 @@ function gearNameOf(item) {
 }
 
 function gearKindLabel(kind) {
-  const key = {
+  const slot = gearKindOf({ kind });
+  const def = gearKindTabDefs().find((row) => row.id === slot);
+  const key = def?.key || {
     espresso_machine: "gear_machine",
     machine: "gear_machine",
     grinder: "gear_grinder",
     brewer: "gear_brewer",
+    scale_kettle: "gear_scale_kettle",
     other: "gear_other",
   }[kind] || "gear_other";
-  return t(key);
+  return gearTabLabel(key, def?.fallback || t("gear_other"));
 }
 
 function gearSpecChips(item) {
@@ -1461,13 +1495,14 @@ function gearSpecChips(item) {
 }
 
 function gearImgFallback() {
-  return ` onerror="this.onerror=null;this.src='${GEAR_IMG_FALLBACK}';"`;
+  return ` onerror="this.onerror=null;this.src='/static/img/gear/placeholder.svg';"`;
 }
 
 function gearThumb(item) {
-  const img = photoImg(item?.image_url, "", "h-full w-full object-contain", gearImgFallback());
+  const src = item?.image_url || GEAR_IMG_FALLBACK;
+  const img = photoImg(src, "", "h-full w-full object-contain", gearImgFallback());
   if (img) return img;
-  return `<span class="px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</span>`;
+  return `<img src="/static/img/gear/placeholder.svg" alt="" class="h-full w-full object-contain" onerror="this.onerror=null;this.src='/static/img/gear/placeholder.svg';">`;
 }
 
 function normalizeClientGear(item) {
@@ -1477,7 +1512,7 @@ function normalizeClientGear(item) {
   return {
     id: item.id || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || name,
     kind,
-    gear_type: { espresso_machine: "machine", grinder: "grinder", brewer: "brewer" }[kind] || "other",
+    gear_type: { espresso_machine: "machine", grinder: "grinder", brewer: "brewer", scale_kettle: "scale_kettle" }[kind] || "other",
     name,
     model_name: name,
     brand: String(item.brand || "").trim(),
@@ -1572,14 +1607,11 @@ function gearCustomModal() {
 
 function gearSetup() {
   const gear = userGear();
-  const kinds = [
-    ["espresso_machine", "gear_machine"],
-    ["grinder", "gear_grinder"],
-    ["brewer", "gear_brewer"],
-  ];
-  const kindBtns = kinds.map(([id, key]) => {
+  const kindBtns = gearKindTabDefs().map(({ id, key, fallback }) => {
     const on = state.gearKind === id;
-    return `<button type="button" data-gear-kind="${id}" class="min-h-10 flex-1 rounded-lg px-2 text-xs font-semibold ${on ? "bg-white text-espresso shadow-sm" : "text-muted"}" data-i18n="${key}">${esc(t(key))}</button>`;
+    const label = gearTabLabel(key, fallback);
+    const i18n = key && t(key) !== key ? ` data-i18n="${key}"` : "";
+    return `<button type="button" data-gear-kind="${id}" class="${on ? "is-active" : ""}"${i18n}>${esc(label)}</button>`;
   }).join("");
   const saved = gear.gear_specs.map((item) => gearCard(item)).join("");
   return `<section class="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
@@ -1587,7 +1619,7 @@ function gearSetup() {
       <h2 class="font-display text-xl font-bold" data-i18n="gear_setup">${esc(t("gear_setup"))}</h2>
       <p class="mt-1 text-sm text-muted" data-i18n="gear_setup_sub">${esc(t("gear_setup_sub"))}</p>
     </div>
-    <div class="flex gap-1 rounded-xl bg-foam p-1">${kindBtns}</div>
+    <div class="gear-kind-tabs">${kindBtns}</div>
     <div class="flex gap-2">
       <input id="gear-query" value="${esc(state.gearQuery)}" class="min-h-12 flex-1 rounded-xl border border-latte bg-cream px-3 text-sm" data-i18n-placeholder="gear_search_ph" placeholder="${esc(t("gear_search_ph"))}">
       <button type="button" id="gear-lookup" class="min-h-12 shrink-0 rounded-xl bg-terracotta px-3 text-sm font-semibold text-cream" data-i18n="gear_lookup">${esc(t("gear_lookup"))}</button>

@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [feat] - 2026-08-26
+
+- snapshot: feat - expanded gear catalog, added scale_kettle category, implemented local image caching script
+- My Coffee Setup now has four tabs: Espressomaskine, Kværn, Brygger, and Vægt & Kedel. Search only returns models for the active tab.
+- Gear photos are cached locally at `/static/img/gear/{id}.jpg` via `scripts/fetch_gear_images.py`, with a cream placeholder fallback.
+
 ## [refactor] - 2026-08-26
 
 - snapshot: refactor - optimized profile page UI, strict gear type filtering, compact language selector, removed CSV export and static brewers list
