@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.7.0] - 2026-08-26
+
+- snapshot: refactor - added decimal dose support, brew time picker dropdown, and streamlined rating popup UI
+- Coffee and water dose fields accept 0.1 g steps and parse both `18.5` and `18,5`.
+- Brew time is a compact dropdown from 0:30 to 8:00 in 15-second steps.
+- The rating popup hides the duplicate Rate this bean button, tasting-profile summary, Find retailer, and the rest of the bean-detail footer so the form stays scannable.
+
 ## [feat] - 2026-08-26
 
 - snapshot: feat - expanded gear catalog, added scale_kettle category, implemented local image caching script

@@ -448,3 +448,15 @@ input, select, textarea { font-size: 16px !important; }
   .journal-modal { align-items: center; }
   .journal-modal-sheet { margin-bottom: 0; }
 }
+#bean-modal.rating-focus .modal-cover {
+  min-height: 6.5rem;
+  padding: 6px;
+}
+#bean-modal.rating-focus .modal-cover-img,
+#bean-modal.rating-focus #modalCoverImg {
+  max-height: 9rem;
+}
+.grams-input,
+.time-select {
+  font-variant-numeric: tabular-nums;
+}

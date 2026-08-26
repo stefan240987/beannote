@@ -528,6 +528,56 @@ async function openBean(id, tab = "explore") {
   render();
 }
 
+function parseGrams(value) {
+  if (value === "" || value == null) return null;
+  const cleaned = String(value).trim().replace(/\s+/g, "").replace(",", ".");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatGramsLabel(value) {
+  const n = parseGrams(value);
+  if (n == null) return "";
+  return String(Math.round(n * 10) / 10);
+}
+
+function formatBrewClock(totalSec) {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function normalizeBrewTime(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const match = text.match(/(\d+)\s*[:.]\s*(\d{1,2})/);
+  if (!match) return text;
+  return formatBrewClock(Number(match[1]) * 60 + Number(match[2]));
+}
+
+function brewTimeChoices() {
+  const tpl = document.getElementById("brew-time-picker");
+  const min = Number(tpl?.dataset.min || 30);
+  const max = Number(tpl?.dataset.max || 480);
+  const step = Number(tpl?.dataset.step || 15);
+  const out = [];
+  for (let sec = min; sec <= max; sec += Math.max(1, step)) out.push(formatBrewClock(sec));
+  return out;
+}
+
+function brewTimeSelect() {
+  const current = normalizeBrewTime(state.rate.brew_time);
+  const choices = brewTimeChoices();
+  if (current && !choices.includes(current)) choices.unshift(current);
+  const opts = [`<option value="">${esc(t("brew_time_none"))}</option>`].concat(
+    choices.map((time) =>
+      `<option value="${esc(time)}" ${time === current ? "selected" : ""}>${esc(t("brew_time_min", { time }))}</option>`
+    )
+  );
+  return `<select id="brew_time" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-2 text-sm time-select">${opts.join("")}</select>`;
+}
+
 function clampHalf(value, min = 0.5, max = 5) {
   const n = Number(value);
   if (!Number.isFinite(n)) return min;
@@ -939,15 +989,15 @@ function exploreView() {
 function recipeMeta(row) {
   const bits = [];
   if (row.grind_setting) bits.push(t("recipe_grind_value", { grind: row.grind_setting }));
-  const coffee = row.coffee_grams;
-  const water = row.water_grams;
-  if (coffee != null && coffee !== "" && water != null && water !== "") {
+  const coffee = formatGramsLabel(row.coffee_grams);
+  const water = formatGramsLabel(row.water_grams);
+  if (coffee && water) {
     bits.push(t("recipe_dose_value", { coffee, water }));
   } else {
-    if (coffee != null && coffee !== "") bits.push(`☕ ${coffee}g`);
-    if (water != null && water !== "") bits.push(`💧 ${water}g`);
+    if (coffee) bits.push(`☕ ${coffee}g`);
+    if (water) bits.push(`💧 ${water}g`);
   }
-  if (row.brew_time) bits.push(`⏱️ ${row.brew_time}`);
+  if (row.brew_time) bits.push(`⏱️ ${normalizeBrewTime(row.brew_time) || row.brew_time}`);
   return bits;
 }
 
@@ -1166,6 +1216,7 @@ function retailerActions(bean) {
 
 function beanModal(profile) {
   const bean = profile.bean;
+  const rating = state.rateOpen;
   const photo = photoImg(bean.image_url, bean.snapshot_url, "modal-cover-img", ' id="modalCoverImg"');
   const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
   const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
@@ -1177,27 +1228,11 @@ function beanModal(profile) {
     suitableFor = [];
   }
   const suitableLine = suitabilityLine(suitableFor);
-  return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
-    <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
-      <div class="modal-close-bar">
-        <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
-      </div>
-      <div class="modal-cover rounded-t-3xl sm:rounded-t-3xl">
-        ${photo || bagFallback("h-56")}
-        ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
-      </div>
-      <div class="space-y-4 p-4 pb-8">
-        <section class="space-y-3">
-          <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
-          <p class="text-sm text-muted">${esc(info)}</p>
-          <button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>
-          ${state.rateOpen ? rateForm() : ""}
-          ${retailerActions(bean)}
+  const extras = rating ? "" : `${retailerActions(bean)}
           ${flavorPills || parseSuitableFor(suitableFor).length ? `<div class="flex flex-wrap items-center gap-1.5">${flavorPills}${suitableLine}</div>` : ""}
           ${metaBadges(bean)}
-          ${storyBlock(bean.story)}
-        </section>
-        ${roasterProfileCard(profile)}
+          ${storyBlock(bean.story)}`;
+  const footer = rating ? "" : `${roasterProfileCard(profile)}
         ${personalLogSection(profile)}
         <section>
           ${originMapBox(bean)}
@@ -1206,7 +1241,25 @@ function beanModal(profile) {
         ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
         ${editor}
         ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
-        ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
+        ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}`;
+  return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
+    <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+      <div class="modal-close-bar">
+        <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
+      </div>
+      <div class="modal-cover rounded-t-3xl sm:rounded-t-3xl">
+        ${photo || bagFallback(rating ? "h-28" : "h-56")}
+        ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
+      </div>
+      <div class="space-y-4 p-4 ${rating ? "pb-6" : "pb-8"}">
+        <section class="space-y-3">
+          <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
+          <p class="text-sm text-muted">${esc(info)}</p>
+          ${rating ? "" : `<button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>`}
+          ${rating ? rateForm() : ""}
+          ${extras}
+        </section>
+        ${footer}
       </div>
     </article>
   </div>`;
@@ -1386,25 +1439,24 @@ function rateForm() {
           <span data-i18n="recipe_dose">${t("recipe_dose")}</span>
           <div class="mt-1 grid grid-cols-2 gap-2">
             <div class="relative">
-              <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
+              <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
               <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
             </div>
             <div class="relative">
-              <input id="water_grams" type="number" inputmode="decimal" step="1" min="0" value="${esc(state.rate.water_grams)}" class="min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
+              <input id="water_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.water_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
               <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
             </div>
           </div>
         </label>
         <label class="col-span-2 block text-xs font-semibold">
           <span data-i18n="recipe_time">${t("recipe_time")}</span>
-          <input id="brew_time" value="${esc(state.rate.brew_time || "")}" class="mt-1 min-h-11 w-full rounded-xl border border-latte bg-white px-3 text-sm" placeholder="${esc(t("brew_time_ph"))}">
+          ${brewTimeSelect()}
         </label>
       </div>
     </fieldset>
     <label class="block text-sm font-medium"><span data-i18n="tasting_notes_user">${t("tasting_notes_user")}</span>
       <textarea id="notes" class="mt-1 min-h-24 w-full rounded-xl border border-latte bg-white px-3 py-2" placeholder="${esc(t("tasting_notes_user_ph"))}">${esc(state.rate.notes)}</textarea>
     </label>
-    ${liveSensoryCard()}
     <button id="save-rating" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="save_rating">${t("save_rating")}</button>
   </div>`;
 }
@@ -2254,21 +2306,54 @@ function bindApp() {
   $("#rate_espresso_machine")?.addEventListener("change", (event) => { state.rate.espresso_machine = event.target.value; });
   $("#rate_grinder")?.addEventListener("change", (event) => { state.rate.grinder = event.target.value; });
   $("#notes")?.addEventListener("input", (event) => { state.rate.notes = event.target.value; });
-  ["grind_setting", "brew_time", "coffee_grams", "water_grams"].forEach((key) => {
-    $(`#${key}`)?.addEventListener("input", (event) => { state.rate[key] = event.target.value; });
+  $("#grind_setting")?.addEventListener("input", (event) => { state.rate.grind_setting = event.target.value; });
+  $("#brew_time")?.addEventListener("change", (event) => { state.rate.brew_time = event.target.value; });
+  ["coffee_grams", "water_grams"].forEach((key) => {
+    const el = $(`#${key}`);
+    if (!el) return;
+    el.addEventListener("beforeinput", (event) => {
+      if (event.data !== ",") return;
+      event.preventDefault();
+      let next = `${el.value}.`;
+      try {
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        if (typeof start === "number" && typeof end === "number") {
+          next = `${el.value.slice(0, start)}.${el.value.slice(end)}`;
+        }
+      } catch {
+        next = `${String(el.value || "").replace(",", ".")}`;
+      }
+      el.value = next;
+      state.rate[key] = el.value;
+    });
+    el.addEventListener("paste", (event) => {
+      const text = event.clipboardData?.getData("text") || "";
+      if (!text.includes(",")) return;
+      const parsed = parseGrams(text);
+      if (parsed == null) return;
+      event.preventDefault();
+      el.value = String(parsed);
+      state.rate[key] = el.value;
+    });
+    el.addEventListener("input", (event) => {
+      state.rate[key] = event.target.value;
+    });
   });
   $("#save-rating")?.addEventListener("click", async () => {
     if (!state.selectedId) return toast(t("select_bean"));
     try {
-      const grams = (value) => value === "" || value == null ? null : Number(value);
+      const coffee = parseGrams($("#coffee_grams")?.value ?? state.rate.coffee_grams);
+      const water = parseGrams($("#water_grams")?.value ?? state.rate.water_grams);
       const result = await api("/api/ratings", {
         method: "POST",
         body: JSON.stringify({
           bean_id: Number(state.selectedId),
           ...state.rate,
           tasting_notes_user: state.rate.notes,
-          coffee_grams: grams(state.rate.coffee_grams),
-          water_grams: grams(state.rate.water_grams),
+          coffee_grams: coffee,
+          water_grams: water,
+          brew_time: $("#brew_time")?.value ?? state.rate.brew_time,
         }),
       });
       state.profile = result.profile;
