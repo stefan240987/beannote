@@ -182,14 +182,11 @@ const esc = (value) => String(value ?? "")
   .replaceAll('"', "&quot;");
 const t = (key, vars = {}) => i18nManager.t(key, vars);
 const COFFEE_LOADERS = ["espresso", "grinder", "pour_over"];
-const COFFEE_LOADER_MSGS = [
-  "loader_grind",
-  "loader_extract",
-  "loader_brew",
-  "loader_drip",
-  "loader_bloom",
-  "loader_tamp",
-];
+const LOADER_STATUS = {
+  espresso: "loader_extract",
+  grinder: "loader_grind",
+  pour_over: "loader_drip",
+};
 const getLocalized = (jsonObj, lang, fallback) => i18nManager.getLocalized(jsonObj, lang, fallback);
 const normalizeLang = (lang) => i18nManager.normalize(lang);
 const activeLang = () => i18nManager.active();
@@ -199,7 +196,7 @@ const isAdmin = () => !!state.user?.is_admin;
 function startBusy() {
   state.busy = true;
   state.busyLoader = COFFEE_LOADERS[Math.floor(Math.random() * 3)];
-  state.busyMessage = COFFEE_LOADER_MSGS[Math.floor(Math.random() * COFFEE_LOADER_MSGS.length)];
+  state.busyMessage = LOADER_STATUS[state.busyLoader] || "loader_brew";
 }
 
 const SCAN_MATCH_CUTOFF = 0.85;

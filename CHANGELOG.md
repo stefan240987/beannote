@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.5.1] - 2026-08-26
+
+- snapshot: v6.5.1 - loader status text matches the animation
+- Grinder says grinding beans, espresso says extracting notes, pour-over says dripping aroma.
+
 ## [6.5.0] - 2026-08-26
 
 - snapshot: v6.5.0 - bust stale PWA cache and skip save on existing bags
