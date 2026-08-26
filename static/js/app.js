@@ -88,10 +88,8 @@ const i18nManager = {
     const next = this.active();
     document.querySelectorAll("[data-setlang]").forEach((btn) => {
       const on = btn.dataset.setlang === next;
-      btn.classList.toggle("bg-espresso", on);
-      btn.classList.toggle("text-cream", on);
-      btn.classList.toggle("shadow", on);
-      btn.classList.toggle("text-muted", !on);
+      btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
   },
   setLanguage(lang) {
@@ -120,14 +118,10 @@ const i18nManager = {
     const labels = this.labels();
     const buttons = langs.map((code) => {
       const on = current === code;
-      return `<button type="button" data-setlang="${code}" class="min-h-12 flex-1 rounded-xl px-2 text-sm font-bold tracking-wide ${on ? "bg-espresso text-cream shadow" : "text-muted"}">${esc(labels[code] || code.toUpperCase())}</button>`;
+      const label = code.toUpperCase();
+      return `<button type="button" data-setlang="${code}" class="${on ? "is-on" : ""}" aria-pressed="${on ? "true" : "false"}" title="${esc(labels[code] || code)}">${esc(label)}</button>`;
     }).join("");
-    return `<div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
-      <p class="mb-3 text-sm font-semibold" data-i18n="language">${this.t("language")}</p>
-      <div class="flex flex-wrap gap-1.5 rounded-2xl bg-foam p-1.5" role="group" aria-label="${esc(this.t("language"))}">
-        ${buttons}
-      </div>
-    </div>`;
+    return `<div class="lang-switch" role="group" aria-label="${esc(this.t("language"))}">${buttons}</div>`;
   },
 };
 const state = {
@@ -153,6 +147,7 @@ const state = {
   suitabilityFilter: "",
   savedPrompt: null,
   supportOpen: false,
+  journalOpen: false,
   journal: [],
   recipeTab: "mine",
   rateOpen: false,
@@ -1424,9 +1419,18 @@ function userGear() {
 }
 
 function gearKindOf(item) {
-  const raw = String(item?.kind || item?.gear_type || "other").toLowerCase();
-  if (raw === "machine" || raw === "espresso") return "espresso_machine";
-  return raw;
+  const raw = String(item?.kind || item?.gear_type || item?.type || "other").toLowerCase().trim();
+  if (["machine", "espresso", "espresso_machine", "espresso-machine"].includes(raw)) return "espresso_machine";
+  if (["grinder", "mill"].includes(raw)) return "grinder";
+  if (["brewer", "brew", "filter"].includes(raw)) return "brewer";
+  return raw || "other";
+}
+
+function filterGearByKind(items, kind) {
+  const slot = gearKindOf({ kind });
+  const rows = Array.isArray(items) ? items : [];
+  if (!["espresso_machine", "grinder", "brewer"].includes(slot)) return rows;
+  return rows.filter((item) => gearKindOf(item) === slot);
 }
 
 function gearNameOf(item) {
@@ -1527,7 +1531,7 @@ function gearPickerCard(item) {
 
 function gearPickerModal() {
   if (!state.gearPickerOpen) return "";
-  const cards = (state.gearCandidates || []).map(gearPickerCard).join("");
+  const cards = filterGearByKind(state.gearCandidates, state.gearKind).map(gearPickerCard).join("");
   return `<div id="gear-picker" data-close-gear-picker class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
     <article class="relative mb-0 max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:mb-0 sm:rounded-3xl" data-gear-picker-sheet>
       <div class="modal-close-bar">
@@ -1577,10 +1581,6 @@ function gearSetup() {
     const on = state.gearKind === id;
     return `<button type="button" data-gear-kind="${id}" class="min-h-10 flex-1 rounded-lg px-2 text-xs font-semibold ${on ? "bg-white text-espresso shadow-sm" : "text-muted"}" data-i18n="${key}">${esc(t(key))}</button>`;
   }).join("");
-  const brewBtns = (state.config?.brew_methods || []).map((method) => {
-    const on = gear.brewer_types.includes(method);
-    return `<button type="button" data-brewer-toggle="${esc(method)}" class="min-h-10 rounded-full px-3 text-xs font-semibold ${on ? "bg-espresso text-cream" : "bg-foam text-muted"}">${esc(localizeBrewMethod(method))}</button>`;
-  }).join("");
   const saved = gear.gear_specs.map((item) => gearCard(item)).join("");
   return `<section class="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
     <div>
@@ -1594,17 +1594,25 @@ function gearSetup() {
     </div>
     <button type="button" data-open-gear-custom class="flex min-h-11 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
     ${saved || `<p class="text-sm text-muted" data-i18n="gear_empty">${esc(t("gear_empty"))}</p>`}
-    <div>
-      <p class="mb-2 text-sm font-semibold" data-i18n="gear_brewers">${esc(t("gear_brewers"))}</p>
-      <div class="flex flex-wrap gap-1.5">${brewBtns}</div>
-    </div>
   </section>`;
 }
 
-function journalCard(row) {
+function journalCard(row, compact = false) {
   const date = (row.created_at || "").slice(0, 10);
   const method = localizeBrewMethod(row.brew_method);
-  const header = [`⭐ ${Number(row.rating || 0).toFixed(1)}`];
+  const rating = Number(row.rating || 0).toFixed(1);
+  if (compact) {
+    const sub = [row.roaster, method].filter(Boolean).join(" · ");
+    return `<article class="journal-row">
+      <time class="journal-row-date" datetime="${esc(date)}">${esc(date)}</time>
+      <div class="journal-row-body">
+        <h3>${esc(row.bean_name || "")}</h3>
+        ${sub ? `<p>${esc(sub)}</p>` : ""}
+      </div>
+      <span class="journal-row-score">⭐ ${esc(rating)}</span>
+    </article>`;
+  }
+  const header = [`⭐ ${rating}`];
   if (method) header.push(`☕ ${method}`);
   const badges = recipeMeta(row);
   const notes = String(row.tasting_notes_user || row.notes || "").trim();
@@ -1621,10 +1629,32 @@ function journalCard(row) {
 
 function journalFeed() {
   const rows = state.journal || [];
-  return `<section class="space-y-3">
-    <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
-    ${rows.length ? rows.map(journalCard).join("") : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`}
+  const preview = rows.slice(0, 3);
+  const more = rows.length > 3;
+  return `<section class="journal-feed">
+    <div class="journal-feed-head">
+      <h2 class="font-display text-lg font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+      ${more ? `<button type="button" data-open-journal class="journal-view-all" data-i18n="journal_view_all">${esc(t("journal_view_all"))}</button>` : ""}
+    </div>
+    ${preview.length ? preview.map((row) => journalCard(row, true)).join("") : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`}
   </section>`;
+}
+
+function journalModal() {
+  if (!state.journalOpen) return "";
+  const rows = state.journal || [];
+  const list = rows.length
+    ? rows.map((row) => journalCard(row, false)).join("")
+    : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`;
+  return `<div id="journal-modal" data-close-journal class="journal-modal">
+    <article class="journal-modal-sheet" data-journal-sheet>
+      <div class="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
+        <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+        <button type="button" data-close-journal class="grid h-10 w-10 place-items-center rounded-full bg-white text-lg font-semibold shadow-sm ring-1 ring-latte" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
+      </div>
+      <div class="journal-modal-list">${list}</div>
+    </article>
+  </div>`;
 }
 
 function langToggle() {
@@ -1634,16 +1664,19 @@ function langToggle() {
 function profileView() {
   return `<section class="space-y-4 px-4 pb-28 pt-5">
     <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
-      <p class="text-xs uppercase tracking-wider text-muted" data-i18n="signed_in_as">${t("signed_in_as")}</p>
-      <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
-      <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
-      ${isAdmin() ? `<p class="mt-2 inline-flex rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-semibold">${esc(t("admin_badge"))}</p>` : ""}
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-xs uppercase tracking-wider text-muted" data-i18n="signed_in_as">${t("signed_in_as")}</p>
+          <p class="font-display text-xl font-bold">${esc(state.user?.username || state.user?.email)}</p>
+          <p class="text-sm text-muted">${esc(state.user?.email)} · ${esc(state.user?.auth_provider)}</p>
+          ${isAdmin() ? `<p class="mt-2 inline-flex rounded-full bg-[#f4ebd9] px-2.5 py-1 text-xs font-semibold">${esc(t("admin_badge"))}</p>` : ""}
+        </div>
+        ${langToggle()}
+      </div>
     </div>
-    ${langToggle()}
     ${gearSetup()}
     ${journalFeed()}
     ${supportButton()}
-    <a href="/api/export?fmt=csv" class="flex min-h-12 items-center justify-center rounded-xl bg-foam font-semibold" data-i18n="export_csv">${t("export_csv")}</a>
     <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
   </section>`;
 }
@@ -1787,6 +1820,7 @@ async function resetExplore() {
   state.editBean = false;
   state.rateOpen = false;
   state.savedPrompt = null;
+  state.journalOpen = false;
   await loadBeans();
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1843,7 +1877,7 @@ function render() {
     return;
   }
   document.documentElement.lang = state.config.lang || "da";
-  document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen)));
+  document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.journalOpen)));
   if (!state.user) {
     root.innerHTML = authView();
     bindAuth();
@@ -1851,7 +1885,7 @@ function render() {
   }
   const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
   const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${journalModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
 }
@@ -1977,6 +2011,7 @@ function bindApp() {
       await resetExplore();
       return;
     }
+    state.journalOpen = false;
     state.tab = btn.dataset.tab;
     if (state.tab === "rate") {
       state.tab = "explore";
@@ -2225,6 +2260,8 @@ function bindApp() {
   document.querySelectorAll("[data-gear-kind]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.gearKind = btn.dataset.gearKind || "espresso_machine";
+      state.gearCandidates = filterGearByKind(state.gearCandidates, state.gearKind);
+      if (!state.gearCandidates.length) state.gearPickerOpen = false;
       render();
     });
   });
@@ -2251,9 +2288,10 @@ function bindApp() {
         body: JSON.stringify({ query, kind: state.gearKind, lang: activeLang() }),
         signal: ctrl.signal,
       });
-      const hits = Array.isArray(result.gear_candidates) && result.gear_candidates.length
+      const raw = Array.isArray(result.gear_candidates) && result.gear_candidates.length
         ? result.gear_candidates
         : (result.specs ? [result.specs] : []);
+      const hits = filterGearByKind(raw, state.gearKind);
       state.gearCandidates = hits;
       state.gearHit = hits[0] || null;
       state.gearPickerOpen = hits.length > 0;
@@ -2403,24 +2441,19 @@ function bindApp() {
       }
     });
   });
-  document.querySelectorAll("[data-brewer-toggle]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const method = btn.dataset.brewerToggle;
-      if (!method) return;
-      const gear = userGear();
-      const on = gear.brewer_types.includes(method);
-      const brewer_types = on
-        ? gear.brewer_types.filter((item) => item !== method)
-        : [...gear.brewer_types, method];
-      try {
-        await persistGear({
-          espresso_machine: gear.espresso_machine,
-          grinder: gear.grinder,
-          brewer_types,
-          gear_specs: gear.gear_specs,
-        });
-      } catch (err) {
-        toast(t(err.detail || "required"));
+  document.querySelectorAll("[data-open-journal]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.journalOpen = true;
+      render();
+    });
+  });
+  $("[data-journal-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelectorAll("[data-close-journal]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (el.hasAttribute("data-journal-sheet")) return;
+      if (event.target === el || el.matches("button")) {
+        state.journalOpen = false;
+        render();
       }
     });
   });
@@ -2438,6 +2471,11 @@ function bindApp() {
 
   document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (state.journalOpen) {
+    state.journalOpen = false;
+    render();
+    return;
+  }
   if (state.supportOpen) {
     state.supportOpen = false;
     render();

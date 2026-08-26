@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 import db as db_mod
-from db import GEAR_CATALOG, save_bean_image, search_local_gear, update_user_gear
+from db import GEAR_CATALOG, canonical_gear_kind, save_bean_image, search_local_gear, update_user_gear
 from deps import current_user
 from ocr import encode_scan_jpeg, lookup_gear_catalog
 from schemas import GearIn, GearLookupIn
@@ -63,6 +63,23 @@ def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return restored
 
 
+_GEAR_SLOTS = {"espresso_machine", "grinder", "brewer"}
+
+
+def item_gear_kind(item: dict[str, Any]) -> str:
+    return canonical_gear_kind(
+        str(item.get("kind") or item.get("gear_type") or item.get("type") or "")
+    )
+
+
+def filter_gear_by_kind(cards: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+    """Drop catalog/Gemini hits that do not match the selected setup tab."""
+    slot = canonical_gear_kind(kind) if kind else ""
+    if slot not in _GEAR_SLOTS:
+        return cards
+    return [item for item in cards if item_gear_kind(item) == slot]
+
+
 @router.post("/lookup")
 def gear_lookup(
     payload: GearLookupIn,
@@ -73,11 +90,15 @@ def gear_lookup(
     chosen = (payload.lang or request.query_params.get("lang") or "da").lower().strip()
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
-    local = restore_catalog_images(search_local_gear(payload.query, kind=payload.kind))
+    slot = payload.kind
+    local = filter_gear_by_kind(
+        restore_catalog_images(search_local_gear(payload.query, kind=slot)),
+        slot,
+    )
     if local:
         return {"gear_candidates": local, "specs": local[0]}
     try:
-        candidates = lookup_gear_catalog(payload.query, kind=payload.kind, lang=chosen)
+        candidates = lookup_gear_catalog(payload.query, kind=slot, lang=chosen)
     except ValueError as exc:
         code = str(exc)
         if code == "gear_query_required":
@@ -90,7 +111,7 @@ def gear_lookup(
     except Exception as exc:
         print(f"gear lookup failed: {exc}")
         raise HTTPException(status_code=422, detail="gear_lookup_fail") from exc
-    restored = restore_catalog_images(candidates)
+    restored = filter_gear_by_kind(restore_catalog_images(candidates), slot)
     return {"gear_candidates": restored, "specs": restored[0] if restored else None}
 
 

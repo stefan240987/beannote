@@ -303,3 +303,122 @@ input, select, textarea { font-size: 16px !important; }
     animation: none !important;
   }
 }
+
+/* Compact profile language selector */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #f3ebe3;
+  flex-shrink: 0;
+}
+.lang-switch [data-setlang] {
+  min-height: 1.75rem;
+  min-width: 2.15rem;
+  padding: 0 0.55rem;
+  border: 0;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8c7a6b;
+  background: transparent;
+}
+.lang-switch [data-setlang].is-on {
+  background: #3c2a21;
+  color: #faf6f0;
+}
+
+/* Compact coffee diary */
+.journal-feed {
+  display: grid;
+  gap: 0.45rem;
+}
+.journal-feed-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+.journal-view-all {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #b85c38;
+}
+.journal-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem 0.7rem;
+  padding: 0.55rem 0.75rem;
+  background: #fff;
+  border-radius: 0.85rem;
+  box-shadow: 0 1px 2px rgba(60, 42, 33, 0.05);
+  border: 1px solid #e8d8c8;
+}
+.journal-row-date {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #8c7a6b;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.journal-row-body h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-row-body p {
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+  color: #8c7a6b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-row-score {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #3c2a21;
+  white-space: nowrap;
+}
+.journal-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 1rem;
+  background: rgba(60, 42, 33, 0.5);
+}
+.journal-modal-sheet {
+  width: 100%;
+  max-width: 32rem;
+  max-height: 82dvh;
+  margin-bottom: 5rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1.5rem;
+  background: #faf6f0;
+  box-shadow: 0 22px 48px rgba(60, 42, 33, 0.32);
+}
+.journal-modal-list {
+  overflow-y: auto;
+  padding: 0 1rem 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .journal-modal { align-items: center; }
+  .journal-modal-sheet { margin-bottom: 0; }
+}

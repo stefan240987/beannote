@@ -2,6 +2,20 @@
 
 All notable BeanNote changes are recorded here.
 
+## [refactor] - 2026-08-26
+
+- snapshot: refactor - optimized profile page UI, strict gear type filtering, compact language selector, removed CSV export and static brewers list
+- Profile language control is a compact inline DA/EN segmented pill instead of a full-width card.
+- Gear lookup only returns models that match the selected tab (espresso machine, grinder, or brewer).
+- My Coffee Diary shows the 3 latest tastings with a View all sheet; CSV export and the static brewers pill list are gone.
+
+## [6.6.0] - 2026-08-26
+
+- snapshot: v6.6.0 - known-bag scans skip the long OCR
+- Scan first asks Gemini only for brand + product name (no thinking, tiny JSON). If that hits the archive at 85%+, BeanNote opens the profile immediately.
+- Archive matching is case-insensitive, so `COPENHAGEN ROASTER` still matches Copenhagen Roaster.
+- Full label OCR, web lookup, and packshot fetch still run only for bags that are not already in BeanNote. Identity uses Gemini Flash Lite so the model does not sit in a thinking loop.
+
 ## [6.5.1] - 2026-08-26
 
 - snapshot: v6.5.1 - loader status text matches the animation
