@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.4.0] - 2026-08-26
+
+- snapshot: v6.4.0 - scan jumps to existing profiles and shows lookup status
+- Scanning a bag that already exists in BeanNote opens that coffee's profile immediately — no save, rescan, or "open and rate" prompt.
+- Optical read is matched against the archive first; web lookup and packshot fetch only run when the bag is new.
+- The scan overlay says BeanNote is looking up the bag and generating content instead of showing three dots.
+
 ## [6.3.0] - 2026-08-26
 
 - snapshot: v6.3.0 - grounded coffee profiles from official/sales pages

@@ -54,6 +54,8 @@ async def scan(
             raise HTTPException(status_code=503, detail="ocr_missing")
         jpeg = _jpeg_buffer(raw)
         parsed = ocr.scan_label(jpeg, lang=chosen)
+        if parsed.get("scan_action") == "rate" and (parsed.get("scan_match") or {}).get("id"):
+            return parsed
         snapshot_url = db.save_bean_image(jpeg, filename="scan.jpg")
         raw_candidates = [
             str(item).strip()

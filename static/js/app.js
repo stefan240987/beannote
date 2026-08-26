@@ -376,6 +376,7 @@ function resetScanPreview() {
   state.scan = null;
   state.editScan = false;
   state.busy = false;
+  state.busyLabel = "";
   state.tab = "scan";
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1133,12 +1134,10 @@ function scanView() {
         ${scan.scan_action === "rate" && scan.scan_match?.id ? `<div class="rounded-xl bg-[#f4ebd9] p-3 text-sm ring-1 ring-latte">
           <p class="font-semibold" data-i18n="bean_in_archive">${t("bean_in_archive")}</p>
           <p class="mt-1 text-muted">${esc(scan.scan_match.name)} · ${esc(scan.scan_match.roaster)}</p>
-          <button type="button" data-open-archive="${scan.scan_match.id}" class="mt-2 min-h-11 w-full rounded-lg bg-terracotta font-semibold text-cream" data-i18n="open_and_rate">${t("open_and_rate")}</button>
-        </div>` : ""}
-        <div class="flex flex-col gap-2">
+        </div>` : `<div class="flex flex-col gap-2">
           <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="approve_save">${t("approve_save")}</button>
           <button type="button" id="undo-scan" class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="undo_rescan">${t("undo_rescan")}</button>
-        </div>
+        </div>`}
         ${canEdit ? `<button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
         ${fields}
       </div>
@@ -1726,7 +1725,7 @@ function render() {
   }
   const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
   const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-[70] grid place-items-center bg-espresso/30"><div class="rounded-xl bg-white px-4 py-3 text-sm font-semibold">${esc(state.busyLabel ? t(state.busyLabel) : "…")}</div></div>` : ""}`;
+  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-[70] grid place-items-center bg-espresso/30"><div class="max-w-xs rounded-xl bg-white px-5 py-4 text-center text-sm font-semibold leading-snug">${esc(state.busyLabel ? t(state.busyLabel) : "…")}</div></div>` : ""}`;
   bindApp();
   drawMaps();
 }
@@ -1813,19 +1812,30 @@ async function uploadScan(file) {
   }
   state.tab = "scan";
   state.busy = true;
+  state.busyLabel = "scan_searching";
   render();
   try {
     const body = new FormData();
     const lang = activeLang();
     body.append("file", file, file.name || "scan.jpg");
     body.append("lang", lang);
-    state.scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
+    const scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
     state.busy = false;
-    if (state.scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
+    state.busyLabel = "";
+    if (scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
+    const matchId = Number(scan.scan_action === "rate" && scan.scan_match?.id);
+    if (matchId) {
+      state.scan = null;
+      state.editScan = false;
+      await openBean(matchId);
+      return;
+    }
+    state.scan = scan;
     state.tab = "scan";
     render();
   } catch (err) {
     state.busy = false;
+    state.busyLabel = "";
     const detail = typeof err.detail === "string" ? err.detail : "";
     const offline = !detail && /failed to fetch|networkerror|load failed|err_connection/i.test(String(err.message || err));
     toast(t(offline ? "scan_offline" : (detail || "ocr_fail")));
@@ -1833,6 +1843,7 @@ async function uploadScan(file) {
   } finally {
     if (state.busy) {
       state.busy = false;
+      state.busyLabel = "";
       render();
     }
   }

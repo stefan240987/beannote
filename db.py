@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.3.0"
+VERSION = "6.4.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -1366,7 +1366,7 @@ def classify_matches(similar: list[dict[str, Any]]) -> str:
 
 
 def scan_destination(similar: list[dict[str, Any]]) -> str:
-    """Camera-first: prompt to open the existing profile when the top match is at least 85%."""
+    """Camera-first: open the existing profile when the top match is at least 85%."""
     if similar and float(similar[0].get("confidence") or 0) >= SCAN_MATCH_CUTOFF:
         return "rate"
     return "add"

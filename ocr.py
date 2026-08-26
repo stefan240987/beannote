@@ -2517,8 +2517,13 @@ def enrich_bean_from_web(name: str, roaster: str, lang: str = "da") -> dict[str,
     return parsed
 
 
-def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | None:
-    """Optical Vision pass, then grounded official-page enrichment, then normalize."""
+def scan_label_gemini(
+    image_bytes: bytes,
+    lang: str = "da",
+    *,
+    enrich: bool = True,
+) -> dict[str, Any] | None:
+    """Optical Vision pass, optional grounded official-page enrichment, then normalize."""
     key = get_gemini_api_key()
     if not key:
         return None
@@ -2538,7 +2543,8 @@ def scan_label_gemini(image_bytes: bytes, lang: str = "da") -> dict[str, Any] | 
         if errors:
             raise RuntimeError("; ".join(errors))
         return None
-    data = enrich_scan_with_official_page(data, lang=lang)
+    if enrich:
+        data = enrich_scan_with_official_page(data, lang=lang)
     parsed = normalize_scan_fields(data, lang=lang)
     parsed["raw_text"] = json.dumps(data, ensure_ascii=False, indent=2)
     parsed["scan_source"] = "gemini"
@@ -2732,12 +2738,26 @@ def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _with_scan_matches(parsed: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach archive match fields so the UI can jump to an existing profile."""
+    out = dict(parsed or {})
+    name = str(out.get("name") or "")
+    roaster = str(out.get("roaster") or "")
+    similar = find_similar_beans(name, roaster) if name else []
+    out["similar"] = similar
+    out["match_tier"] = classify_matches(similar)
+    out["scan_match"] = similar[0] if similar else None
+    out["scan_confidence"] = float((similar[0].get("confidence") if similar else 0) or 0)
+    out["scan_action"] = scan_destination(similar)
+    return out
+
+
 def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
     parsed: dict[str, Any] | None = None
     gemini_error: Exception | None = None
     if gemini_available():
         try:
-            parsed = scan_label_gemini(image_bytes, lang=lang)
+            parsed = scan_label_gemini(image_bytes, lang=lang, enrich=False)
         except Exception as exc:
             gemini_error = exc
             print(f"gemini scan failed, falling back to tesseract: {exc}")
@@ -2756,20 +2776,31 @@ def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
         except Exception as tess_exc:
             print(f"tesseract scan failed: {tess_exc}")
             raise RuntimeError("ocr_fail") from tess_exc
+    parsed = _with_scan_matches(parsed)
+    if parsed.get("scan_action") == "rate":
+        return parsed
+    optical = {
+        key: value
+        for key, value in parsed.items()
+        if key not in {"similar", "scan_match", "match_tier", "scan_action", "scan_confidence"}
+    }
+    try:
+        merged = enrich_scan_with_official_page(optical, lang=lang)
+        parsed = normalize_scan_fields(merged, lang=lang)
+        parsed["raw_text"] = json.dumps(merged, ensure_ascii=False, indent=2, default=str)
+        parsed.setdefault("scan_enrichment", merged.get("scan_enrichment") or "optical+web")
+    except Exception as exc:
+        print(f"scan enrichment failed: {exc}")
+        parsed = optical
+    parsed = _with_scan_matches(parsed)
+    if parsed.get("scan_action") == "rate":
+        return parsed
     try:
         parsed = attach_official_bag_image(parsed)
     except Exception as exc:
         print(f"official bag image attach failed: {exc}")
         parsed = parsed or {}
-    name = str((parsed or {}).get("name") or "")
-    roaster = str((parsed or {}).get("roaster") or "")
-    similar = find_similar_beans(name, roaster) if name else []
-    parsed["similar"] = similar
-    parsed["match_tier"] = classify_matches(similar)
-    parsed["scan_match"] = similar[0] if similar else None
-    parsed["scan_confidence"] = float((similar[0].get("confidence") if similar else 0) or 0)
-    parsed["scan_action"] = scan_destination(similar)
-    return parsed
+    return _with_scan_matches(parsed)
 
 
 def _pretty(value: str) -> str:
