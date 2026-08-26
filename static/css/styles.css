@@ -190,3 +190,116 @@ body.modal-open { overflow: hidden; }
 
 /* iOS Safari: 16px on form controls prevents auto-zoom on focus */
 input, select, textarea { font-size: 16px !important; }
+
+/* Randomized coffee loaders: espresso, grinder, pour_over */
+.bn-loader-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(60, 42, 33, 0.46);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bn-loader-card {
+  width: min(19rem, 100%);
+  border-radius: 1.35rem;
+  background: linear-gradient(180deg, #fffdf9 0%, #faf6f0 100%);
+  border: 1px solid #e8d8c8;
+  box-shadow: 0 22px 48px rgba(60, 42, 33, 0.32), 0 0 0 1px rgba(184, 92, 56, 0.1);
+  padding: 1.35rem 1.2rem 1.25rem;
+  text-align: center;
+}
+.bn-loader-stage {
+  height: 9.35rem;
+  display: grid;
+  place-items: center;
+}
+.bn-coffee-svg {
+  width: 9.1rem;
+  height: 9.1rem;
+  overflow: visible;
+}
+.bn-loader-msg {
+  margin: 0.4rem 0 0;
+  min-height: 1.45em;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #3c2a21;
+  letter-spacing: 0.01em;
+  animation: bn-pulse-text 1.7s ease-in-out infinite;
+}
+.bn-spin,
+.bn-spin-rev,
+.bn-drip,
+.bn-pulse,
+.bn-bounce,
+.bn-fill-shot,
+.bn-burr {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.bn-fill-shot { transform-origin: center bottom; }
+.bn-spin { animation: bn-spin 1.15s linear infinite; }
+.bn-spin-rev { animation: bn-spin 1.7s linear infinite reverse; }
+.bn-drip { animation: bn-drip 0.95s ease-in infinite; }
+.bn-pulse { animation: bn-pulse 1.55s ease-in-out infinite; }
+.bn-bounce { animation: bn-bounce 0.72s ease-in-out infinite; }
+.bn-fill-shot { animation: bn-fill 2.35s ease-in-out infinite; }
+.bn-stream {
+  stroke-dasharray: 7 11;
+  animation: bn-stream 0.82s ease-in-out infinite;
+}
+.bn-pour {
+  stroke-dasharray: 12 18;
+  animation: bn-pour 1.12s ease-in-out infinite;
+}
+.bn-delay-1 { animation-delay: 0.18s; }
+.bn-delay-2 { animation-delay: 0.36s; }
+.bn-delay-3 { animation-delay: 0.54s; }
+
+@keyframes bn-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes bn-drip {
+  0% { transform: translateY(0) scale(0.55); opacity: 0; }
+  16% { opacity: 1; }
+  72% { opacity: 0.9; }
+  100% { transform: translateY(15px) scale(0.8); opacity: 0; }
+}
+@keyframes bn-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+@keyframes bn-bounce {
+  0%, 100% { transform: translateY(0) rotate(-10deg); }
+  50% { transform: translateY(-7px) rotate(12deg); }
+}
+@keyframes bn-stream {
+  0%, 100% { stroke-dashoffset: 16; opacity: 0.4; }
+  50% { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes bn-pour {
+  0% { stroke-dashoffset: 28; opacity: 0.3; }
+  45% { opacity: 0.95; }
+  100% { stroke-dashoffset: 0; opacity: 0.45; }
+}
+@keyframes bn-fill {
+  0% { transform: scaleY(0.12); opacity: 0.7; }
+  72% { transform: scaleY(1); opacity: 1; }
+  100% { transform: scaleY(0.9); opacity: 0.88; }
+}
+@keyframes bn-pulse-text {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bn-spin, .bn-spin-rev, .bn-drip, .bn-pulse, .bn-bounce,
+  .bn-fill-shot, .bn-stream, .bn-pour, .bn-loader-msg {
+    animation: none !important;
+  }
+}

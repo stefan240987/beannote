@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [feat] - 2026-08-26
+
+- snapshot: feat - randomized animated coffee loaders (espresso, grinder, pour_over)
+- Scan, gear lookup, and bean enrich replace the generic overlay with a random espresso shot, grinder, or pour-over animation plus a playful localized status line.
+
 ## [6.4.0] - 2026-08-26
 
 - snapshot: v6.4.0 - scan jumps to existing profiles and shows lookup status

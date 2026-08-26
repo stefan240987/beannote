@@ -146,6 +146,8 @@ const state = {
   toast: "",
   busy: false,
   busyLabel: "",
+  busyLoader: "",
+  busyMessage: "",
   beanFilter: "all",
   exploreMode: "cards",
   suitabilityFilter: "",
@@ -179,11 +181,123 @@ const esc = (value) => String(value ?? "")
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
 const t = (key, vars = {}) => i18nManager.t(key, vars);
+const COFFEE_LOADERS = ["espresso", "grinder", "pour_over"];
+const COFFEE_LOADER_MSGS = [
+  "loader_grind",
+  "loader_extract",
+  "loader_brew",
+  "loader_drip",
+  "loader_bloom",
+  "loader_tamp",
+];
 const getLocalized = (jsonObj, lang, fallback) => i18nManager.getLocalized(jsonObj, lang, fallback);
 const normalizeLang = (lang) => i18nManager.normalize(lang);
 const activeLang = () => i18nManager.active();
 const applyLanguage = (lang) => i18nManager.setLanguage(lang);
 const isAdmin = () => !!state.user?.is_admin;
+
+function startBusy() {
+  state.busy = true;
+  state.busyLoader = COFFEE_LOADERS[Math.floor(Math.random() * 3)];
+  state.busyMessage = COFFEE_LOADER_MSGS[Math.floor(Math.random() * COFFEE_LOADER_MSGS.length)];
+}
+
+function stopBusy() {
+  state.busy = false;
+  state.busyLabel = "";
+  state.busyLoader = "";
+  state.busyMessage = "";
+}
+
+function coffeeLoaderSvg(kind) {
+  if (kind === "grinder") {
+    return `<svg class="bn-coffee-svg" viewBox="0 0 160 160" aria-hidden="true">
+      <ellipse class="bn-pulse" cx="80" cy="148" rx="30" ry="5.5" fill="#b85c38" opacity="0.22"/>
+      <path d="M54 16h52l-9 30H63z" fill="#faf6f0" stroke="#3c2a21" stroke-width="2.4" stroke-linejoin="round"/>
+      <ellipse class="bn-bounce" cx="70" cy="32" rx="5.2" ry="3.8" fill="#3c2a21"/>
+      <path d="M67.6 32h5" stroke="#8c7a6b" stroke-width="1.1" stroke-linecap="round"/>
+      <ellipse class="bn-bounce bn-delay-1" cx="88" cy="29" rx="4.6" ry="3.4" fill="#b85c38"/>
+      <ellipse class="bn-bounce bn-delay-2" cx="78" cy="38" rx="4.3" ry="3.2" fill="#5c3d30"/>
+      <rect x="50" y="46" width="60" height="54" rx="13" fill="#3c2a21"/>
+      <rect x="56" y="52" width="48" height="42" rx="10" fill="#4a3328"/>
+      <g class="bn-spin">
+        <circle cx="80" cy="73" r="16" fill="#6b4a38" stroke="#e8d8c8" stroke-width="2"/>
+        <line x1="80" y1="59" x2="80" y2="87" stroke="#faf6f0" stroke-width="2" stroke-linecap="round"/>
+        <line x1="66" y1="73" x2="94" y2="73" stroke="#faf6f0" stroke-width="2" stroke-linecap="round"/>
+        <line x1="70" y1="63" x2="90" y2="83" stroke="#faf6f0" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="90" y1="63" x2="70" y2="83" stroke="#faf6f0" stroke-width="1.6" stroke-linecap="round"/>
+      </g>
+      <circle class="bn-spin-rev" cx="80" cy="73" r="5.4" fill="#3c2a21" stroke="#b85c38" stroke-width="1.8"/>
+      <path d="M72 100h16v8H72z" fill="#5c4033"/>
+      <ellipse class="bn-drip" cx="76" cy="118" rx="3.1" ry="2.2" fill="#3c2a21"/>
+      <ellipse class="bn-drip bn-delay-1" cx="86" cy="124" rx="2.7" ry="2" fill="#b85c38"/>
+      <ellipse class="bn-drip bn-delay-2" cx="80" cy="132" rx="3.3" ry="2.3" fill="#4a3328"/>
+    </svg>`;
+  }
+  if (kind === "pour_over") {
+    return `<svg class="bn-coffee-svg" viewBox="0 0 160 160" aria-hidden="true">
+      <defs>
+        <linearGradient id="bnPourCoffee" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#b85c38"/>
+          <stop offset="100%" stop-color="#3c2a21"/>
+        </linearGradient>
+      </defs>
+      <ellipse class="bn-pulse" cx="80" cy="150" rx="32" ry="5" fill="#b85c38" opacity="0.2"/>
+      <path class="bn-pour" d="M116 12c-4 16-22 26-32 42" fill="none" stroke="#6d8f88" stroke-width="3.6" stroke-linecap="round"/>
+      <path d="M128 6c6 2 12 8 12 16" fill="none" stroke="#3c2a21" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M42 40h76L94 90H66z" fill="#faf6f0" stroke="#b85c38" stroke-width="2.6" stroke-linejoin="round"/>
+      <path d="M54 54h52M60 68h40M68 82h24" stroke="#e8d8c8" stroke-width="1.5" stroke-linecap="round"/>
+      <ellipse class="bn-pulse" cx="80" cy="56" rx="16" ry="4.4" fill="#b85c38" opacity="0.38"/>
+      <rect x="76" y="90" width="8" height="5" rx="1.5" fill="#b85c38"/>
+      <path class="bn-drip" d="M80 98c0 0-3.1 4.2 0 7 3.1-2.8 0-7 0-7z" fill="#b85c38"/>
+      <path class="bn-drip bn-delay-1" d="M80 106c0 0-2.6 3.6 0 6 2.6-2.4 0-6 0-6z" fill="#3c2a21"/>
+      <path class="bn-drip bn-delay-2" d="M80 113c0 0-2.3 3.2 0 5.4 2.3-2.2 0-5.4 0-5.4z" fill="#6b4a38"/>
+      <path d="M52 118h56l7 28H45z" fill="#fff" stroke="#3c2a21" stroke-width="2.2" stroke-linejoin="round"/>
+      <path class="bn-fill-shot" d="M55 128h50l3.5 14H51.5z" fill="url(#bnPourCoffee)"/>
+      <path d="M108 124c10 2 10 18 0 20" fill="none" stroke="#3c2a21" stroke-width="2.2"/>
+    </svg>`;
+  }
+  return `<svg class="bn-coffee-svg" viewBox="0 0 160 160" aria-hidden="true">
+    <defs>
+      <linearGradient id="bnEspressoShot" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#e8c9a0"/>
+        <stop offset="38%" stop-color="#b85c38"/>
+        <stop offset="100%" stop-color="#3c2a21"/>
+      </linearGradient>
+    </defs>
+    <ellipse class="bn-pulse" cx="84" cy="150" rx="34" ry="5.5" fill="#b85c38" opacity="0.2"/>
+    <path class="bn-pulse" d="M70 28c0-10 8-16 14-16" fill="none" stroke="#c4b09a" stroke-width="2.3" stroke-linecap="round"/>
+    <path class="bn-pulse bn-delay-1" d="M86 28c2-10 10-14 16-12" fill="none" stroke="#c4b09a" stroke-width="2.3" stroke-linecap="round"/>
+    <rect x="8" y="48" width="46" height="14" rx="7" fill="#3c2a21"/>
+    <circle cx="16" cy="55" r="5" fill="#b85c38"/>
+    <rect x="48" y="42" width="18" height="26" rx="4" fill="#5a3d30"/>
+    <path d="M64 40h40a8 8 0 0 1 8 8v8c0 12-9 20-20 20H76c-11 0-20-8-20-20v-8a8 8 0 0 1 8-8z" fill="#3c2a21"/>
+    <ellipse cx="84" cy="48" rx="14" ry="5" fill="#6b4a38"/>
+    <rect x="74" y="76" width="5" height="10" rx="1.5" fill="#3c2a21"/>
+    <rect x="91" y="76" width="5" height="10" rx="1.5" fill="#3c2a21"/>
+    <line class="bn-stream" x1="76.5" y1="86" x2="76.5" y2="106" stroke="#b85c38" stroke-width="2.6" stroke-linecap="round"/>
+    <line class="bn-stream bn-delay-1" x1="93.5" y1="86" x2="93.5" y2="106" stroke="#6b3a28" stroke-width="2.6" stroke-linecap="round"/>
+    <path class="bn-drip" d="M76.5 104c0 0-3 4.2 0 7 3-2.8 0-7 0-7z" fill="#b85c38"/>
+    <path class="bn-drip bn-delay-2" d="M93.5 107c0 0-3 4.2 0 7 3-2.8 0-7 0-7z" fill="#3c2a21"/>
+    <path d="M54 112h56l-6 28H60z" fill="#faf6f0" stroke="#3c2a21" stroke-width="2.3" stroke-linejoin="round"/>
+    <path class="bn-fill-shot" d="M58 120h48l-3.2 16H61.2z" fill="url(#bnEspressoShot)"/>
+    <path class="bn-pulse" d="M59 118h46l-1 4H60z" fill="#e8c9a0"/>
+    <path d="M110 116c12 3 12 20 0 24" fill="none" stroke="#3c2a21" stroke-width="2.3"/>
+    <path d="M112 128h10" stroke="#3c2a21" stroke-width="2.3" stroke-linecap="round"/>
+  </svg>`;
+}
+
+function coffeeLoaderOverlay() {
+  if (!state.busy) return "";
+  const kind = COFFEE_LOADERS.includes(state.busyLoader) ? state.busyLoader : COFFEE_LOADERS[0];
+  const msg = t(state.busyMessage || state.busyLabel || "loader_brew");
+  return `<div class="bn-loader-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div class="bn-loader-card">
+      <div class="bn-loader-stage" data-loader="${esc(kind)}">${coffeeLoaderSvg(kind)}</div>
+      <p class="bn-loader-msg">${esc(msg)}</p>
+    </div>
+  </div>`;
+}
 
 function parseSuitableFor(value) {
   try {
@@ -375,8 +489,7 @@ async function addGearItem(raw) {
 function resetScanPreview() {
   state.scan = null;
   state.editScan = false;
-  state.busy = false;
-  state.busyLabel = "";
+  stopBusy();
   state.tab = "scan";
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1725,7 +1838,7 @@ function render() {
   }
   const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
   const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${state.busy ? `<div class="fixed inset-0 z-[70] grid place-items-center bg-espresso/30"><div class="max-w-xs rounded-xl bg-white px-5 py-4 text-center text-sm font-semibold leading-snug">${esc(state.busyLabel ? t(state.busyLabel) : "…")}</div></div>` : ""}`;
+  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
 }
@@ -1811,8 +1924,7 @@ async function uploadScan(file) {
     return;
   }
   state.tab = "scan";
-  state.busy = true;
-  state.busyLabel = "scan_searching";
+  startBusy();
   render();
   try {
     const body = new FormData();
@@ -1820,8 +1932,7 @@ async function uploadScan(file) {
     body.append("file", file, file.name || "scan.jpg");
     body.append("lang", lang);
     const scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
-    state.busy = false;
-    state.busyLabel = "";
+    stopBusy();
     if (scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
     const matchId = Number(scan.scan_action === "rate" && scan.scan_match?.id);
     if (matchId) {
@@ -1834,16 +1945,14 @@ async function uploadScan(file) {
     state.tab = "scan";
     render();
   } catch (err) {
-    state.busy = false;
-    state.busyLabel = "";
+    stopBusy();
     const detail = typeof err.detail === "string" ? err.detail : "";
     const offline = !detail && /failed to fetch|networkerror|load failed|err_connection/i.test(String(err.message || err));
     toast(t(offline ? "scan_offline" : (detail || "ocr_fail")));
     render();
   } finally {
     if (state.busy) {
-      state.busy = false;
-      state.busyLabel = "";
+      stopBusy();
       render();
     }
   }
@@ -1938,8 +2047,7 @@ function bindApp() {
   document.querySelectorAll("[data-enrich-bean]").forEach((btn) => btn.addEventListener("click", async () => {
     const id = state.profile?.bean?.id;
     if (!id) return;
-    state.busy = true;
-    state.busyLabel = "enriching";
+    startBusy();
     render();
     try {
       const result = await api(`/api/beans/${id}/enrich?lang=${encodeURIComponent(activeLang())}`, { method: "POST", body: "{}" });
@@ -1948,13 +2056,11 @@ function bindApp() {
       if (result.bean) {
         state.beans = state.beans.map((bean) => bean.id === result.bean.id ? { ...bean, ...result.bean } : bean);
       }
-      state.busy = false;
-      state.busyLabel = "";
+      stopBusy();
       toast(t("enrich_ok"));
       render();
     } catch (err) {
-      state.busy = false;
-      state.busyLabel = "";
+      stopBusy();
       toast(t(err.detail || "enrich_fail"));
       render();
     }
@@ -2122,8 +2228,7 @@ function bindApp() {
     const query = (state.gearQuery || $("#gear-query")?.value || "").trim();
     state.gearQuery = query;
     if (query.length < 2) return toast(t("gear_query_required"));
-    state.busy = true;
-    state.busyLabel = "gear_searching";
+    startBusy();
     render();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
@@ -2139,13 +2244,11 @@ function bindApp() {
       state.gearCandidates = hits;
       state.gearHit = hits[0] || null;
       state.gearPickerOpen = hits.length > 0;
-      state.busy = false;
-      state.busyLabel = "";
+      stopBusy();
       if (!hits.length) toast(t("gear_lookup_fail"));
       render();
     } catch (err) {
-      state.busy = false;
-      state.busyLabel = "";
+      stopBusy();
       state.gearHit = null;
       state.gearCandidates = [];
       state.gearPickerOpen = false;
@@ -2203,7 +2306,7 @@ function bindApp() {
   $("#gear-photo-input")?.addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     if (!file) return toast(t("gear_photo_required"));
-    state.busy = true;
+    startBusy();
     render();
     try {
       const body = new FormData();
@@ -2211,10 +2314,10 @@ function bindApp() {
       const result = await api("/api/gear/photo", { method: "POST", body });
       state.gearCustomImage = result.image_url || "";
       state.gearCustomOpen = true;
-      state.busy = false;
+      stopBusy();
       render();
     } catch (err) {
-      state.busy = false;
+      stopBusy();
       toast(t(err.detail || "gear_photo_required"));
       render();
     }
