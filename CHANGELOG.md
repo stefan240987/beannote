@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.5.0] - 2026-08-26
+
+- snapshot: v6.5.0 - bust stale PWA cache and skip save on existing bags
+- CSS/JS load with `?v=6.5.0` and the service worker cache is `beannote-v6.5.0`, so the coffee loaders replace the old three-dot overlay.
+- Scanning a bag already in the archive opens that profile immediately and never shows Godkend & Gem.
+
 ## [feat] - 2026-08-26
 
 - snapshot: feat - randomized animated coffee loaders (espresso, grinder, pour_over)

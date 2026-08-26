@@ -202,6 +202,17 @@ function startBusy() {
   state.busyMessage = COFFEE_LOADER_MSGS[Math.floor(Math.random() * COFFEE_LOADER_MSGS.length)];
 }
 
+const SCAN_MATCH_CUTOFF = 0.85;
+
+function existingScanMatch(scan) {
+  if (!scan) return null;
+  const hit = scan.scan_match?.id ? scan.scan_match : scan.similar?.[0];
+  if (!hit?.id) return null;
+  if (scan.scan_action === "rate") return hit;
+  if (Number(hit.confidence || 0) >= SCAN_MATCH_CUTOFF) return hit;
+  return null;
+}
+
 function stopBusy() {
   state.busy = false;
   state.busyLabel = "";
@@ -443,7 +454,9 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   if (params.get("auth_error")) toast(t("oauth_unavailable"));
   render();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
+  }
 }
 
 async function loadBeans() {
@@ -1224,6 +1237,7 @@ function scanView() {
   const preview = photoImg(scan.image_url, scan.preview || scan.snapshot_url, "max-h-72 w-full object-contain bg-foam")
     || (scan.preview ? `<img src="${esc(scan.preview)}" alt="" class="max-h-72 w-full object-contain bg-foam">` : "");
   const similar = scan.similar?.[0];
+  const existing = existingScanMatch(scan);
   const canEdit = isAdmin();
   const fields = canEdit && state.editScan ? scanEditor(scan) : "";
   return `<section class="px-4 pb-28 pt-4">
@@ -1239,15 +1253,17 @@ function scanView() {
         ${metaBadges(scan)}
         ${originMapBox(scan)}
         ${journalBits(scan)}
-        ${similar && !(scan.scan_action === "rate" && scan.scan_match?.id) ? `<div class="rounded-xl bg-foam p-3 text-sm">
+        ${existing ? `<div class="rounded-xl bg-[#f4ebd9] p-3 text-sm ring-1 ring-latte">
+          <p class="font-semibold" data-i18n="bean_in_archive">${t("bean_in_archive")}</p>
+          <p class="mt-1 text-muted">${esc(existing.name)} · ${esc(existing.roaster)}</p>
+          <button type="button" data-open-archive="${esc(existing.id)}" class="mt-2 min-h-11 w-full rounded-lg bg-terracotta font-semibold text-cream" data-i18n="open_and_rate">${t("open_and_rate")}</button>
+        </div>
+        <button type="button" id="undo-scan" class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="undo_rescan">${t("undo_rescan")}</button>` : `${similar ? `<div class="rounded-xl bg-foam p-3 text-sm">
           <p class="font-semibold">${t("duplicate_warning")}</p>
           <p class="mt-1 text-muted">${esc(similar.name)} · ${esc(similar.roaster)} (${Math.round((similar.confidence || 0) * 100)}% ${t("confidence")})</p>
           <button data-rate-bean="${similar.id}" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-cream">${t("use_existing")}</button>
         </div>` : ""}
-        ${scan.scan_action === "rate" && scan.scan_match?.id ? `<div class="rounded-xl bg-[#f4ebd9] p-3 text-sm ring-1 ring-latte">
-          <p class="font-semibold" data-i18n="bean_in_archive">${t("bean_in_archive")}</p>
-          <p class="mt-1 text-muted">${esc(scan.scan_match.name)} · ${esc(scan.scan_match.roaster)}</p>
-        </div>` : `<div class="flex flex-col gap-2">
+        <div class="flex flex-col gap-2">
           <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="approve_save">${t("approve_save")}</button>
           <button type="button" id="undo-scan" class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="undo_rescan">${t("undo_rescan")}</button>
         </div>`}
@@ -1934,11 +1950,11 @@ async function uploadScan(file) {
     const scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
     stopBusy();
     if (scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
-    const matchId = Number(scan.scan_action === "rate" && scan.scan_match?.id);
-    if (matchId) {
+    const existing = existingScanMatch(scan);
+    if (existing?.id) {
       state.scan = null;
       state.editScan = false;
-      await openBean(matchId);
+      await openBean(Number(existing.id));
       return;
     }
     state.scan = scan;

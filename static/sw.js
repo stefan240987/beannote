@@ -1,9 +1,9 @@
-const CACHE = "beannote-v6.2";
+const CACHE = "beannote-v6.5.0";
 const SHELL = [
   "/",
   "/static/icon.svg",
-  "/static/css/styles.css",
-  "/static/js/app.js",
+  "/static/css/styles.css?v=6.5.0",
+  "/static/js/app.js?v=6.5.0",
   "/manifest.webmanifest",
 ];
 
@@ -27,7 +27,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE).then((cache) => cache.put(event.request, copy));
