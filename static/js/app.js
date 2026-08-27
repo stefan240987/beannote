@@ -350,12 +350,26 @@ function matchesSuitable(tags, filter) {
     espresso: ["espresso", "machines", "maskine"],
     filter: ["filter", "pour-over", "pour over", "v60", "drip"],
     milk: ["mælkedrikke", "milk", "latte", "macchiato"],
+    superautomatic: ["fuldautomat", "superautomatic", "super-automatic", "super automatic", "bean to cup", "bean-to-cup"],
+    press: ["stempelkande", "french press", "plunger"],
   };
   const needles = aliases[filter] || [filter];
   return parseSuitableFor(tags).some((tag) => {
     const low = String(tag || "").toLowerCase();
     return needles.some((needle) => low.includes(needle));
   });
+}
+
+function availableSuitableFilters() {
+  const catalog = [
+    ["espresso", "filter_suitable_espresso"],
+    ["filter", "filter_suitable_filter"],
+    ["milk", "filter_suitable_milk"],
+    ["superautomatic", "filter_suitable_superautomatic"],
+    ["press", "filter_suitable_press"],
+  ];
+  const beans = state.beans || [];
+  return catalog.filter(([id]) => beans.some((bean) => matchesSuitable(bean.suitable_for, id)));
 }
 
 function visibleBeans() {
@@ -497,6 +511,7 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   if (params.get("auth_error")) toast(t("oauth_unavailable"));
   render();
+  bindScanInput();
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
   }
@@ -506,6 +521,9 @@ async function loadBeans() {
   const q = new URLSearchParams({ search: state.search });
   if (state.beanFilter === "favorites") q.set("favorites", "1");
   state.beans = await api(`/api/beans?${q}`);
+  if (state.suitabilityFilter && !availableSuitableFilters().some(([id]) => id === state.suitabilityFilter)) {
+    state.suitabilityFilter = "";
+  }
 }
 
 async function loadJournal() {
@@ -825,11 +843,15 @@ function originMapBox(source) {
   return `<div id="origin-map" class="h-44 w-full rounded-xl overflow-hidden my-3" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
 }
 
-function segment(name, options, current) {
-  return `<div class="grid grid-cols-2 gap-1 rounded-xl bg-foam p-1">
-    ${options.map(([id, label, key]) => `
-      <button type="button" data-${name}="${id}"${key ? ` data-i18n="${key}"` : ""} class="min-h-10 rounded-lg px-2 text-sm font-semibold ${current === id ? "bg-white text-espresso shadow-sm" : "text-muted"}">${label}</button>
-    `).join("")}
+function exploreSegBar() {
+  const btn = (attr, id, key, on) =>
+    `<button type="button" ${attr}="${id}" data-i18n="${key}" class="${on ? "is-on" : ""}">${esc(t(key))}</button>`;
+  return `<div class="explore-seg" role="toolbar" aria-label="${esc(t("filter_all_beans"))}">
+    ${btn("data-filter", "all", "filter_all_beans", state.beanFilter === "all")}
+    ${btn("data-filter", "favorites", "filter_favorites", state.beanFilter === "favorites")}
+    <span class="explore-seg-split" aria-hidden="true"></span>
+    ${btn("data-view", "cards", "view_cards", state.exploreMode === "cards")}
+    ${btn("data-view", "map", "view_map", state.exploreMode === "map")}
   </div>`;
 }
 
@@ -998,26 +1020,32 @@ function authView() {
 }
 
 function header() {
-  return `<header class="bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta px-4 pb-4 pt-8 text-cream">
-    <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-cream/70">BeanNote</p>
-    <div class="flex items-end justify-between gap-3">
-      <h1 class="font-display text-2xl font-bold">${t("app_name")}</h1>
-      <p class="text-xs text-cream/70">v${esc(state.config?.version || "")}</p>
+  const explore = state.tab === "explore" ? exploreToolbar() : "";
+  return `<header class="header">
+    <div class="header-row">
+      <h1 class="header-title">${t("app_name")}</h1>
+      <p class="header-ver">v${esc(state.config?.version || "")}</p>
     </div>
+    ${explore}
   </header>`;
 }
 
+function exploreToolbar() {
+  return `<div class="explore-toolbar">
+    <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+    ${suitabilityBar()}
+    ${exploreSegBar()}
+  </div>`;
+}
+
 function suitabilityBar() {
-  const chips = [
-    ["", t("filter_suitable_all")],
-    ["espresso", t("filter_suitable_espresso")],
-    ["filter", t("filter_suitable_filter")],
-    ["milk", t("filter_suitable_milk")],
-  ];
-  return `<div class="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-    ${chips.map(([id, label]) => {
+  const chips = availableSuitableFilters();
+  if (!chips.length) return "";
+  const items = [["", "filter_suitable_all"], ...chips];
+  return `<div class="explore-pills">
+    ${items.map(([id, key]) => {
       const on = state.suitabilityFilter === id;
-      return `<button type="button" data-suitable="${id}" class="shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${on ? "bg-espresso text-cream" : "bg-white text-espresso ring-1 ring-latte"}">${esc(label)}</button>`;
+      return `<button type="button" data-suitable="${id}" class="explore-pill${on ? " is-on" : ""}">${esc(t(key))}</button>`;
     }).join("")}
   </div>`;
 }
@@ -1098,23 +1126,15 @@ function exploreView() {
       </button>
     </article>`;
   }).join("");
-  const toolbar = `<div class="grid shrink-0 gap-2">
-    ${suitabilityBar()}
-    ${segment("filter", [["all", t("filter_all_beans"), "filter_all_beans"], ["favorites", t("filter_favorites"), "filter_favorites"]], state.beanFilter)}
-    ${segment("view", [["cards", t("view_cards"), "view_cards"], ["map", t("view_map"), "view_map"]], state.exploreMode)}
-  </div>`;
   if (mapMode) {
-    return `<section class="flex min-h-0 flex-1 flex-col px-4 pb-[4.75rem] pt-[max(0.75rem,env(safe-area-inset-top))]">
-      ${toolbar}
-      <div id="world-map" class="mt-3 min-h-[20rem] w-full flex-1 overflow-hidden rounded-xl ring-1 ring-latte"></div>
+    return `<section class="explore-map">
+      <div id="world-map" class="w-full overflow-hidden rounded-xl ring-1 ring-latte"></div>
       ${supportEnabled() ? `<div class="mt-3 shrink-0">${supportButton()}</div>` : ""}
       ${state.profile?.bean ? beanModal(state.profile) : ""}
     </section>`;
   }
-  return `<section class="px-4 pb-28 pt-4">
-    <input id="search" value="${esc(state.search)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
-    <div class="mt-3">${toolbar}</div>
-    <div class="mt-4 grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
+  return `<section class="explore-list">
+    <div class="grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
     ${supportEnabled() ? `<div class="mt-5">${supportButton()}</div>` : ""}
     ${state.profile?.bean ? beanModal(state.profile) : ""}
   </section>`;
@@ -1406,10 +1426,7 @@ function scanView() {
       <div class="rounded-2xl border-2 border-dashed border-terracotta/50 bg-white p-6 text-center">
         <h2 class="font-display text-xl font-bold" data-i18n="scan_card_title">${t("scan_card_title")}</h2>
         <p class="mt-1 text-sm text-muted" data-i18n="scan_card_sub">${t("scan_card_sub")}</p>
-        <button type="button" id="pick-camera" class="mt-5 flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="scan_pick_image">${t("scan_pick_image")}</button>
-        <button type="button" id="pick-album" class="mt-3 flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold" data-i18n="scan_album">${t("scan_album")}</button>
-        <input id="camera-input" type="file" accept="image/*" capture="environment" class="sr-only">
-        <input id="album-input" type="file" accept="image/*" class="sr-only">
+        <button type="button" id="pick-scan" class="mt-5 flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="scan_pick_image">${t("scan_pick_image")}</button>
       </div>
     </section>`;
   }
@@ -1975,10 +1992,17 @@ function tabbar() {
   ];
   return `<nav class="tabbar fixed inset-x-0 bottom-0 z-30 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
     <div class="grid grid-cols-3">
-      ${tabs.map(([id, icon, key]) => `
-        <button data-tab="${id}" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${state.tab === id ? "text-terracotta" : "text-muted"}">
-          <span class="text-lg">${icon}</span><span data-i18n="${key}">${esc(t(key))}</span>
-        </button>`).join("")}
+      ${tabs.map(([id, icon, key]) => {
+        const active = state.tab === id;
+        const scan = id === "scan";
+        return `
+        <button data-tab="${id}" type="button" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${active || scan ? "text-terracotta" : "text-muted"}">
+          ${scan
+            ? `<span class="tabbar-scan-icon flex h-11 w-11 items-center justify-center rounded-full bg-terracotta text-lg text-cream ring-4 ring-cream">${icon}</span>`
+            : `<span class="text-lg">${icon}</span>`}
+          <span data-i18n="${key}">${esc(t(key))}</span>
+        </button>`;
+      }).join("")}
     </div>
   </nav>`;
 }
@@ -2171,8 +2195,7 @@ function render() {
     return;
   }
   const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
-  const showHeader = !(state.tab === "explore" && state.exploreMode === "map");
-  root.innerHTML = `${showHeader ? header() : ""}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${journalModal()}${state.toast ? `<div class="fixed inset-x-4 top-4 z-[80] rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${journalModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
 }
@@ -2245,11 +2268,22 @@ function readScanForm(base = state.scan) {
   };
 }
 
-function triggerScanPicker(which) {
-  const input = document.getElementById(which === "album" ? "album-input" : "camera-input");
-  if (!input) return;
+function triggerScanPicker() {
+  const input = document.getElementById("scan-input");
+  if (!input || state.busy) return;
   input.value = "";
   input.click();
+}
+
+function bindScanInput() {
+  const input = document.getElementById("scan-input");
+  if (!input || input.dataset.bound === "1") return;
+  input.dataset.bound = "1";
+  input.addEventListener("change", (event) => {
+    const file = event.target.files && event.target.files[0];
+    input.value = "";
+    if (file) uploadScan(file);
+  });
 }
 
 async function uploadScan(file) {
@@ -2297,6 +2331,17 @@ function bindApp() {
   document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", async () => {
     if (btn.dataset.tab === "explore") {
       await resetExplore();
+      return;
+    }
+    if (btn.dataset.tab === "scan") {
+      state.journalOpen = false;
+      if (state.busy) return;
+      if (state.scan) {
+        state.tab = "scan";
+        render();
+        return;
+      }
+      triggerScanPicker();
       return;
     }
     state.journalOpen = false;
@@ -2423,11 +2468,11 @@ function bindApp() {
       }
     });
   });
-  $("#pick-camera")?.addEventListener("click", () => triggerScanPicker("camera"));
-  $("#pick-album")?.addEventListener("click", () => triggerScanPicker("album"));
-  $("#camera-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
-  $("#album-input")?.addEventListener("change", (event) => uploadScan(event.target.files[0]));
-  $("#undo-scan")?.addEventListener("click", () => resetScanPreview());
+  $("#pick-scan")?.addEventListener("click", () => triggerScanPicker());
+  $("#undo-scan")?.addEventListener("click", () => {
+    resetScanPreview();
+    triggerScanPicker();
+  });
   $("#toggle-edit")?.addEventListener("click", () => {
     if (!isAdmin()) return;
     state.editScan = !state.editScan;
@@ -2834,4 +2879,5 @@ function bindLanguageButtons() {
   if (state.profile?.bean && state.tab === "explore") closeBean();
 });
 
+bindScanInput();
 boot();

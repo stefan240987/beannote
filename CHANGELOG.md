@@ -2,6 +2,18 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.2] - 2026-08-27
+
+- snapshot: refactor - sticky topbar, dynamic suitability filter pills, and compact explore layout
+- The BeanNote topbar stays on screen while you scroll. Explore search, brew-method pills, and view toggles sit in one compact header so the first bean card is visible on a phone without scrolling.
+- Suitability pills (Espresso, Filter, Mælkedrikke, Superautomatic, Stempelkande) only appear when at least one bean in the current list has that tag.
+
+## [6.8.1] - 2026-08-27
+
+- snapshot: feature - Scan lives on the camera icon, not a chooser page
+- Tapping Scan in the tab bar opens the phone's camera/album sheet immediately.
+- The two overlapping buttons on the empty scan page are gone; review still appears after a photo is read.
+
 ## [6.8.0] - 2026-08-27
 
 - snapshot: feature - scan and enrich no longer freeze the rest of BeanNote
