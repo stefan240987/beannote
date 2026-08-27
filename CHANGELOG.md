@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.0] - 2026-08-27
+
+- snapshot: feature - scan and enrich no longer freeze the rest of BeanNote
+- `/api/scan` and bean enrich return a job id immediately. A background worker runs Gemini/OCR, and the PWA polls until the result is ready.
+- Production starts two HTTP workers. Gemini is capped (`OCR_MAX_CONCURRENT`, default 2) so one busy scan cannot stall login, archive, or other users.
+- Per-user rate limits and a queue ceiling keep a flood of scans from exhausting the AI quota. Product lookups are cached in SQLite so workers share them.
+
 ## [6.7.6] - 2026-08-27
 
 - snapshot: feature - UI language follows the device, with English as fallback

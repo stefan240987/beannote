@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from db import (
     apply_bean_enrichment,
@@ -16,6 +17,7 @@ from db import (
     update_bean,
 )
 from deps import _auth_error, current_user, require_admin
+from jobs import enqueue_job, public_job
 from ocr import compare_flavor_notes, enrich_bean_from_web
 from schemas import BeanIn
 from translations import SUPPORTED_LANGUAGES
@@ -149,12 +151,27 @@ def favorite_bean(bean_id: int, user: dict[str, Any] = Depends(current_user)) ->
     return {"is_favorite": toggle_favorite(user["id"], bean_id), "bean_id": bean_id}
 
 
+def process_enrich_job(payload: dict[str, Any], user_id: int) -> dict[str, Any]:
+    """Grounded web lookup for an archive bean. Runs in a job worker."""
+    bean_id = int(payload.get("bean_id") or 0)
+    lang = str(payload.get("lang") or "da")
+    bean = get_bean(bean_id, user_id=user_id)
+    if not bean:
+        raise RuntimeError("not_found")
+    result = enrich_bean_from_web(bean.get("name") or "", bean.get("roaster") or "", lang=lang)
+    updated = apply_bean_enrichment(bean_id, result, lang=lang)
+    if not updated:
+        raise RuntimeError("not_found")
+    profile = get_flavor_profile(bean_id, user_id=user_id)
+    return {"status": "enriched", "bean": updated, "profile": profile}
+
+
 @router.post("/{bean_id}/enrich")
 def enrich_bean(
     bean_id: int,
     request: Request,
     user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
+) -> JSONResponse:
     bean = get_bean(bean_id, user_id=user["id"])
     if not bean:
         raise HTTPException(status_code=404, detail="not_found")
@@ -162,18 +179,18 @@ def enrich_bean(
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
     try:
-        payload = enrich_bean_from_web(bean.get("name") or "", bean.get("roaster") or "", lang=chosen)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        job = enqueue_job(
+            "enrich",
+            int(user["id"]),
+            {"bean_id": bean_id, "lang": chosen},
+        )
     except RuntimeError as exc:
-        if str(exc) == "ocr_missing":
-            raise HTTPException(status_code=503, detail="ocr_missing") from exc
+        detail = str(exc)
+        if detail == "enrich_rate_limited":
+            raise HTTPException(status_code=429, detail=detail) from exc
+        if detail == "scan_queue_full":
+            raise HTTPException(status_code=503, detail=detail) from exc
+        if detail == "ocr_missing":
+            raise HTTPException(status_code=503, detail=detail) from exc
         raise HTTPException(status_code=422, detail="enrich_fail") from exc
-    except Exception as exc:
-        print(f"bean enrich failed: {exc}")
-        raise HTTPException(status_code=422, detail="enrich_fail") from exc
-    updated = apply_bean_enrichment(bean_id, payload, lang=chosen)
-    if not updated:
-        raise HTTPException(status_code=404, detail="not_found")
-    profile = get_flavor_profile(bean_id, user_id=user["id"])
-    return {"status": "enriched", "bean": updated, "profile": profile}
+    return JSONResponse(status_code=202, content=public_job(job))

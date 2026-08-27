@@ -20,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.7.6"
+VERSION = "6.8.0"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -126,10 +126,12 @@ def get_db_path() -> Path:
 
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(get_db_path())
+    conn = sqlite3.connect(get_db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     try:
         yield conn
         conn.commit()
@@ -726,6 +728,14 @@ def _flush_local_db() -> None:
                 candidate.unlink()
         except OSError:
             pass
+    jobs = path.parent / "jobs"
+    if jobs.is_dir():
+        for child in jobs.iterdir():
+            if child.is_file():
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
     images = path.parent / "images"
     if images.is_dir():
         for child in images.iterdir():
@@ -847,8 +857,12 @@ def init_db() -> None:
         )
         _ensure_columns(conn)
         _migrate_localized_json(conn)
+        from jobs import ensure_schema_on, sync_gemini_slots_on
+
+        ensure_schema_on(conn)
         if should_auto_flush():
             _wipe_all_tables(conn)
+        sync_gemini_slots_on(conn)
     get_images_dir()
 
 

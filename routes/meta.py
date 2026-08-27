@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request
 
 from db import ENVIRONMENT, VERSION, distinct_values, get_db_path, is_local_dev, should_auto_flush
 from deps import BREW_METHODS, UI_LANGS, _oauth_configured, optional_user, support_config
+from jobs import queue_stats
 from ocr import (
     flavor_i18n_table,
     flavor_notes_for,
@@ -31,6 +32,7 @@ def health() -> dict[str, Any]:
         "auto_flush": should_auto_flush(),
         "scan": scan_available(),
         "db": str(get_db_path()),
+        "jobs": queue_stats(),
     }
 
 

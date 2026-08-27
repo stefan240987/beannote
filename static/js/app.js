@@ -439,6 +439,33 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function waitForJob(job, { interval = 700, timeoutMs = 270000 } = {}) {
+  if (job && !job.job_id && (job.scan_action || job.name || job.status === "enriched" || job.bean)) {
+    return job;
+  }
+  if (!job?.job_id) {
+    const err = new Error("ocr_fail");
+    err.detail = "ocr_fail";
+    throw err;
+  }
+  let current = job;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (current.status === "done") return current.result || {};
+    if (current.status === "failed") {
+      const detail = current.error || "ocr_fail";
+      const err = new Error(detail);
+      err.detail = detail;
+      throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+    current = await api(`/api/jobs/${current.job_id}`);
+  }
+  const err = new Error("scan_timeout");
+  err.detail = "scan_timeout";
+  throw err;
+}
+
 function toast(message) {
   state.toast = message;
   render();
@@ -2238,7 +2265,8 @@ async function uploadScan(file) {
     const lang = activeLang();
     body.append("file", file, file.name || "scan.jpg");
     body.append("lang", lang);
-    const scan = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
+    const queued = await api(`/api/scan?lang=${encodeURIComponent(lang)}`, { method: "POST", body });
+    const scan = await waitForJob(queued);
     stopBusy();
     if (scan.scan_fallback === "gemini_quota") toast(t("ocr_quota"));
     const existing = existingScanMatch(scan);
@@ -2358,7 +2386,8 @@ function bindApp() {
     startBusy();
     render();
     try {
-      const result = await api(`/api/beans/${id}/enrich?lang=${encodeURIComponent(activeLang())}`, { method: "POST", body: "{}" });
+      const queued = await api(`/api/beans/${id}/enrich?lang=${encodeURIComponent(activeLang())}`, { method: "POST", body: "{}" });
+      const result = await waitForJob(queued);
       if (result.profile) state.profile = result.profile;
       else if (result.bean) state.profile = { ...(state.profile || {}), bean: result.bean };
       if (result.bean) {

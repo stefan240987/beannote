@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 from pathlib import Path
 from typing import Any
@@ -214,10 +215,11 @@ async def gear_photo(
     if not raw:
         raise HTTPException(status_code=400, detail="empty_image")
     try:
-        jpeg = encode_scan_jpeg(raw)
+        jpeg = await asyncio.to_thread(encode_scan_jpeg, raw)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="gear_photo_required") from exc
-    return {"image_url": save_bean_image(jpeg, filename="gear.jpg")}
+    image_url = await asyncio.to_thread(save_bean_image, jpeg, "gear.jpg")
+    return {"image_url": image_url}
 
 
 @router.put("")

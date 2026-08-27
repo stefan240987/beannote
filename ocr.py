@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import html as html_module
+import itertools
 import json
 import os
 import re
@@ -107,6 +108,7 @@ MAX_PRODUCT_PAGE_CHARS = 16000
 _RAW_HTML_LIMIT = 900_000
 _PRODUCT_LOOKUP_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PRODUCT_LOOKUP_LOCK = threading.Lock()
+_AUX_SLOT_IDS = itertools.count(1)
 ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
 
 KNOWN_ROASTERS = [
@@ -2388,6 +2390,11 @@ def _lookup_cache_key(name: str, roaster: str, lang: str) -> tuple[str, str, str
     return (name.strip().lower(), roaster.strip().lower(), _copy_lang(lang))
 
 
+def _lookup_cache_token(name: str, roaster: str, lang: str) -> str:
+    a, b, c = _lookup_cache_key(name, roaster, lang)
+    return f"{a}\x1f{b}\x1f{c}"
+
+
 def _gemini_generate_json(
     key: str,
     prompt: str,
@@ -2476,8 +2483,19 @@ def _gemini_official_product_lookup(
 ) -> dict[str, Any]:
     """Find official URL, fetch the page, extract only published fields."""
     cache_key = _lookup_cache_key(name, roaster, lang)
+    cache_token = _lookup_cache_token(name, roaster, lang)
     with _PRODUCT_LOOKUP_LOCK:
         cached = _PRODUCT_LOOKUP_CACHE.get(cache_key)
+    if not cached:
+        try:
+            from jobs import lookup_cache_get
+
+            cached = lookup_cache_get(cache_token)
+            if cached:
+                with _PRODUCT_LOOKUP_LOCK:
+                    _PRODUCT_LOOKUP_CACHE[cache_key] = dict(cached)
+        except Exception:
+            cached = None
     if cached:
         return dict(cached)
 
@@ -2517,6 +2535,12 @@ def _gemini_official_product_lookup(
     data["_source_html"] = html
     with _PRODUCT_LOOKUP_LOCK:
         _PRODUCT_LOOKUP_CACHE[cache_key] = dict(data)
+    try:
+        from jobs import lookup_cache_set
+
+        lookup_cache_set(cache_token, data)
+    except Exception:
+        pass
     return data
 
 
@@ -3527,13 +3551,27 @@ def lookup_gear_catalog(query: str, kind: str = "", lang: str = "da") -> list[di
         return hits
     key = get_gemini_api_key()
     if key:
+        slot_id = -next(_AUX_SLOT_IDS)
+        got_slot = False
         try:
-            remote = _gear_lookup_with_genai(q, slot, key, lang)[:4]
-            if remote:
-                _gear_cache_set(cache_key, remote)
-                return remote
+            from jobs import acquire_gemini_slot, release_gemini_slot
+
+            got_slot = acquire_gemini_slot(slot_id, timeout_sec=1.0)
+            if got_slot:
+                remote = _gear_lookup_with_genai(q, slot, key, lang)[:4]
+                if remote:
+                    _gear_cache_set(cache_key, remote)
+                    return remote
         except Exception as exc:
             print(f"gear lookup gemini skipped: {exc}")
+        finally:
+            if got_slot:
+                try:
+                    from jobs import release_gemini_slot
+
+                    release_gemini_slot(slot_id)
+                except Exception:
+                    pass
     fallback = normalize_gear_item({"name": q, "kind": slot or "other"})
     hits = [fallback] if fallback else []
     if hits:

@@ -16,6 +16,7 @@ from routes.auth import router as auth_router
 from routes.beans import router as beans_router
 from routes.brews import router as brews_router
 from routes.gear import router as gear_router
+from routes.jobs import router as jobs_router
 from routes.meta import router as meta_router
 from routes.scan import router as scan_router
 from translations import STRINGS, t
@@ -75,6 +76,7 @@ if STATIC.is_dir():
 app.include_router(auth_router)
 app.include_router(beans_router)
 app.include_router(scan_router)
+app.include_router(jobs_router)
 app.include_router(brews_router)
 app.include_router(gear_router)
 app.include_router(meta_router)
@@ -85,6 +87,9 @@ def _startup() -> None:
     ensure_local_env()
     load_local_env()
     init_db()
+    from worker import start_embedded_worker
+
+    start_embedded_worker()
     if ENVIRONMENT == "local":
         _print_lan_banner()
 
