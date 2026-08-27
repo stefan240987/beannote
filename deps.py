@@ -13,7 +13,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
-from db import ENVIRONMENT, RESET_DB_ON_START, get_user, upsert_oauth_user
+from db import ENVIRONMENT, RESET_DB_ON_START, get_user, is_local_dev, upsert_oauth_user
 from translations import ui_langs
 
 ROOT = Path(__file__).resolve().parent
@@ -52,7 +52,7 @@ def support_config() -> dict[str, Any]:
     """Docker/ENV-driven support links. Local/test gets dummy URLs so the modal can be QA'd."""
     mobilepay = _https_url(os.getenv("SUPPORT_MOBILEPAY_URL") or "")
     buymeacoffee = _https_url(os.getenv("SUPPORT_BUYMEACOFFEE_URL") or "")
-    local_test = ENVIRONMENT == "local" or RESET_DB_ON_START
+    local_test = is_local_dev() or RESET_DB_ON_START
     test_mode = False
     if local_test and not (mobilepay and buymeacoffee):
         mobilepay = mobilepay or LOCAL_SUPPORT_MOBILEPAY
@@ -188,7 +188,7 @@ def _local_test_profile(provider: str) -> dict[str, str]:
 
 
 def _local_oauth_user(provider: str) -> dict[str, Any]:
-    if ENVIRONMENT != "local":
+    if not is_local_dev():
         raise _auth_error("oauth_unavailable")
     profile = _local_test_profile(provider)
     return upsert_oauth_user(

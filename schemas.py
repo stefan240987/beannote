@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from db import _as_float
 
 
 class EmailAuthIn(BaseModel):
@@ -61,6 +63,11 @@ class RatingIn(BaseModel):
     tasting_notes_user: str = ""
     espresso_machine: str = ""
     grinder: str = ""
+
+    @field_validator("coffee_grams", "water_grams", mode="before")
+    @classmethod
+    def locale_grams(cls, value: Any) -> float | None:
+        return _as_float(value)
 
 
 class GearLookupIn(BaseModel):

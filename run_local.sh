@@ -24,7 +24,7 @@ else
   echo "  brew install tesseract tesseract-lang"
 fi
 
-export ENVIRONMENT=local
+export ENVIRONMENT=dev
 export RESET_DB_ON_START="${RESET_DB_ON_START:-false}"
 export SUPPORT_MOBILEPAY_URL="${SUPPORT_MOBILEPAY_URL:-}"
 export SUPPORT_BUYMEACOFFEE_URL="${SUPPORT_BUYMEACOFFEE_URL:-}"
@@ -51,7 +51,7 @@ echo "┌───────────────────────�
 echo "│  BeanNote local · scan to open on your phone             │"
 echo "│  http://${LAN_IP}:8501"
 echo "│  http://127.0.0.1:8501"
-echo "│  Host 0.0.0.0:8501 · CORS * · DB wiped on startup        │"
+echo "│  Host 0.0.0.0:8501 · CORS * · DB kept across reloads     │"
 echo "│  Support modal uses local test URLs when ENV is empty    │"
 echo "└──────────────────────────────────────────────────────────┘"
 echo "Tesseract: ${TESSERACT_CMD:-not found}"

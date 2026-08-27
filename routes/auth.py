@@ -12,7 +12,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
-from db import ENVIRONMENT, authenticate_email, create_email_user, upsert_oauth_user
+from db import authenticate_email, create_email_user, is_local_dev, upsert_oauth_user
 from deps import (
     OAUTH_STATE_COOKIE,
     _auth_error,
@@ -72,7 +72,7 @@ def oauth_dev(provider: str, response: Response) -> dict[str, Any]:
 
 @router.get("/google")
 def google_start(request: Request) -> RedirectResponse:
-    if ENVIRONMENT == "local":
+    if is_local_dev():
         return _local_oauth_redirect("google")
     if not _oauth_configured("google"):
         raise _auth_error("oauth_unavailable")
@@ -148,7 +148,7 @@ def google_callback(request: Request) -> RedirectResponse:
 
 @router.get("/apple")
 def apple_start(request: Request) -> RedirectResponse:
-    if ENVIRONMENT == "local":
+    if is_local_dev():
         return _local_oauth_redirect("apple")
     if not _oauth_configured("apple"):
         raise _auth_error("oauth_unavailable")

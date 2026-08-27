@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Request
 
-from db import ENVIRONMENT, VERSION, distinct_values, get_db_path, should_auto_flush
+from db import ENVIRONMENT, VERSION, distinct_values, get_db_path, is_local_dev, should_auto_flush
 from deps import BREW_METHODS, UI_LANGS, _oauth_configured, optional_user, support_config
 from ocr import (
     flavor_i18n_table,
@@ -17,7 +17,7 @@ from ocr import (
     suitable_for_catalog,
     suitable_for_i18n_table,
 )
-from translations import FALLBACK_LANG, STRINGS, SUPPORTED_LANGUAGES, brew_method_i18n_table
+from translations import FALLBACK_LANG, STRINGS, SUPPORTED_LANGUAGES, brew_method_i18n_table, normalize_lang
 
 router = APIRouter(tags=["meta"])
 
@@ -36,10 +36,8 @@ def health() -> dict[str, Any]:
 
 @router.get("/api/config")
 def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_user)) -> dict[str, Any]:
-    lang = (request.query_params.get("lang") or "da").lower()
-    if lang not in UI_LANGS:
-        lang = "da"
-    local = ENVIRONMENT == "local"
+    lang = normalize_lang(request.query_params.get("lang"))
+    local = is_local_dev()
     return {
         "version": VERSION,
         "lang": lang,
@@ -76,7 +74,5 @@ def i18n_pack() -> dict[str, dict[str, str]]:
 
 @router.get("/api/i18n/{lang}")
 def i18n(lang: str) -> dict[str, str]:
-    code = (lang or "da").lower()
-    if code not in UI_LANGS:
-        code = "da"
+    code = normalize_lang(lang)
     return STRINGS.get(code) or STRINGS[FALLBACK_LANG]

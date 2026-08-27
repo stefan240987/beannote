@@ -13,6 +13,7 @@ from db import (
     qualify_generic_bean_name,
     regions_conflict,
     scan_destination,
+    varietals_conflict,
 )
 
 
@@ -65,6 +66,11 @@ class GenericNameTests(unittest.TestCase):
     def test_cerrado_and_sul_de_minas_conflict(self):
         self.assertTrue(regions_conflict("Cerrado Mineiro", "Sul de Minas"))
         self.assertFalse(regions_conflict("Cerrado Mineiro, Brazil", "Cerrado Mineiro"))
+
+    def test_catuai_matches_web_enriched_arabica_parentheses(self):
+        self.assertFalse(varietals_conflict("Catuai", "Arabica (Catuaí)"))
+        self.assertFalse(varietals_conflict("Arabica (Catuai)", "Arabica (Catuaí)"))
+        self.assertTrue(varietals_conflict("Catuai", "Bourbon"))
 
 
 class ScanMatchTests(unittest.TestCase):
@@ -132,6 +138,37 @@ class ScanMatchTests(unittest.TestCase):
                 origin="Brasilien",
             )
         self.assertEqual(hits, [])
+
+    def test_second_scan_of_same_bag_is_not_a_new_sku(self):
+        archive = [
+            _bean(
+                1,
+                "Espresso Cerrado Mineiro",
+                "Copenhagen Roaster",
+                origin="Brasilien",
+                region="Cerrado Mineiro, Brasilien",
+                varietal="Arabica (Catuaí)",
+            ),
+        ]
+        with patch("db.list_beans", return_value=archive):
+            identity = find_similar_beans(
+                "Espresso",
+                "Copenhagen Roaster",
+                origin="Brasilien",
+                varietal="Catuai",
+            )
+            insert = find_similar_beans(
+                "Espresso Cerrado de Minas",
+                "Copenhagen Roaster",
+                origin="Brasilien",
+                region="Cerrado de Minas, Brasilien",
+                varietal="Arabica (Catuai)",
+            )
+        self.assertEqual(len(identity), 1)
+        self.assertGreaterEqual(identity[0]["confidence"], SCAN_MATCH_CUTOFF)
+        self.assertEqual(scan_destination(identity), "rate")
+        self.assertEqual(len(insert), 1)
+        self.assertEqual(insert[0]["tier"], "exact")
 
 
 class CopenhagenRoasterLabelTests(unittest.TestCase):

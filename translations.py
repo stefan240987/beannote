@@ -20,10 +20,30 @@ def ui_langs() -> dict[str, str]:
     return {code: LANGS[code] for code in SUPPORTED_LANGUAGES if code in LANGS}
 
 
+def _lang_tag(lang: str | None) -> str:
+    raw = (lang or "").lower().strip().replace("_", "-")
+    if not raw:
+        return ""
+    if raw in SUPPORTED_LANGUAGES:
+        return raw
+    return raw.split("-", 1)[0]
+
+
 def normalize_lang(lang: str | None, fallback: str = FALLBACK_LANG) -> str:
-    code = (lang or "").lower().strip()
+    code = _lang_tag(lang)
     if code in SUPPORTED_LANGUAGES:
         return code
+    if fallback in SUPPORTED_LANGUAGES:
+        return fallback
+    return SUPPORTED_LANGUAGES[0] if SUPPORTED_LANGUAGES else "en"
+
+
+def language_from_locales(*locales: str, fallback: str = FALLBACK_LANG) -> str:
+    """Pick the first catalog language from device/browser locale tags (da-DK → da)."""
+    for locale in locales:
+        code = _lang_tag(locale)
+        if code in SUPPORTED_LANGUAGES:
+            return code
     if fallback in SUPPORTED_LANGUAGES:
         return fallback
     return SUPPORTED_LANGUAGES[0] if SUPPORTED_LANGUAGES else "en"
@@ -173,7 +193,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "water_grams": "Vand (g)",
         "brew_time": "Bryggetid",
         "grind_setting_ph": "f.eks. Comandante 18 clicks",
-        "coffee_grams_ph": "18.5",
+        "coffee_grams_ph": "18,5",
         "water_grams_ph": "288",
         "brew_time_ph": "2:30 min",
         "brew_time_none": "Vælg tid",
@@ -729,7 +749,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "water_grams": "Wasser (g)",
         "brew_time": "Brühzeit",
         "grind_setting_ph": "z. B. Comandante 18 Klicks",
-        "coffee_grams_ph": "18.5",
+        "coffee_grams_ph": "18,5",
         "water_grams_ph": "288",
         "brew_time_ph": "2:30 min",
         "brew_time_none": "Zeit wählen",
@@ -1007,7 +1027,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "water_grams": "Eau (g)",
         "brew_time": "Temps d'infusion",
         "grind_setting_ph": "ex. Comandante 18 clicks",
-        "coffee_grams_ph": "18.5",
+        "coffee_grams_ph": "18,5",
         "water_grams_ph": "288",
         "brew_time_ph": "2:30 min",
         "brew_time_none": "Choisir le temps",
@@ -1285,7 +1305,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "water_grams": "Agua (g)",
         "brew_time": "Tiempo de preparación",
         "grind_setting_ph": "p. ej. Comandante 18 clicks",
-        "coffee_grams_ph": "18.5",
+        "coffee_grams_ph": "18,5",
         "water_grams_ph": "288",
         "brew_time_ph": "2:30 min",
         "brew_time_none": "Elegir tiempo",

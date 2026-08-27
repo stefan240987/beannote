@@ -2,6 +2,30 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.7.6] - 2026-08-27
+
+- snapshot: feature - UI language follows the device, with English as fallback
+- First visit uses the phone or browser language when it is in the catalog (currently DA/EN).
+- Languages outside the catalog fall back to English. An explicit DA/EN choice still persists.
+
+## [6.7.5] - 2026-08-27
+
+- snapshot: fix - same-bag scans no longer create a second archive entry
+- Varietal matching ignores accents and parentheses, so `Catuai` still matches `Arabica (Catuaí)`.
+- OCR region wording like Cerrado Mineiro vs Cerrado de Minas is treated as the same Copenhagen Roaster espresso.
+
+## [6.7.4] - 2026-08-27
+
+- snapshot: fix - local runs default to ENVIRONMENT=dev so coffee data survives reload
+- `run_local.sh` and the db.py default no longer use `local`, which wiped SQLite on every uvicorn restart.
+- Google/Apple test-login works in both `local` and `dev`; only `local` still auto-flushes the database.
+
+## [6.7.3] - 2026-08-27
+
+- snapshot: fix - coffee and water dose fields accept both comma and period decimals
+- Rating grams inputs follow the phone region (`18,5` on da-DK, `18.5` on en-US) instead of `type=number`, which rejected the Danish decimal keypad.
+- Saved values still parse as numbers whether the user typed a comma or a period.
+
 ## [6.7.2] - 2026-08-27
 
 - snapshot: fix - scan no longer opens another bean from the same roaster

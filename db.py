@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.7.2"
+VERSION = "6.7.6"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -93,11 +94,11 @@ _GENERIC_NAME_TOKENS = {
     "bonner", "specialty", "omni", "decaf", "mørkristet", "morkristet",
 }
 _VARIETAL_SKIP = {"arabica", "robusta", "blend", "100"}
-_FIELD_SPLIT = re.compile(r"[\s,/:;&]+")
+_FIELD_SPLIT = re.compile(r"[\s,/:;&()\[\]{}+]+")
 _COUNTRY_TOKENS = set(_ORIGIN_FOLD.keys()) | set(_ORIGIN_FOLD.values())
 BCRYPT_ROUNDS = 12
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()
+ENVIRONMENT = os.getenv("ENVIRONMENT", "dev").strip().lower()
 RESET_DB_ON_START = os.getenv("RESET_DB_ON_START", "").strip().lower() in {
     "1",
     "true",
@@ -107,6 +108,11 @@ LOCAL_ADMIN_EMAILS = {
     "google_test_user@beannote.local",
     "apple_test_user@beannote.local",
 }
+
+
+def is_local_dev() -> bool:
+    """True for local and dev. Used for test OAuth; does not control auto-flush."""
+    return ENVIRONMENT in {"local", "dev"}
 
 
 def get_db_path() -> Path:
@@ -1046,8 +1052,21 @@ ORIGIN_COORDS: dict[str, tuple[float, float, str]] = {
 def _as_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
-    try:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
+    text = str(value).strip().replace("\xa0", " ").replace(" ", "")
+    text = re.sub(r"[^\d,.\-]", "", text)
+    if not text:
+        return None
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".") if text.count(",") == 1 else text.replace(",", "")
+    try:
+        return float(text)
     except (TypeError, ValueError):
         return None
 
@@ -1411,8 +1430,10 @@ def _normalize(value: str) -> str:
 
 
 def _fold(value: str) -> str:
-    """Collapse whitespace and case so archive matching ignores ALL-CAPS OCR."""
-    return _normalize(value).casefold()
+    """Collapse whitespace, case, and diacritics so Catuaí still matches Catuai."""
+    compact = _normalize(value).casefold()
+    stripped = unicodedata.normalize("NFKD", compact)
+    return "".join(ch for ch in stripped if not unicodedata.combining(ch))
 
 
 def _field_tokens(value: str) -> set[str]:
@@ -1421,7 +1442,7 @@ def _field_tokens(value: str) -> set[str]:
         return set()
     tokens: set[str] = set()
     for raw in _FIELD_SPLIT.split(folded):
-        token = raw.strip(".-")
+        token = raw.strip(".-'\"")
         if len(token) < 3 or token in {"and", "og"}:
             continue
         tokens.add(_ORIGIN_FOLD.get(token, token))

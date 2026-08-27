@@ -2903,6 +2903,8 @@ def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
                     f"name={matched.get('name')!r} "
                     f"roaster={matched.get('roaster')!r} "
                     f"origin={matched.get('origin')!r} "
+                    f"region={matched.get('region_full')!r} "
+                    f"varietal={matched.get('varietal')!r} "
                     f"conf={matched.get('scan_confidence')}"
                 )
                 if matched.get("scan_action") == "rate":

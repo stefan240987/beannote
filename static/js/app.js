@@ -13,15 +13,40 @@ const i18nManager = {
   labels() {
     return state.config?.langs || { da: "Dansk", en: "English" };
   },
+  primaryTag(lang) {
+    return String(lang || "").toLowerCase().trim().replaceAll("_", "-").split("-")[0];
+  },
   normalize(lang) {
-    const code = String(lang || "").toLowerCase().trim();
+    const raw = String(lang || "").toLowerCase().trim().replaceAll("_", "-");
     const supported = this.supported();
+    if (supported.includes(raw)) return raw;
+    const code = raw.split("-")[0];
     if (supported.includes(code)) return code;
     const fallback = this.FALLBACK_LANG;
     return supported.includes(fallback) ? fallback : (supported[0] || "en");
   },
+  fromDevice() {
+    const supported = this.supported();
+    const locales = [];
+    try {
+      if (Array.isArray(navigator.languages)) locales.push(...navigator.languages);
+    } catch { /* ignore */ }
+    try {
+      if (navigator.language) locales.push(navigator.language);
+    } catch { /* ignore */ }
+    for (const locale of locales) {
+      const code = this.primaryTag(locale);
+      if (supported.includes(code)) return code;
+    }
+    return this.FALLBACK_LANG;
+  },
+  preferred() {
+    const stored = localStorage.getItem(LANG_KEY);
+    if (stored) return this.normalize(stored);
+    return this.normalize(this.fromDevice());
+  },
   active() {
-    return this.normalize(state.config?.lang || localStorage.getItem(LANG_KEY) || "da");
+    return this.normalize(state.config?.lang || localStorage.getItem(LANG_KEY) || this.fromDevice());
   },
   getLocalized(jsonObj, activeLang, fallbackLang) {
     const fallback = fallbackLang || this.FALLBACK_LANG;
@@ -426,8 +451,7 @@ function setAuth(payload) {
 }
 
 async function boot() {
-  const lang = normalizeLang(localStorage.getItem(LANG_KEY) || "da");
-  localStorage.setItem(LANG_KEY, lang);
+  const lang = i18nManager.preferred();
   try {
     state.config = await api(`/api/config?lang=${lang}`);
     state.i18n = state.config.i18n || {};
@@ -440,7 +464,7 @@ async function boot() {
     state.user = state.config.user;
     if (state.user) await loadBeans();
   } catch {
-    state.config = { strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
+    state.config = { lang, strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
   }
   document.documentElement.lang = lang;
   const params = new URLSearchParams(location.search);
@@ -530,18 +554,74 @@ async function openBean(id, tab = "explore") {
   render();
 }
 
+function deviceLocale() {
+  try {
+    return Intl.NumberFormat().resolvedOptions().locale
+      || navigator.language
+      || navigator.languages?.[0]
+      || document.documentElement.lang
+      || "en-US";
+  } catch {
+    return navigator.language || "en-US";
+  }
+}
+
+function decimalSeparator() {
+  try {
+    const part = new Intl.NumberFormat(deviceLocale()).formatToParts(1.1)
+      .find((item) => item.type === "decimal");
+    return part?.value === "," ? "," : ".";
+  } catch {
+    return ".";
+  }
+}
+
 function parseGrams(value) {
   if (value === "" || value == null) return null;
-  const cleaned = String(value).trim().replace(/\s+/g, "").replace(",", ".");
-  if (!cleaned) return null;
+  let cleaned = String(value).trim().replace(/[\s\u00a0]/g, "").replace(/[^\d,.\-]/g, "");
+  if (!cleaned || cleaned === "-" || cleaned === "," || cleaned === ".") return null;
+  const comma = cleaned.includes(",");
+  const dot = cleaned.includes(".");
+  if (comma && dot) {
+    if (cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")) {
+      cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+    } else {
+      cleaned = cleaned.replace(/,/g, "");
+    }
+  } else if (comma) {
+    cleaned = cleaned.split(",").length > 2
+      ? cleaned.replace(/,/g, "")
+      : cleaned.replace(",", ".");
+  }
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 
-function formatGramsLabel(value) {
+function formatGramsInput(value) {
   const n = parseGrams(value);
   if (n == null) return "";
-  return String(Math.round(n * 10) / 10);
+  const rounded = Math.round(n * 10) / 10;
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return text.replace(".", decimalSeparator());
+}
+
+function formatGramsLabel(value) {
+  return formatGramsInput(value);
+}
+
+function sanitizeGramsTyping(raw) {
+  let out = "";
+  let sep = "";
+  for (const ch of String(raw ?? "")) {
+    if (ch >= "0" && ch <= "9") {
+      if (sep && out.slice(out.indexOf(sep) + 1).length >= 2) continue;
+      out += ch;
+    } else if ((ch === "," || ch === ".") && !sep) {
+      sep = ch;
+      out += ch;
+    }
+  }
+  return out;
 }
 
 function formatBrewClock(totalSec) {
@@ -886,6 +966,7 @@ function authView() {
       <button id="toggle-auth" class="mt-4 text-center text-sm text-muted">
         ${signup ? t("have_account") + " " + t("login") : t("no_account") + " " + t("register")}
       </button>
+      <div class="mt-8 flex justify-center">${langToggle()}</div>
     </section>`;
 }
 
@@ -1531,14 +1612,14 @@ function rateForm() {
         <label class="block text-xs font-semibold">
           <span data-i18n="coffee_grams">${t("coffee_grams")}</span>
           <div class="relative mt-1">
-            <input id="coffee_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.coffee_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("coffee_grams_ph"))}">
+            <input id="coffee_grams" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="next" lang="${esc(deviceLocale())}" pattern="[0-9]*[.,]?[0-9]*" value="${esc(formatGramsInput(state.rate.coffee_grams))}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(formatGramsInput(18.5))}">
             <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
           </div>
         </label>
         <label class="block text-xs font-semibold">
           <span data-i18n="water_grams">${t("water_grams")}</span>
           <div class="relative mt-1">
-            <input id="water_grams" type="number" inputmode="decimal" step="0.1" min="0" value="${esc(state.rate.water_grams)}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(t("water_grams_ph"))}">
+            <input id="water_grams" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="next" lang="${esc(deviceLocale())}" pattern="[0-9]*[.,]?[0-9]*" value="${esc(formatGramsInput(state.rate.water_grams))}" class="grams-input min-h-11 w-full rounded-xl border border-latte bg-white px-3 pr-7 text-sm" placeholder="${esc(formatGramsInput(288) || t("water_grams_ph"))}">
             <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">g</span>
           </div>
         </label>
@@ -2054,11 +2135,12 @@ function render() {
     root.innerHTML = `<p class="p-8 text-center text-muted">BeanNote…</p>`;
     return;
   }
-  document.documentElement.lang = state.config.lang || "da";
+  document.documentElement.lang = state.config.lang || i18nManager.FALLBACK_LANG;
   document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.journalOpen)));
   if (!state.user) {
     root.innerHTML = authView();
     bindAuth();
+    bindLanguageButtons();
     return;
   }
   const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
@@ -2073,7 +2155,7 @@ function bindAuth() {
     btn.addEventListener("click", async (event) => {
       event.preventDefault();
       const provider = btn.dataset.oauth;
-      if (state.config?.environment === "local" || state.config?.local_dev) {
+      if (state.config?.local_dev || ["local", "dev"].includes(state.config?.environment)) {
         try {
           const result = await api(`/api/auth/${provider}/dev`, { method: "POST", body: "{}" });
           setAuth(result);
@@ -2424,33 +2506,23 @@ function bindApp() {
   ["coffee_grams", "water_grams"].forEach((key) => {
     const el = $(`#${key}`);
     if (!el) return;
-    el.addEventListener("beforeinput", (event) => {
-      if (event.data !== ",") return;
-      event.preventDefault();
-      let next = `${el.value}.`;
-      try {
-        const start = el.selectionStart;
-        const end = el.selectionEnd;
-        if (typeof start === "number" && typeof end === "number") {
-          next = `${el.value.slice(0, start)}.${el.value.slice(end)}`;
-        }
-      } catch {
-        next = `${String(el.value || "").replace(",", ".")}`;
-      }
-      el.value = next;
-      state.rate[key] = el.value;
+    el.addEventListener("input", (event) => {
+      const next = sanitizeGramsTyping(event.target.value);
+      if (next !== event.target.value) event.target.value = next;
+      state.rate[key] = event.target.value;
+    });
+    el.addEventListener("blur", (event) => {
+      const formatted = formatGramsInput(event.target.value);
+      event.target.value = formatted;
+      state.rate[key] = formatted;
     });
     el.addEventListener("paste", (event) => {
       const text = event.clipboardData?.getData("text") || "";
-      if (!text.includes(",")) return;
-      const parsed = parseGrams(text);
-      if (parsed == null) return;
+      const formatted = formatGramsInput(text);
+      if (!formatted && !sanitizeGramsTyping(text)) return;
       event.preventDefault();
-      el.value = String(parsed);
+      el.value = formatted || sanitizeGramsTyping(text);
       state.rate[key] = el.value;
-    });
-    el.addEventListener("input", (event) => {
-      state.rate[key] = event.target.value;
     });
   });
   $("#save-rating")?.addEventListener("click", async () => {
@@ -2691,15 +2763,19 @@ function bindApp() {
       }
     });
   });
-  document.querySelectorAll("[data-setlang]").forEach((btn) => {
-    btn.addEventListener("click", () => applyLanguage(btn.dataset.setlang));
-  });
+  bindLanguageButtons();
   $("#logout")?.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST", body: "{}" });
     localStorage.removeItem(TOKEN_KEY);
     state.user = null;
     state.beans = [];
     render();
+  });
+}
+
+function bindLanguageButtons() {
+  document.querySelectorAll("[data-setlang]").forEach((btn) => {
+    btn.addEventListener("click", () => applyLanguage(btn.dataset.setlang));
   });
 }
 
