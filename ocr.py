@@ -27,6 +27,7 @@ from db import (
     infer_intensity_scores,
     normalize_gear_catalog,
     normalize_gear_item,
+    qualify_generic_bean_name,
     search_local_gear,
     resolve_origin_geo,
     sanitize_roaster_url,
@@ -100,6 +101,8 @@ GEMINI_MODELS = (
     "gemini-flash-latest",
 )
 LOOKUP_MODELS = ("gemini-flash-latest", GEMINI_STABLE_MODEL)
+IDENTITY_MODELS = ("gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-3.5-flash-lite")
+IDENTITY_MAX_EDGE = 1024
 MAX_PRODUCT_PAGE_CHARS = 16000
 _RAW_HTML_LIMIT = 900_000
 _PRODUCT_LOOKUP_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -149,11 +152,13 @@ GRAPHIC_NOISE = re.compile(
 
 # Strong coffee titles — checked in the upper/middle block first.
 # Cup-quality words (crema, body, aroma) are not product titles.
+# Brew-method titles beat roast-style lines like SLOW ROAST.
 NAME_PRIORITY = [
-    (r"slow\s+roast", "Slow Roast"),
     (r"yirgacheffe", "Yirgacheffe"),
     (r"geisha|gesha", "Geisha"),
     (r"espresso", "Espresso"),
+    (r"filter(?:kaffe)?", "Filter"),
+    (r"slow\s+roast", "Slow Roast"),
 ]
 NAME_SKIP_TITLES = {"crema"}
 
@@ -1247,6 +1252,13 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
             lang=code,
         )
 
+    qualified = qualify_generic_bean_name(
+        out.get("name") or "",
+        out.get("origin") or "",
+        out.get("region_full") or "",
+    )
+    out["name"] = qualified
+    out["bean_name"] = qualified
     return out
 
 
@@ -1370,8 +1382,9 @@ def _gemini_prompt(lang: str = "da") -> str:
         "with these keys:\n"
         '- "roaster": roaster / brand name\n'
         '- "bean_name": the exact primary product name rendered on the bag. '
-        "Read the largest title together with any product-line text printed "
-        "immediately above it. "
+        "Read the largest title (Espresso, Filter, a farm or lot name). "
+        "Do not use roast-style lines such as SLOW ROAST as the bean name when "
+        "Espresso or Filter is printed as the main title. "
         "Copy the product identity as a title — do not pull words from the "
         "tasting paragraph. Cup-quality words in a blurb "
         "('flot crema', 'beautiful crema', 'crema') are not the bean name.\n"
@@ -1735,6 +1748,24 @@ def _response_text(response: Any) -> str:
     return "\n".join(chunks)
 
 
+def _response_json(response: Any) -> dict[str, Any]:
+    """Prefer schema-parsed JSON; thinking models often leave .text empty."""
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, dict) and parsed:
+        return parsed
+    if parsed is not None and hasattr(parsed, "model_dump"):
+        dumped = parsed.model_dump()
+        if isinstance(dumped, dict) and dumped:
+            return dumped
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            piece = getattr(part, "parsed", None)
+            if isinstance(piece, dict) and piece:
+                return piece
+    return _parse_gemini_json(_response_text(response))
+
+
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
 
@@ -1798,6 +1829,17 @@ def _prepare_scan_image(image_bytes: bytes) -> Image.Image:
     longest = max(width, height)
     if longest > 1600:
         scale = 1600 / longest
+        image = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+    return image
+
+
+def _prepare_identity_image(image_bytes: bytes) -> Image.Image:
+    """Smaller JPEG for the name/roaster-only pass — title text stays readable."""
+    image = _prepare_scan_image(image_bytes)
+    width, height = image.size
+    longest = max(width, height)
+    if longest > IDENTITY_MAX_EDGE:
+        scale = IDENTITY_MAX_EDGE / longest
         image = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
     return image
 
@@ -1968,29 +2010,41 @@ def pad_image_candidates(candidates: list[str] | None, snapshot_url: str = "") -
     return out
 
 
-def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any] | None:
+def _scan_with_genai(
+    image: Image.Image,
+    key: str,
+    prompt: str,
+    *,
+    schema: dict[str, Any] | None = None,
+    timeout_ms: int = 45_000,
+    max_output_tokens: int | None = None,
+    models: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
     from google import genai
     from google.genai import types
 
     # Vision OCR must stay JSON-only. Search grounding on this call returns
     # thought/search parts instead of JSON and 422s the whole scan.
-    client = genai.Client(api_key=key, http_options={"timeout": 45_000})
+    client = genai.Client(api_key=key, http_options={"timeout": timeout_ms})
     image_part = _gemini_image_part(image)
+    chosen_schema = schema if schema is not None else _gemini_output_schema()
+    use_schema = True
 
-    def _content_config(with_schema: bool):
+    def _content_config():
         kwargs: dict[str, Any] = {
             "response_mime_type": "application/json",
             "temperature": 0.0,
         }
-        if with_schema:
-            kwargs["response_schema"] = _gemini_output_schema()
+        if use_schema:
+            kwargs["response_schema"] = chosen_schema
+        if max_output_tokens:
+            kwargs["max_output_tokens"] = max_output_tokens
         return types.GenerateContentConfig(**kwargs)
 
-    use_schema = True
-    config = _content_config(True)
+    config = _content_config()
     last_error: Exception | None = None
     quota_hit = False
-    for model_name in GEMINI_MODELS:
+    for model_name in models or GEMINI_MODELS:
         for attempt in range(3):
             try:
                 response = client.models.generate_content(
@@ -1998,22 +2052,23 @@ def _scan_with_genai(image: Image.Image, key: str, prompt: str) -> dict[str, Any
                     contents=[prompt, image_part],
                     config=config,
                 )
-                data = _parse_gemini_json(_response_text(response))
+                data = _response_json(response)
                 return _with_grounded_images(data, response)
             except Exception as exc:
                 last_error = exc
+                text = str(exc).lower()
                 if _quota_gemini_error(exc):
                     quota_hit = True
                     break
                 if use_schema and (
-                    "schema" in str(exc).lower() or "invalid_argument" in str(exc).lower()
+                    "schema" in text or "invalid_argument" in text
                 ):
                     use_schema = False
-                    config = _content_config(False)
+                    config = _content_config()
                     continue
                 if "404" in str(exc) or "NOT_FOUND" in str(exc):
                     break
-                if _transient_gemini_error(exc) and attempt < 2:
+                if (_transient_gemini_error(exc) or "empty gemini" in text) and attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 break
@@ -2620,12 +2675,14 @@ def parse_label(text: str) -> dict[str, Any]:
     altitude = _value_after_label(
         lines, blob, ("altitude", "højde", "masl", "m.o.h", "højde over havet")
     )
-    varietal = _value_after_label(
+    varietal = _pretty(_value_after_label(
         lines, blob, ("variety", "varietal", "sort", "varietet", "cultivar")
-    )
+    ))
     roast_date = _value_after_label(
         lines, blob, ("roast date", "ristet", "ristningsdato", "ristedato", "roasted")
     )
+    region = _pretty(_value_after_label(lines, blob, ("region", "gård", "farm")))
+    name = qualify_generic_bean_name(name, origin, region)
 
     return {
         "name": name,
@@ -2639,6 +2696,7 @@ def parse_label(text: str) -> dict[str, Any]:
         "altitude": altitude,
         "varietal": varietal,
         "roast_date": roast_date,
+        "region_full": region,
         "roaster_url": sanitize_roaster_url(blob),
         "raw_text": text,
     }
@@ -2738,12 +2796,89 @@ def attach_official_bag_image(parsed: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _identity_output_schema() -> dict[str, Any]:
+    return {
+        "type": "OBJECT",
+        "required": ["roaster", "bean_name"],
+        "properties": {
+            "roaster": {"type": "STRING"},
+            "bean_name": {"type": "STRING"},
+            "origin": {"type": "STRING"},
+            "region": {"type": "STRING"},
+            "varietal": {"type": "STRING"},
+        },
+    }
+
+
+def _identity_prompt() -> str:
+    return (
+        "Read the coffee bag brand, product name, and origin from this photo. "
+        "Do not browse the web. Return ONE JSON object only: "
+        '{"roaster":"","bean_name":"","origin":"","region":"","varietal":""}. '
+        "roaster is the brand printed on the bag. "
+        "bean_name is the primary product name: the largest title "
+        "(Espresso, Filter, a farm/lot name). "
+        "Do not use roast-style lines such as SLOW ROAST as the product name "
+        "when Espresso or Filter is printed larger. "
+        "Do not use tasting-blurb words as the name. "
+        "origin is the printed country (e.g. Brasilien / Brazil). "
+        "region is the printed region (e.g. Cerrado Mineiro). "
+        "varietal is the printed variety (e.g. Catuai). "
+        "Empty strings if unreadable. Never invent."
+    )
+
+
+def identify_bag_gemini(image_bytes: bytes) -> dict[str, Any] | None:
+    """Cheap Vision pass: brand, product name, and origin so archive hits skip full OCR."""
+    key = get_gemini_api_key()
+    if not key:
+        return None
+    image = _prepare_identity_image(image_bytes)
+    data = _scan_with_genai(
+        image,
+        key,
+        _identity_prompt(),
+        schema=_identity_output_schema(),
+        timeout_ms=15_000,
+        models=IDENTITY_MODELS,
+    )
+    if not data:
+        return None
+    name = _pretty(str(data.get("bean_name") or data.get("name") or "").strip())
+    roaster = _pretty(str(data.get("roaster") or "").strip())
+    origin = _pretty(str(data.get("origin") or "").strip())
+    region = _pretty(str(data.get("region") or data.get("region_full") or "").strip())
+    varietal = _pretty(str(data.get("varietal") or "").strip())
+    if not name:
+        return None
+    return {
+        "name": name,
+        "bean_name": name,
+        "roaster": roaster,
+        "origin": origin,
+        "region_full": region,
+        "varietal": varietal,
+        "scan_source": "gemini-identity",
+        "scan_enrichment": "archive",
+    }
+
+
 def _with_scan_matches(parsed: dict[str, Any] | None) -> dict[str, Any]:
     """Attach archive match fields so the UI can jump to an existing profile."""
     out = dict(parsed or {})
     name = str(out.get("name") or "")
     roaster = str(out.get("roaster") or "")
-    similar = find_similar_beans(name, roaster) if name else []
+    similar = (
+        find_similar_beans(
+            name,
+            roaster,
+            origin=str(out.get("origin") or ""),
+            region=str(out.get("region_full") or out.get("region") or ""),
+            varietal=str(out.get("varietal") or ""),
+        )
+        if name
+        else []
+    )
     out["similar"] = similar
     out["match_tier"] = classify_matches(similar)
     out["scan_match"] = similar[0] if similar else None
@@ -2756,6 +2891,24 @@ def scan_label(image_bytes: bytes, lang: str = "da") -> dict[str, Any]:
     parsed: dict[str, Any] | None = None
     gemini_error: Exception | None = None
     if gemini_available():
+        try:
+            started = time.perf_counter()
+            identity = identify_bag_gemini(image_bytes)
+            elapsed = time.perf_counter() - started
+            if identity:
+                matched = _with_scan_matches(identity)
+                print(
+                    f"scan identity {elapsed:.1f}s "
+                    f"action={matched.get('scan_action')} "
+                    f"name={matched.get('name')!r} "
+                    f"roaster={matched.get('roaster')!r} "
+                    f"origin={matched.get('origin')!r} "
+                    f"conf={matched.get('scan_confidence')}"
+                )
+                if matched.get("scan_action") == "rate":
+                    return matched
+        except Exception as exc:
+            print(f"gemini identity failed, continuing with full OCR: {exc}")
         try:
             parsed = scan_label_gemini(image_bytes, lang=lang, enrich=False)
         except Exception as exc:

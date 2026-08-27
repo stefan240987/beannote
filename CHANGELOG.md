@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.7.2] - 2026-08-27
+
+- snapshot: fix - scan no longer opens another bean from the same roaster
+- Bags that only say Espresso or Filter are matched on origin and region, so a Copenhagen Roaster Brazil espresso is not treated as an existing Colombia espresso.
+- Identity scan also reads origin/region/varietal. Generic titles get a SKU-like name (`Espresso Cerrado Mineiro`) so UNIQUE(name, roaster) can keep them apart.
+
 ## [6.7.1] - 2026-08-26
 
 - snapshot: fix - precise brew time input, auto brew-method locking, and conditional gear dropdowns

@@ -19,7 +19,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.7.1"
+VERSION = "6.7.2"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -31,6 +31,70 @@ EXACT_MATCH_CUTOFF = 0.90
 NEAR_MATCH_CUTOFF = 0.70
 SCAN_MATCH_CUTOFF = 0.85
 FUZZY_CUTOFF = NEAR_MATCH_CUTOFF
+_ORIGIN_FOLD = {
+    "etiopien": "ethiopia",
+    "ethiopia": "ethiopia",
+    "brasilien": "brazil",
+    "brazil": "brazil",
+    "jemen": "yemen",
+    "yemen": "yemen",
+    "indonesien": "indonesia",
+    "indonesia": "indonesia",
+    "indien": "india",
+    "india": "india",
+    "kenya": "kenya",
+    "colombia": "colombia",
+    "guatemala": "guatemala",
+    "peru": "peru",
+    "rwanda": "rwanda",
+    "burundi": "burundi",
+    "honduras": "honduras",
+    "nicaragua": "nicaragua",
+    "mexico": "mexico",
+    "tanzania": "tanzania",
+    "uganda": "uganda",
+    "panama": "panama",
+    "bolivia": "bolivia",
+    "costa": "costa",
+    "rica": "rica",
+}
+_GENERIC_BEAN_TITLES = {
+    "espresso",
+    "slow roast",
+    "slow roast espresso",
+    "filter",
+    "filterkaffe",
+    "filter coffee",
+    "blend",
+    "house blend",
+    "house espresso",
+    "espresso blend",
+    "dark roast",
+    "light roast",
+    "medium roast",
+    "kaffe",
+    "coffee",
+    "arabica",
+    "hele bønner",
+    "hele bonner",
+    "specialty",
+    "specialty coffee",
+    "omni",
+    "omni roast",
+    "decaf",
+    "decaf espresso",
+    "mørkristet",
+    "morkristet",
+    "mørkristet espresso",
+}
+_GENERIC_NAME_TOKENS = {
+    "espresso", "slow", "roast", "filter", "filterkaffe", "blend", "house",
+    "dark", "light", "medium", "kaffe", "coffee", "arabica", "hele", "bønner",
+    "bonner", "specialty", "omni", "decaf", "mørkristet", "morkristet",
+}
+_VARIETAL_SKIP = {"arabica", "robusta", "blend", "100"}
+_FIELD_SPLIT = re.compile(r"[\s,/:;&]+")
+_COUNTRY_TOKENS = set(_ORIGIN_FOLD.keys()) | set(_ORIGIN_FOLD.values())
 BCRYPT_ROUNDS = 12
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").strip().lower()
@@ -1346,6 +1410,110 @@ def _normalize(value: str) -> str:
     return " ".join((value or "").split()).strip()
 
 
+def _fold(value: str) -> str:
+    """Collapse whitespace and case so archive matching ignores ALL-CAPS OCR."""
+    return _normalize(value).casefold()
+
+
+def _field_tokens(value: str) -> set[str]:
+    folded = _fold(value)
+    if not folded:
+        return set()
+    tokens: set[str] = set()
+    for raw in _FIELD_SPLIT.split(folded):
+        token = raw.strip(".-")
+        if len(token) < 3 or token in {"and", "og"}:
+            continue
+        tokens.add(_ORIGIN_FOLD.get(token, token))
+    return tokens
+
+
+def _place_tokens(value: str) -> set[str]:
+    return {token for token in _field_tokens(value) if token not in _COUNTRY_TOKENS}
+
+
+def origins_conflict(left: str, right: str) -> bool:
+    """True when both sides name countries and they do not overlap."""
+    left_tokens = _field_tokens(left) & _COUNTRY_TOKENS
+    right_tokens = _field_tokens(right) & _COUNTRY_TOKENS
+    if not left_tokens or not right_tokens:
+        return False
+    return left_tokens.isdisjoint(right_tokens)
+
+
+def regions_conflict(left: str, right: str) -> bool:
+    left_tokens = _place_tokens(left)
+    right_tokens = _place_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    return left_tokens.isdisjoint(right_tokens)
+
+
+def varietals_conflict(left: str, right: str) -> bool:
+    left_tokens = {token for token in _field_tokens(left) if token not in _VARIETAL_SKIP}
+    right_tokens = {token for token in _field_tokens(right) if token not in _VARIETAL_SKIP}
+    if not left_tokens or not right_tokens:
+        return False
+    return left_tokens.isdisjoint(right_tokens)
+
+
+def is_generic_bean_name(name: str) -> bool:
+    """Brew-method / roast-style titles are not unique SKUs for a roaster."""
+    folded = _fold(name)
+    if not folded:
+        return False
+    if folded in _GENERIC_BEAN_TITLES:
+        return True
+    tokens = {token for token in folded.split() if token not in {"the", "og", "and", "&"}}
+    return bool(tokens) and tokens <= _GENERIC_NAME_TOKENS
+
+
+def _title_hint(value: str) -> str:
+    compact = _normalize(value)
+    if not compact:
+        return ""
+    if compact.isupper() or compact.islower():
+        return compact.title()
+    return compact
+
+
+def _distinctive_name_hint(origin: str = "", region: str = "") -> str:
+    region = _normalize(region)
+    if region:
+        for part in re.split(r"\s*,\s*", region):
+            part = part.strip()
+            if _place_tokens(part):
+                return _title_hint(part)
+    origin = _normalize(origin)
+    if not origin:
+        return ""
+    first = re.split(r"\s*(?:&|/| og | and )\s*", origin, maxsplit=1)[0].strip()
+    return _title_hint(first)
+
+
+def qualify_generic_bean_name(name: str, origin: str = "", region: str = "") -> str:
+    """Turn 'Espresso' + Brazil/Cerrado into a SKU-like title for UNIQUE(name, roaster)."""
+    name = _normalize(name)
+    if not name or not is_generic_bean_name(name):
+        return name
+    hint = _distinctive_name_hint(origin, region)
+    if hint and _fold(hint) not in _fold(name):
+        return f"{name} {hint}"
+    return name
+
+
+def _generic_names_compatible(left: str, right: str) -> bool:
+    folded_left = _fold(left)
+    folded_right = _fold(right)
+    if folded_left == folded_right:
+        return True
+    left_tokens = set(folded_left.split())
+    right_tokens = set(folded_right.split())
+    if left_tokens and right_tokens and (left_tokens <= right_tokens or right_tokens <= left_tokens):
+        return True
+    return False
+
+
 def _bean_label(bean: dict[str, Any]) -> str:
     return f"{bean.get('name', '')} - {bean.get('roaster', '')}".strip(" -")
 
@@ -1372,13 +1540,52 @@ def scan_destination(similar: list[dict[str, Any]]) -> str:
     return "add"
 
 
+def _bean_similarity(
+    name: str,
+    roaster: str,
+    origin: str,
+    region: str,
+    bean: dict[str, Any],
+) -> float:
+    """Score a candidate against one archive bean. Generic titles need origin agreement."""
+    query = _fold(f"{name} - {roaster}".strip(" -"))
+    label = _fold(_bean_label(bean))
+    folded_name = _fold(name)
+    bean_name = _fold(bean.get("name") or "")
+    label_score = difflib.SequenceMatcher(None, query, label).ratio()
+    name_score = difflib.SequenceMatcher(None, folded_name, bean_name).ratio()
+    incoming_generic = is_generic_bean_name(name)
+    stored_generic = is_generic_bean_name(str(bean.get("name") or ""))
+    same_roaster = bool(roaster) and _fold(roaster) == _fold(str(bean.get("roaster") or ""))
+
+    if incoming_generic or stored_generic:
+        if not same_roaster:
+            return 0.0
+        if not _generic_names_compatible(name, str(bean.get("name") or "")):
+            return 0.0
+        incoming_origin = _field_tokens(origin) & _COUNTRY_TOKENS
+        stored_origin = _field_tokens(str(bean.get("origin") or "")) & _COUNTRY_TOKENS
+        if incoming_origin and stored_origin:
+            incoming_place = _place_tokens(region)
+            stored_place = _place_tokens(str(bean.get("region_full") or ""))
+            if incoming_place and stored_place:
+                return max(label_score, 0.96)
+            return max(label_score, 0.88)
+        return min(max(label_score, name_score), SCAN_MATCH_CUTOFF - 0.01)
+
+    return max(label_score, name_score)
+
+
 def find_similar_beans(
     name: str,
     roaster: str = "",
     cutoff: float = FUZZY_CUTOFF,
+    origin: str = "",
+    region: str = "",
+    varietal: str = "",
 ) -> list[dict[str, Any]]:
     """Fuzzy-match a candidate against existing beans via difflib.get_close_matches."""
-    query = _normalize(f"{name} - {roaster}".strip(" -"))
+    query = _fold(f"{name} - {roaster}".strip(" -"))
     if not query:
         return []
 
@@ -1386,35 +1593,23 @@ def find_similar_beans(
     if not beans:
         return []
 
-    labels = [_bean_label(b) for b in beans]
-    name_only = [_normalize(b["name"]) for b in beans]
-    pool = labels + name_only
-    hits = difflib.get_close_matches(query, pool, n=5, cutoff=cutoff)
-    name_hits = difflib.get_close_matches(_normalize(name), name_only, n=5, cutoff=cutoff)
-
-    seen: set[int] = set()
     results: list[dict[str, Any]] = []
-    for hit in hits + name_hits:
-        for bean in beans:
-            if bean["id"] in seen:
-                continue
-            label = _bean_label(bean)
-            if hit in {label, _normalize(bean["name"])}:
-                score = max(
-                    difflib.SequenceMatcher(None, query.lower(), label.lower()).ratio(),
-                    difflib.SequenceMatcher(
-                        None, _normalize(name).lower(), bean["name"].lower()
-                    ).ratio(),
-                )
-                if score >= cutoff:
-                    results.append({
-                        **bean,
-                        "confidence": round(score, 3),
-                        "tier": match_tier(score),
-                    })
-                    seen.add(bean["id"])
+    for bean in beans:
+        if origins_conflict(origin, str(bean.get("origin") or "")):
+            continue
+        if regions_conflict(region, str(bean.get("region_full") or "")):
+            continue
+        if varietals_conflict(varietal, str(bean.get("varietal") or "")):
+            continue
+        score = _bean_similarity(name, roaster, origin, region, bean)
+        if score >= cutoff:
+            results.append({
+                **bean,
+                "confidence": round(score, 3),
+                "tier": match_tier(score),
+            })
     results.sort(key=lambda b: b["confidence"], reverse=True)
-    return results
+    return results[:5]
 
 
 def insert_bean(
@@ -1489,8 +1684,19 @@ def insert_bean(
     )
     if not name or not roaster:
         raise ValueError("name_roaster_required")
+    name = qualify_generic_bean_name(
+        name,
+        origin,
+        str(meta.get("region_full") or region_full or ""),
+    )
 
-    similar = find_similar_beans(name, roaster)
+    similar = find_similar_beans(
+        name,
+        roaster,
+        origin=origin,
+        region=str(meta.get("region_full") or ""),
+        varietal=str(meta.get("varietal") or varietal),
+    )
     exact = [row for row in similar if row.get("tier") == "exact"]
     if exact:
         bean = exact[0]
