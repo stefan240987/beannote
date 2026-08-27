@@ -287,7 +287,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "gear_add": "Tilføj til mit setup",
         "gear_remove": "Fjern",
         "gear_edit": "Rediger",
-        "gear_machine": "Espressomaskine",
+        "gear_machine": "Espresso",
         "gear_grinder": "Kværn",
         "gear_brewer": "Brygger",
         "gear_other": "Andet",

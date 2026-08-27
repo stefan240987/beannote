@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.3] - 2026-08-27
+
+- snapshot: fix - gear tabs CSS overflow and compact Danish translations
+- Gear kind tabs scroll horizontally on a phone instead of wrapping or clipping long labels.
+- The active white pill grows with the translated title. Danish `gear_machine` is now `Espresso`.
+
 ## [6.8.2] - 2026-08-27
 
 - snapshot: refactor - sticky topbar, dynamic suitability filter pills, and compact explore layout

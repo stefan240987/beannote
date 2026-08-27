@@ -1713,7 +1713,7 @@ function gearKindTabDefs() {
     }));
   }
   return [
-    { id: "espresso_machine", key: "gear_machine", fallback: "Espressomaskine" },
+    { id: "espresso_machine", key: "gear_machine", fallback: "Espresso" },
     { id: "grinder", key: "gear_grinder", fallback: "Kværn" },
     { id: "brewer", key: "gear_brewer", fallback: "Brygger" },
     { id: "scale_kettle", key: "gear_scale_kettle", fallback: "Vægt & Kedel" },
@@ -1882,7 +1882,7 @@ function gearSetup() {
     const on = state.gearKind === id;
     const label = gearTabLabel(key, fallback);
     const i18n = key && t(key) !== key ? ` data-i18n="${key}"` : "";
-    return `<button type="button" data-gear-kind="${id}" class="${on ? "is-active" : ""}"${i18n}>${esc(label)}</button>`;
+    return `<button type="button" data-gear-kind="${id}" class="gear-tab${on ? " is-active" : ""}"${i18n}>${esc(label)}</button>`;
   }).join("");
   const saved = gear.gear_specs.map((item) => gearCard(item)).join("");
   return `<section class="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">

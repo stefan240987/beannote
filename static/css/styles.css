@@ -273,28 +273,47 @@ body.modal-open { overflow: hidden; }
   justify-content: center;
   overflow: hidden;
 }
-.gear-kind-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.gear-kind-tabs,
+.gear-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 0.25rem;
   padding: 0.25rem;
   border-radius: 0.75rem;
   background: #f3ebe3;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
 }
-@media (min-width: 420px) {
-  .gear-kind-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+.gear-kind-tabs::-webkit-scrollbar,
+.gear-tabs::-webkit-scrollbar {
+  display: none;
 }
-.gear-kind-tabs button {
+.gear-kind-tabs .gear-tab,
+.gear-kind-tabs button,
+.gear-tabs .gear-tab {
+  white-space: nowrap;
+  flex: 1 0 auto;
+  width: max-content;
+  max-width: none;
+  min-width: max-content;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 6px 10px;
   min-height: 2.5rem;
   border-radius: 0.5rem;
-  padding: 0.3rem 0.4rem;
-  font-size: 0.7rem;
-  font-weight: 600;
   color: #8c7a6b;
+  overflow: visible;
 }
-.gear-kind-tabs button.is-active {
+.gear-kind-tabs .gear-tab.is-active,
+.gear-kind-tabs button.is-active,
+.gear-tabs .gear-tab.is-active {
   background: #fff;
   color: #3c2a21;
   box-shadow: 0 1px 2px rgba(60, 42, 33, 0.08);
