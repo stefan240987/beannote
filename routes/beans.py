@@ -19,6 +19,7 @@ from db import (
 from deps import _auth_error, current_user, require_admin
 from jobs import enqueue_job, public_job
 from ocr import compare_flavor_notes, enrich_bean_from_web
+from routes.users import annotate_community_recipes
 from schemas import BeanIn
 from translations import SUPPORTED_LANGUAGES
 
@@ -55,6 +56,9 @@ def bean_detail(bean_id: int, user: dict[str, Any] = Depends(current_user)) -> d
         (profile["bean"] or {}).get("flavor_tags") or {},
     )
     profile["notes"] = notes
+    matched = annotate_community_recipes(profile.get("community_history") or [], user)
+    profile["community_history"] = matched["recipes"]
+    profile["community_gear_fallback"] = matched["fallback"]
     return profile
 
 

@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.4] - 2026-08-29
+
+- snapshot: feat - bean-grouped diary layout and smart gear-matched community recipes
+- My Coffee Diary on Profile groups tastings by bean in expandable cards (photo, roaster, overall rating, tasting count).
+- Community recipes prefer exact machine+grinder matches, then machine-only, then grinder-only, with a fallback banner when nothing matches the user's gear.
+
 ## [6.8.3] - 2026-08-27
 
 - snapshot: fix - gear tabs CSS overflow and compact Danish translations

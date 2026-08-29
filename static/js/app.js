@@ -173,6 +173,7 @@ const state = {
   savedPrompt: null,
   supportOpen: false,
   journalOpen: false,
+  journalOpenBeans: {},
   journal: [],
   recipeTab: "mine",
   rateOpen: false,
@@ -503,7 +504,10 @@ async function boot() {
     state.config.lang = lang;
     state.config.strings = state.i18n[lang] || state.config.strings || {};
     state.user = state.config.user;
-    if (state.user) await loadBeans();
+    if (state.user) {
+      await loadBeans();
+      await loadJournal();
+    }
   } catch {
     state.config = { lang, strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
   }
@@ -1165,6 +1169,56 @@ function gearLogBadges(row) {
   ).join("")}</div>`;
 }
 
+function foldGearName(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function gearNamesMatch(left, right) {
+  const a = foldGearName(left);
+  const b = foldGearName(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  return shorter.length >= 6 && longer.includes(shorter);
+}
+
+function matchesGearList(name, candidates) {
+  return (candidates || []).some((item) => gearNamesMatch(name, item));
+}
+
+function recipeGearMatch(row) {
+  const known = String(row?.gear_match || "");
+  if (known === "exact" || known === "machine" || known === "grinder") return known;
+  const brewers = [...gearItemsOfKind("espresso_machine"), ...gearItemsOfKind("brewer")];
+  const grinders = gearItemsOfKind("grinder");
+  const machineHit = brewers.length > 0 && matchesGearList(row?.espresso_machine, brewers);
+  const grinderHit = grinders.length > 0 && matchesGearList(row?.grinder, grinders);
+  if (machineHit && grinderHit) return "exact";
+  if (machineHit) return "machine";
+  if (grinderHit) return "grinder";
+  return "";
+}
+
+function communityRecipesForDisplay(rows) {
+  const annotated = (rows || []).map((row) => ({ ...row, gear_match: recipeGearMatch(row) }));
+  const rank = { exact: 0, machine: 1, grinder: 2 };
+  const hits = annotated.filter((row) => row.gear_match);
+  if (hits.length) {
+    hits.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    hits.sort((a, b) => (rank[a.gear_match] ?? 9) - (rank[b.gear_match] ?? 9));
+    return { rows: hits, fallback: false };
+  }
+  return { rows: annotated.map((row) => ({ ...row, gear_match: "" })), fallback: true };
+}
+
+function gearMatchBadge(row) {
+  const tier = row?.gear_match;
+  const key = { exact: "gear_match_exact", machine: "gear_match_machine", grinder: "gear_match_grinder" }[tier];
+  if (!key) return "";
+  return `<span class="gear-match-badge gear-match-${esc(tier)}" data-i18n="${key}">${esc(t(key))}</span>`;
+}
+
 function officialScores(source) {
   const profile = source?.roaster_profile && typeof source.roaster_profile === "object"
     ? source.roaster_profile
@@ -1302,8 +1356,12 @@ function recipeCard(row) {
   if (date) header.push(date);
   const badges = recipeMeta(row);
   const notes = String(row.tasting_notes_user || row.notes || "").trim();
+  const match = gearMatchBadge(row);
   return `<article class="rounded-2xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-latte">
-    <p class="text-sm font-semibold text-espresso">${esc(header.join(" · "))}</p>
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <p class="text-sm font-semibold text-espresso">${esc(header.join(" · "))}</p>
+      ${match}
+    </div>
     ${badges.length ? `<p class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-espresso/80">${badges.map((item) => `<span>${esc(item)}</span>`).join(`<span class="text-latte">|</span>`)}</p>` : ""}
     ${gearLogBadges(row)}
     ${notes ? `<p class="mt-1.5 text-sm leading-5 text-espresso/80">💬 "${esc(notes)}"</p>` : ""}
@@ -1319,8 +1377,15 @@ function tastingHistory(history) {
 function recipeLogSection(profile) {
   const tab = state.recipeTab === "community" ? "community" : "mine";
   const mine = profile?.history || [];
-  const community = profile?.community_history || [];
-  const rows = tab === "community" ? community : mine;
+  let rows = mine;
+  let banner = "";
+  if (tab === "community") {
+    const shown = communityRecipesForDisplay(profile?.community_history || []);
+    rows = shown.rows;
+    if (shown.fallback && rows.length) {
+      banner = `<p class="rounded-2xl bg-foam px-3 py-2 text-xs font-semibold text-espresso ring-1 ring-latte" data-i18n="community_all_recipes">${esc(t("community_all_recipes"))}</p>`;
+    }
+  }
   const emptyKey = tab === "community" ? "community_empty" : "no_ratings";
   const tabBtn = (id, key) => {
     const on = tab === id;
@@ -1332,6 +1397,7 @@ function recipeLogSection(profile) {
       ${tabBtn("mine", "my_recipes")}
       ${tabBtn("community", "community_recipes")}
     </div>
+    ${banner}
     ${rows.length ? tastingHistory(rows) : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="${emptyKey}">${esc(t(emptyKey))}</p>`}
   </section>`;
 }
@@ -1900,6 +1966,56 @@ function gearSetup() {
   </section>`;
 }
 
+function journalBeanGroups(rows) {
+  const groups = [];
+  const index = new Map();
+  for (const row of rows || []) {
+    const id = Number(row.bean_id || 0);
+    const key = id ? String(id) : `${row.bean_name || ""}|${row.roaster || ""}`;
+    if (!index.has(key)) {
+      const group = {
+        key,
+        bean_id: id,
+        bean_name: row.bean_name || "",
+        roaster: row.roaster || "",
+        image_url: row.bean_image_url || row.image_url || "",
+        entries: [],
+      };
+      index.set(key, group);
+      groups.push(group);
+    }
+    const group = index.get(key);
+    group.entries.push(row);
+    if (!group.image_url) group.image_url = row.bean_image_url || row.image_url || "";
+  }
+  for (const group of groups) {
+    const scores = group.entries.map((row) => Number(row.rating || 0)).filter((n) => n > 0);
+    group.avg_rating = scores.length ? scores.reduce((sum, n) => sum + n, 0) / scores.length : 0;
+    group.count = group.entries.length;
+  }
+  return groups;
+}
+
+function journalBeanCard(group) {
+  const open = !!state.journalOpenBeans[group.key];
+  const img = photoImg(group.image_url, "", "h-14 w-14 shrink-0 rounded-xl object-cover bg-foam") || bagThumb();
+  const entries = open
+    ? `<div class="space-y-2 border-t border-latte bg-cream px-3 py-3">${group.entries.map((row) => recipeCard(row)).join("")}</div>`
+    : "";
+  return `<article class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
+    <button type="button" data-toggle-journal-bean="${esc(group.key)}" class="flex w-full items-center gap-3 px-3 py-3 text-left" aria-expanded="${open ? "true" : "false"}">
+      ${img}
+      <div class="min-w-0 flex-1">
+        <h3 class="font-display truncate text-base font-bold leading-tight">${esc(group.bean_name)}</h3>
+        ${group.roaster ? `<p class="truncate text-xs text-muted">${esc(group.roaster)}</p>` : ""}
+        <p class="mt-1 text-xs font-semibold text-espresso">⭐ ${esc(group.avg_rating.toFixed(1))} · ${esc(group.count === 1 ? t("journal_tasting") : t("journal_tastings", { n: group.count }))}</p>
+      </div>
+      <span class="journal-bean-chevron${open ? " is-open" : ""}" aria-hidden="true">▾</span>
+    </button>
+    ${entries}
+  </article>`;
+}
+
 function journalCard(row, compact = false) {
   const date = (row.created_at || "").slice(0, 10);
   const method = localizeBrewMethod(row.brew_method);
@@ -1915,44 +2031,37 @@ function journalCard(row, compact = false) {
       <span class="journal-row-score">⭐ ${esc(rating)}</span>
     </article>`;
   }
-  const header = [`⭐ ${rating}`];
-  if (method) header.push(`☕ ${method}`);
-  const badges = recipeMeta(row);
-  const notes = String(row.tasting_notes_user || row.notes || "").trim();
-  return `<article class="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-latte">
-    <p class="text-xs font-semibold text-muted">${esc(date)}</p>
-    <h3 class="font-display text-lg font-bold">${esc(row.bean_name || "")}</h3>
-    ${row.roaster ? `<p class="text-xs text-muted">${esc(row.roaster)}</p>` : ""}
-    <p class="mt-1 text-sm font-semibold text-espresso">${esc(header.join(" · "))}</p>
-    ${badges.length ? `<p class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-espresso/80">${badges.map((item) => `<span>${esc(item)}</span>`).join(`<span class="text-latte">|</span>`)}</p>` : ""}
-    ${gearLogBadges(row)}
-    ${notes ? `<p class="mt-1.5 text-sm leading-5 text-espresso/80">💬 "${esc(notes)}"</p>` : ""}
-  </article>`;
+  return recipeCard(row);
 }
 
 function journalFeed() {
-  const rows = state.journal || [];
-  const preview = rows.slice(0, 3);
-  const more = rows.length > 3;
+  const groups = journalBeanGroups(state.journal);
+  const preview = groups.slice(0, 4);
   return `<section class="journal-feed">
     <div class="journal-feed-head">
-      <h2 class="font-display text-lg font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
-      ${more ? `<button type="button" data-open-journal class="journal-view-all" data-i18n="journal_view_all">${esc(t("journal_view_all"))}</button>` : ""}
+      <div class="min-w-0">
+        <h2 class="font-display text-lg font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+        <p class="text-xs text-muted" data-i18n="journal_grouped">${esc(t("journal_grouped"))}</p>
+      </div>
+      <button type="button" data-open-journal class="journal-open-btn" data-i18n="journal_view_all">${esc(t("journal_view_all"))}</button>
     </div>
-    ${preview.length ? preview.map((row) => journalCard(row, true)).join("") : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`}
+    ${preview.length ? preview.map((group) => journalBeanCard(group)).join("") : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`}
   </section>`;
 }
 
 function journalModal() {
   if (!state.journalOpen) return "";
-  const rows = state.journal || [];
-  const list = rows.length
-    ? rows.map((row) => journalCard(row, false)).join("")
+  const groups = journalBeanGroups(state.journal);
+  const list = groups.length
+    ? groups.map((group) => journalBeanCard(group)).join("")
     : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`;
   return `<div id="journal-modal" data-close-journal class="journal-modal">
     <article class="journal-modal-sheet" data-journal-sheet>
       <div class="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
-        <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+        <div class="min-w-0">
+          <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+          <p class="text-xs text-muted" data-i18n="journal_grouped">${esc(t("journal_grouped"))}</p>
+        </div>
         <button type="button" data-close-journal class="grid h-10 w-10 place-items-center rounded-full bg-white text-lg font-semibold shadow-sm ring-1 ring-latte" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
       <div class="journal-modal-list">${list}</div>
@@ -1976,9 +2085,10 @@ function profileView() {
         </div>
         ${langToggle()}
       </div>
+      <button type="button" data-open-journal class="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="journal_title">${esc(t("journal_title"))}</button>
     </div>
-    ${gearSetup()}
     ${journalFeed()}
+    ${gearSetup()}
     ${supportButton()}
     <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
   </section>`;
@@ -2210,6 +2320,7 @@ function bindAuth() {
           const result = await api(`/api/auth/${provider}/dev`, { method: "POST", body: "{}" });
           setAuth(result);
           await loadBeans();
+          await loadJournal();
           render();
         } catch (err) {
           toast(t(err.detail || "oauth_unavailable"));
@@ -2240,6 +2351,7 @@ function bindAuth() {
       const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
       setAuth(result);
       await loadBeans();
+      await loadJournal();
       render();
     } catch (err) {
       toast(t(err.detail || "invalid_credentials"));
@@ -2622,6 +2734,7 @@ function bindApp() {
       state.profile = result.profile;
       state.rateOpen = false;
       toast(t("saved_toast"));
+      loadJournal();
       render();
     } catch (err) {
       toast(t(err.detail || "required"));
@@ -2825,6 +2938,21 @@ function bindApp() {
     btn.addEventListener("click", () => {
       state.journalOpen = true;
       render();
+    });
+  });
+  document.querySelectorAll("[data-toggle-journal-bean]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = btn.dataset.toggleJournalBean;
+      if (!key) return;
+      const sheet = $(".journal-modal-list");
+      const top = sheet ? sheet.scrollTop : window.scrollY;
+      state.journalOpenBeans = { ...state.journalOpenBeans, [key]: !state.journalOpenBeans[key] };
+      render();
+      const next = $(".journal-modal-list");
+      if (next) next.scrollTop = top;
+      else if (!state.journalOpen) window.scrollTo({ top });
     });
   });
   $("[data-journal-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
