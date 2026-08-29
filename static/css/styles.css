@@ -35,14 +35,46 @@ body { padding-bottom: env(safe-area-inset-bottom); }
   gap: 0.4rem;
   margin-top: 0.45rem;
 }
+.explore-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+}
 .explore-search {
   min-height: 2.4rem;
+  min-width: 0;
+  flex: 1;
   width: 100%;
   border-radius: 0.75rem;
   border: 1px solid #e8d8c8;
   background: #fff;
   padding: 0 0.75rem;
   color: #3c2a21;
+}
+.explore-sort {
+  flex: 0 0 10.75rem;
+  width: 10.75rem;
+  max-width: 48%;
+  min-height: 2.4rem;
+  border-radius: 0.75rem;
+  border: 1px solid #e8d8c8;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238c7a6b' d='M1.2 1.4 6 6.2l4.8-4.8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 0.7rem;
+  padding: 0 1.35rem 0 0.45rem;
+  color: #3c2a21;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.2;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.explore-sort:focus {
+  outline: 2px solid #b85c38;
+  outline-offset: 1px;
 }
 .explore-pills {
   display: flex;

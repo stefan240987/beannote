@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.5] - 2026-08-29
+
+- snapshot: fix - conditional origin rendering on bean cards and added explore sorting dropdown
+- Bean cards hide missing or placeholder origin labels such as `Oprindelse` / `Unknown`, so a card shows `BKI` instead of `BKI · Oprindelse`.
+- Explore has a compact sort dropdown next to search: best rating, most ratings, roaster A–Å, name A–Å, and newest.
+
 ## [6.8.4] - 2026-08-29
 
 - snapshot: feat - bean-grouped diary layout and smart gear-matched community recipes

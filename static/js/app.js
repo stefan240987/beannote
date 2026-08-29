@@ -168,6 +168,7 @@ const state = {
   busyLoader: "",
   busyMessage: "",
   beanFilter: "all",
+  beanSort: "newest",
   exploreMode: "cards",
   suitabilityFilter: "",
   savedPrompt: null,
@@ -374,7 +375,76 @@ function availableSuitableFilters() {
 }
 
 function visibleBeans() {
-  return (state.beans || []).filter((bean) => matchesSuitable(bean.suitable_for, state.suitabilityFilter));
+  const filtered = (state.beans || []).filter((bean) => matchesSuitable(bean.suitable_for, state.suitabilityFilter));
+  return sortVisibleBeans(filtered, state.beanSort || "newest");
+}
+
+const ORIGIN_PLACEHOLDERS = new Set([
+  "", "oprindelse", "origin", "unknown", "ukendt", "n/a", "na", "none",
+  "herkunft", "origine", "origen", "-", "–", "—",
+]);
+
+function isValidOrigin(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  const low = raw.toLowerCase();
+  if (ORIGIN_PLACEHOLDERS.has(low)) return false;
+  const label = String(t("origin") || "").trim();
+  if (label && (raw === label || low === label.toLowerCase())) return false;
+  return true;
+}
+
+function beanOriginText(bean) {
+  for (const value of [bean?.origin, bean?.country]) {
+    if (isValidOrigin(value)) return String(value).trim();
+  }
+  return "";
+}
+
+function beanCardMeta(bean) {
+  const roaster = String(bean?.roaster || "").trim();
+  const origin = beanOriginText(bean);
+  if (roaster && origin) return `${esc(roaster)} · ${esc(origin)}`;
+  return esc(roaster);
+}
+
+function beanRatingValue(bean) {
+  const n = Number(bean?.avg_rating);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function beanRatingCount(bean) {
+  const n = Number(bean?.rating_count ?? bean?.ratings_count ?? bean?.review_count);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function compareNewest(a, b) {
+  const byDate = String(b?.created_at || "").localeCompare(String(a?.created_at || ""));
+  if (byDate) return byDate;
+  return (Number(b?.id) || 0) - (Number(a?.id) || 0);
+}
+
+function compareBeanText(left, right) {
+  return String(left || "").localeCompare(String(right || ""), activeLang() || "en", {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+function sortVisibleBeans(beans, mode) {
+  const rows = beans.slice();
+  if (mode === "rating_desc") {
+    rows.sort((a, b) => (beanRatingValue(b) - beanRatingValue(a)) || (beanRatingCount(b) - beanRatingCount(a)) || compareNewest(a, b));
+  } else if (mode === "ratings_count_desc") {
+    rows.sort((a, b) => (beanRatingCount(b) - beanRatingCount(a)) || (beanRatingValue(b) - beanRatingValue(a)) || compareNewest(a, b));
+  } else if (mode === "roaster_asc") {
+    rows.sort((a, b) => compareBeanText(a.roaster, b.roaster) || compareBeanText(a.name, b.name) || compareNewest(a, b));
+  } else if (mode === "name_asc") {
+    rows.sort((a, b) => compareBeanText(a.name, b.name) || compareBeanText(a.roaster, b.roaster) || compareNewest(a, b));
+  } else {
+    rows.sort(compareNewest);
+  }
+  return rows;
 }
 
 function localizeTag(tag) {
@@ -1036,10 +1106,41 @@ function header() {
 
 function exploreToolbar() {
   return `<div class="explore-toolbar">
-    <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+    <div class="explore-search-row">
+      <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+      ${exploreSortSelect()}
+    </div>
     ${suitabilityBar()}
     ${exploreSegBar()}
   </div>`;
+}
+
+function sortOptionDefs() {
+  const tpl = document.getElementById("sort-beans-select");
+  if (tpl) {
+    return [...tpl.content.querySelectorAll("option")].map((opt) => ({
+      value: opt.value || "newest",
+      key: opt.getAttribute("data-i18n") || "",
+      fallback: (opt.textContent || "").trim(),
+    }));
+  }
+  return [
+    { value: "rating_desc", key: "sort_rating_desc", fallback: "Bedste bedømmelse" },
+    { value: "ratings_count_desc", key: "sort_ratings_count_desc", fallback: "Flest bedømmelser" },
+    { value: "roaster_asc", key: "sort_roaster_asc", fallback: "Risteri (A-Å)" },
+    { value: "name_asc", key: "sort_name_asc", fallback: "Navn (A-Å)" },
+    { value: "newest", key: "sort_newest", fallback: "Nyeste" },
+  ];
+}
+
+function exploreSortSelect() {
+  const current = state.beanSort || "newest";
+  const options = sortOptionDefs().map((opt) => {
+    const label = opt.key ? t(opt.key) : opt.fallback;
+    const selected = opt.value === current ? " selected" : "";
+    return `<option value="${esc(opt.value)}" data-i18n="${esc(opt.key)}"${selected}>${esc(label)}</option>`;
+  }).join("");
+  return `<select id="sortBeansSelect" class="explore-sort" data-i18n-aria="sort_beans" aria-label="${esc(t("sort_beans"))}">${options}</select>`;
 }
 
 function suitabilityBar() {
@@ -1121,7 +1222,7 @@ function exploreView() {
         <div class="bean-card-photo rounded-t-2xl">${photo || bagFallback("h-full")}</div>
         <div class="p-3">
           <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
-          <p class="text-sm text-muted">${esc(bean.roaster)} · ${esc(bean.origin || t("origin"))}</p>
+          <p class="text-sm text-muted">${beanCardMeta(bean)}</p>
           <div class="mt-2 flex items-center justify-between gap-2">
             <div class="flex min-w-0 flex-wrap gap-1">${feedPills(bean.flavor_tags)}</div>
             <p class="shrink-0 text-sm font-semibold text-amber-600">★ ${(bean.avg_rating || 0).toFixed(1)}</p>
@@ -2493,6 +2594,10 @@ function bindApp() {
       next.setSelectionRange(pos, pos);
     }
   };
+  $("#sortBeansSelect")?.addEventListener("change", (event) => {
+    state.beanSort = event.target.value || "newest";
+    render();
+  });
   $("#search")?.addEventListener("input", (event) => {
     state.search = event.target.value;
     clearTimeout(state.searchTimer);
