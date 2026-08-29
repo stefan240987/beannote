@@ -408,6 +408,49 @@ function beanCardMeta(bean) {
   return esc(roaster);
 }
 
+function roastBadgeKind(bean) {
+  const raw = String(bean?.roast_level || "").trim();
+  const blob = raw.toLowerCase();
+  if (blob) {
+    if (/(medium[-\s]?(dark|mørk|mork)|mellem[-\s]?(mørk|mork)|mellemmørk|mellemmork|mellemrist)/.test(blob)) return "medium";
+    if (/(medium[-\s]?(light|lys)|mellem[-\s]?lys|mellemlys)/.test(blob)) return "medium";
+    if (/(?:^|[^a-zæøå])(?:mørk|mork|dark)(?:[^a-zæøå]|$)/.test(blob) || /italian|french\s*roast/.test(blob)) return "dark";
+    if (/(?:^|[^a-zæøå])(?:lys|light|blond)(?:[^a-zæøå]|$)/.test(blob)) return "light";
+    if (/(medium|mellem|city)/.test(blob)) return "medium";
+  }
+  const score = Number(bean?.roast_level_score ?? bean?.roaster_roast_level);
+  if (Number.isFinite(score) && score >= 1 && score <= 5) {
+    if (score <= 2) return "light";
+    if (score >= 4) return "dark";
+    return "medium";
+  }
+  return "";
+}
+
+function roastBadgeLabel(bean, kind) {
+  const raw = String(bean?.roast_level || "").trim();
+  const da = activeLang() === "da";
+  const catalog = {
+    light: da ? "Lys Ristning" : "Light Roast",
+    medium: da ? "Mellem Ristning" : "Medium Roast",
+    dark: da ? "Mørk Ristning" : "Dark Roast",
+  };
+  if (!raw) return catalog[kind] || "";
+  if (/ristning|roast/i.test(raw)) return raw;
+  if (/^(lys|light)$/i.test(raw)) return catalog.light;
+  if (/^(mørk|mork|dark)$/i.test(raw)) return catalog.dark;
+  if (/^(medium|mellem)$/i.test(raw)) return catalog.medium;
+  const suffix = da ? "Ristning" : "Roast";
+  if (raw.length <= 18) return `${raw} ${suffix}`;
+  return raw;
+}
+
+function roastBadge(bean) {
+  const kind = roastBadgeKind(bean);
+  if (!kind) return "";
+  return `<span class="roast-badge roast-badge-${kind}">${esc(roastBadgeLabel(bean, kind))}</span>`;
+}
+
 function beanRatingValue(bean) {
   const n = Number(bean?.avg_rating);
   return Number.isFinite(n) ? n : 0;
@@ -1216,10 +1259,10 @@ function exploreView() {
   const mapMode = state.exploreMode === "map";
   const cards = visibleBeans().map((bean) => {
     const photo = photoImg(bean.image_url, bean.snapshot_url, "bean-card-img");
-    return `<article class="relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
+    return `<article class="bean-card">
       ${heartBtn(bean, "absolute right-2 top-2 z-10")}
       <button data-open-bean="${bean.id}" class="w-full text-left">
-        <div class="bean-card-photo rounded-t-2xl">${photo || bagFallback("h-full")}</div>
+        <div class="bean-card-img-wrap bean-card-photo">${photo || bagFallback("h-full")}${roastBadge(bean)}</div>
         <div class="p-3">
           <p class="font-display text-lg font-semibold">${esc(bean.name)}</p>
           <p class="text-sm text-muted">${beanCardMeta(bean)}</p>

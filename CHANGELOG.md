@@ -2,6 +2,13 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.6] - 2026-08-29
+
+- snapshot: UI polish - added card depth, roast badges, rich topbar gradient, and iOS Dynamic Island safe-area support
+- Explore bean cards use a warm off-white surface, soft dual shadow, and a light hover lift. Product photos sit on a cream `#F7F3EE` frame with `object-fit: contain` so white box backgrounds blend in.
+- Roast level badges (Lys / Mellem / Mørk Ristning) sit on each card with light, medium, and dark mocha accents.
+- The sticky topbar uses a mocha `#2D1B14 → #4A281E` gradient with `viewport-fit=cover` and `env(safe-area-inset-*)` so title and tab bar stay clear of Dynamic Island and the home indicator while the chrome goes edge-to-edge.
+
 ## [6.8.5] - 2026-08-29
 
 - snapshot: fix - conditional origin rendering on bean cards and added explore sorting dropdown
