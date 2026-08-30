@@ -177,6 +177,11 @@ const state = {
   gearCustomName: "",
   gearCustomBrand: "",
   gearCustomImage: "",
+  gearAdminOpen: false,
+  gearAdminType: "espresso_machine",
+  gearAdminBrand: "",
+  gearAdminName: "",
+  gearAdminPreview: "",
   searchTimer: null,
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
@@ -201,7 +206,8 @@ const getLocalized = (jsonObj, lang, fallback) => i18nManager.getLocalized(jsonO
 const normalizeLang = (lang) => i18nManager.normalize(lang);
 const activeLang = () => i18nManager.active();
 const applyLanguage = (lang) => i18nManager.setLanguage(lang);
-const isAdmin = () => !!state.user?.is_admin;
+const isAdmin = () => !!state.user?.is_admin || state.user?.role === "admin";
+let gearAdminFile = null;
 
 function startBusy() {
   state.busy = true;
@@ -638,6 +644,28 @@ async function loadJournal() {
   } catch {
     state.journal = [];
   }
+}
+
+async function refreshGearSearch(query, kind, options = {}) {
+  const q = (query || "").trim();
+  const slot = kind || state.gearKind;
+  if (q.length < 2) {
+    state.gearCandidates = [];
+    state.gearHit = null;
+    return [];
+  }
+  const result = await api("/api/gear/lookup", {
+    method: "POST",
+    body: JSON.stringify({ query: q, kind: slot, lang: activeLang() }),
+    signal: options.signal,
+  });
+  const raw = Array.isArray(result.gear_candidates) && result.gear_candidates.length
+    ? result.gear_candidates
+    : (result.specs ? [result.specs] : []);
+  const hits = filterGearByKind(raw, slot);
+  state.gearCandidates = hits;
+  state.gearHit = hits[0] || null;
+  return hits;
 }
 
 async function persistGear(next) {
@@ -1879,6 +1907,35 @@ const GEAR_KIND_FALLBACKS = {
   gear_scale_kettle: { da: "Vægt & Kedel", en: "Scale & Kettle", de: "Waage & Kessel", fr: "Balance & bouilloire", es: "Báscula y hervidor" },
 };
 
+function gearAdminTypeDefs() {
+  const tpl = document.getElementById("gear-admin-types");
+  if (tpl) {
+    return [...tpl.content.querySelectorAll("option")].map((opt) => ({
+      id: opt.value || "espresso_machine",
+      key: opt.getAttribute("data-i18n") || "",
+      fallback: (opt.textContent || "").trim(),
+    }));
+  }
+  return [
+    { id: "espresso_machine", key: "gear_type_espresso_machine", fallback: "Espresso-maskine" },
+    { id: "grinder", key: "gear_type_grinder", fallback: "Kværn" },
+    { id: "brewer", key: "gear_type_brewer", fallback: "Brygger" },
+    { id: "scale_kettle", key: "gear_type_scale_kettle", fallback: "Vægt & Kedel" },
+  ];
+}
+
+function clearGearAdminForm() {
+  if (state.gearAdminPreview && state.gearAdminPreview.startsWith("blob:")) {
+    URL.revokeObjectURL(state.gearAdminPreview);
+  }
+  gearAdminFile = null;
+  state.gearAdminOpen = false;
+  state.gearAdminBrand = "";
+  state.gearAdminName = "";
+  state.gearAdminPreview = "";
+  state.gearAdminType = state.gearKind || "espresso_machine";
+}
+
 function gearKindTabDefs() {
   const tpl = document.getElementById("gear-kind-tabs");
   if (tpl) {
@@ -2031,6 +2088,36 @@ function gearPickerModal() {
   </div>`;
 }
 
+function gearAdminModal() {
+  if (!state.gearAdminOpen || !isAdmin()) return "";
+  const types = gearAdminTypeDefs().map(({ id, key, fallback }) => {
+    const label = gearTabLabel(key, fallback);
+    const selected = state.gearAdminType === id ? " selected" : "";
+    return `<option value="${esc(id)}" data-i18n="${esc(key)}"${selected}>${esc(label)}</option>`;
+  }).join("");
+  const preview = state.gearAdminPreview
+    ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearAdminPreview, "", "h-full w-full object-contain", gearImgFallback())}</div>`
+    : `<p class="text-center text-sm text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</p>`;
+  return `<div id="gear-admin" data-close-gear-admin class="fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-admin-sheet>
+      <form id="gear-admin-form" class="space-y-3 p-5">
+        <h2 class="font-display text-xl font-bold" data-i18n="gear_admin_title">${esc(t("gear_admin_title"))}</h2>
+        ${preview}
+        <label class="block text-sm font-medium">
+          <span data-i18n="gear_admin_type">${esc(t("gear_admin_type"))}</span>
+          <select id="gear-admin-type" class="mt-1 min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-aria="gear_admin_type" aria-label="${esc(t("gear_admin_type"))}">${types}</select>
+        </label>
+        <input id="gear-admin-brand" value="${esc(state.gearAdminBrand)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="gear_admin_brand_ph" placeholder="${esc(t("gear_admin_brand_ph"))}">
+        <input id="gear-admin-name" value="${esc(state.gearAdminName)}" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="gear_admin_name_ph" placeholder="${esc(t("gear_admin_name_ph"))}">
+        <input id="gear-admin-photo-input" type="file" accept="image/*" class="sr-only">
+        <button type="button" id="gear-admin-photo-pick" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_admin_photo">${esc(t("gear_admin_photo"))}</button>
+        <button type="submit" id="gear-admin-save" class="min-h-12 w-full rounded-xl bg-terracotta text-sm font-semibold text-cream" data-i18n="gear_admin_create">${esc(t("gear_admin_create"))}</button>
+        <button type="button" data-close-gear-admin class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
+      </form>
+    </article>
+  </div>`;
+}
+
 function gearCustomModal() {
   if (!state.gearCustomOpen) return "";
   const preview = state.gearCustomImage
@@ -2072,6 +2159,7 @@ function gearSetup() {
       <button type="button" id="gear-lookup" class="min-h-12 shrink-0 rounded-xl bg-terracotta px-3 text-sm font-semibold text-cream" data-i18n="gear_lookup">${esc(t("gear_lookup"))}</button>
     </div>
     <button type="button" data-open-gear-custom class="flex min-h-11 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
+    ${isAdmin() ? `<button type="button" id="gear-admin-open" class="flex min-h-11 w-full items-center justify-center rounded-xl bg-espresso text-sm font-semibold text-cream" data-i18n="gear_admin_add">${esc(t("gear_admin_add"))}</button>` : ""}
     ${saved || `<p class="text-sm text-muted" data-i18n="gear_empty">${esc(t("gear_empty"))}</p>`}
   </section>`;
 }
@@ -2396,7 +2484,7 @@ function render() {
     return;
   }
   document.documentElement.lang = state.config.lang || i18nManager.FALLBACK_LANG;
-  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.journalOpen)));
+  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen)));
   if (!state.user) {
     root.innerHTML = authView();
     bindAuth();
@@ -2405,7 +2493,7 @@ function render() {
   }
   const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView };
   const body = (views[state.tab] || exploreView)();
-  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${journalModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
 }
@@ -2900,17 +2988,7 @@ function bindApp() {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const result = await api("/api/gear/lookup", {
-        method: "POST",
-        body: JSON.stringify({ query, kind: state.gearKind, lang: activeLang() }),
-        signal: ctrl.signal,
-      });
-      const raw = Array.isArray(result.gear_candidates) && result.gear_candidates.length
-        ? result.gear_candidates
-        : (result.specs ? [result.specs] : []);
-      const hits = filterGearByKind(raw, state.gearKind);
-      state.gearCandidates = hits;
-      state.gearHit = hits[0] || null;
+      const hits = await refreshGearSearch(query, state.gearKind, { signal: ctrl.signal });
       state.gearPickerOpen = hits.length > 0;
       stopBusy();
       if (!hits.length) toast(t("gear_lookup_fail"));
@@ -3038,6 +3116,93 @@ function bindApp() {
       const item = userGear().gear_specs.find((row) => row.id === id);
       if (item) openGearCustom(item);
     });
+  });
+  const closeGearAdmin = () => {
+    clearGearAdminForm();
+    render();
+  };
+  $("#gear-admin-open")?.addEventListener("click", () => {
+    if (!isAdmin()) return;
+    state.gearAdminOpen = true;
+    state.gearAdminType = state.gearKind || "espresso_machine";
+    render();
+  });
+  document.querySelectorAll("[data-close-gear-admin]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (el.hasAttribute("data-gear-admin-sheet")) return;
+      if (event.target === el || el.matches("button")) closeGearAdmin();
+    });
+  });
+  $("[data-gear-admin-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  $("#gear-admin-type")?.addEventListener("change", (event) => {
+    state.gearAdminType = event.target.value || "espresso_machine";
+  });
+  $("#gear-admin-brand")?.addEventListener("input", (event) => {
+    state.gearAdminBrand = event.target.value;
+  });
+  $("#gear-admin-name")?.addEventListener("input", (event) => {
+    state.gearAdminName = event.target.value;
+  });
+  $("#gear-admin-photo-pick")?.addEventListener("click", () => {
+    const input = $("#gear-admin-photo-input");
+    if (!input) return;
+    input.value = "";
+    input.click();
+  });
+  $("#gear-admin-photo-input")?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return toast(t("gear_photo_required"));
+    if (state.gearAdminPreview && state.gearAdminPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(state.gearAdminPreview);
+    }
+    gearAdminFile = file;
+    state.gearAdminPreview = URL.createObjectURL(file);
+    render();
+  });
+  $("#gear-admin-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin()) return;
+    const brand = (state.gearAdminBrand || $("#gear-admin-brand")?.value || "").trim();
+    const name = (state.gearAdminName || $("#gear-admin-name")?.value || "").trim();
+    const kind = $("#gear-admin-type")?.value || state.gearAdminType || state.gearKind || "espresso_machine";
+    if (!name) return toast(t("gear_name_required"));
+    const body = new FormData();
+    body.append("brand", brand);
+    body.append("name", name);
+    body.append("type", kind);
+    body.append("kind", kind);
+    if (gearAdminFile) body.append("file", gearAdminFile);
+    startBusy();
+    render();
+    try {
+      const result = await api("/api/gear", { method: "POST", body });
+      const created = result.gear || result.item || null;
+      const query = name || brand;
+      state.gearKind = kind;
+      state.gearQuery = query;
+      clearGearAdminForm();
+      try {
+        const hits = await refreshGearSearch(query, kind);
+        if (created && !hits.some((item) => item.id === created.id)) {
+          state.gearCandidates = [created, ...hits];
+          state.gearHit = created;
+        }
+      } catch {
+        if (created) {
+          state.gearCandidates = [created];
+          state.gearHit = created;
+        }
+      }
+      state.gearPickerOpen = (state.gearCandidates || []).length > 0;
+      stopBusy();
+      toast(t("gear_admin_created"));
+      render();
+    } catch (err) {
+      stopBusy();
+      state.gearAdminOpen = true;
+      toast(t(err.detail || "gear_admin_fail"));
+      render();
+    }
   });
   document.querySelectorAll("[data-gear-remove]").forEach((btn) => {
     btn.addEventListener("click", async () => {

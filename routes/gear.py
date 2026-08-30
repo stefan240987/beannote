@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 import db as db_mod
-from db import GEAR_CATALOG, normalize_gear_item, save_bean_image, update_user_gear
-from deps import current_user
+from db import GEAR_CATALOG, connect, normalize_gear_item, save_bean_image, update_user_gear
+from deps import current_user, require_admin
 from ocr import encode_scan_jpeg, lookup_gear_catalog
-from schemas import GearIn, GearLookupIn
+from schemas import GearCreateIn, GearIn, GearLookupIn
 from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/gear", tags=["gear"])
 
 _STATIC_GEAR_PREFIX = "/static/img/gear/"
 _GEAR_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
+_GEAR_IMG_DIR = Path(__file__).resolve().parent.parent / "static" / "img" / "gear"
 
 
 def local_gear_image_url(url: str) -> str:
@@ -81,10 +86,118 @@ def item_gear_kind(item: dict[str, Any]) -> str:
     )
 
 
+def _ensure_gear_table(conn: Any) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gear (
+            id TEXT PRIMARY KEY,
+            brand TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            highlights TEXT NOT NULL DEFAULT '[]',
+            specs TEXT NOT NULL DEFAULT '{}',
+            image_url TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_gear_brand_name ON gear (brand, name)"
+    )
+
+
+def _row_to_catalog(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    highlights = data.get("highlights")
+    specs = data.get("specs")
+    if isinstance(highlights, str):
+        try:
+            highlights = json.loads(highlights)
+        except json.JSONDecodeError:
+            highlights = []
+    if isinstance(specs, str):
+        try:
+            specs = json.loads(specs)
+        except json.JSONDecodeError:
+            specs = {}
+    return {
+        "id": str(data.get("id") or ""),
+        "brand": str(data.get("brand") or ""),
+        "name": str(data.get("name") or ""),
+        "type": str(data.get("type") or data.get("kind") or ""),
+        "kind": str(data.get("kind") or data.get("type") or ""),
+        "aliases": [],
+        "highlights": highlights if isinstance(highlights, list) else [],
+        "specs": specs if isinstance(specs, dict) else {},
+        "image_url": str(data.get("image_url") or ""),
+    }
+
+
+def _load_db_gear() -> list[dict[str, Any]]:
+    try:
+        with connect() as conn:
+            _ensure_gear_table(conn)
+            rows = conn.execute(
+                "SELECT id, brand, name, type, kind, highlights, specs, image_url FROM gear"
+            ).fetchall()
+    except Exception as exc:
+        print(f"gear catalog load failed: {exc}")
+        return []
+    return [_row_to_catalog(row) for row in rows]
+
+
+def _all_catalog() -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for raw in (*_load_db_gear(), *GEAR_CATALOG):
+        gid = str(raw.get("id") or "").strip()
+        key = gid or str(raw.get("name") or "").strip().lower()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(raw)
+    return out
+
+
+def _safe_gear_slug(brand: str, name: str) -> str:
+    base = db_mod._gear_slug(f"{brand} {name}".strip() or name or "gear") or "gear"
+    return re.sub(r"[^a-z0-9-]+", "", base).strip("-") or "gear"
+
+
+def _unique_gear_slug(
+    brand: str,
+    name: str,
+    existing_id: str = "",
+    taken: set[str] | None = None,
+) -> str:
+    slug = _safe_gear_slug(brand, name)
+    if existing_id:
+        return existing_id
+    used = set(taken or ())
+    candidate = slug
+    n = 2
+    while candidate in used or (_GEAR_IMG_DIR / f"{candidate}.jpg").exists():
+        candidate = f"{slug}-{n}"
+        n += 1
+    return candidate
+
+
+def save_gear_catalog_image(image_bytes: bytes, slug: str) -> str:
+    safe = re.sub(r"[^a-z0-9-]+", "", (slug or "").lower()).strip("-") or "gear"
+    if ".." in safe or "/" in safe:
+        raise ValueError("invalid_slug")
+    _GEAR_IMG_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _GEAR_IMG_DIR / f"{safe}.jpg"
+    dest.write_bytes(image_bytes)
+    return f"{_STATIC_GEAR_PREFIX}{safe}.jpg"
+
+
 def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id: dict[str, dict[str, Any]] = {}
     by_name: dict[str, dict[str, Any]] = {}
-    for raw in GEAR_CATALOG:
+    for raw in _all_catalog():
         gid = str(raw.get("id") or "").strip()
         key = str(raw.get("name") or raw.get("model_name") or "").strip().lower()
         if gid:
@@ -125,7 +238,7 @@ def search_catalog(query: str, kind: str) -> list[dict[str, Any]]:
         return []
     slot = _canonical_gear_kind(kind) if kind else ""
     ranked: list[tuple[float, dict[str, Any]]] = []
-    for raw in GEAR_CATALOG:
+    for raw in _all_catalog():
         if slot and item_gear_kind(raw) != slot:
             continue
         name = db_mod._fold_gear_text(str(raw.get("name") or ""))
@@ -220,6 +333,128 @@ async def gear_photo(
         raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     image_url = await asyncio.to_thread(save_bean_image, jpeg, "gear.jpg")
     return {"image_url": image_url}
+
+
+async def _read_create_payload(request: Request) -> tuple[GearCreateIn, bytes, str]:
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="invalid_json")
+        return GearCreateIn.model_validate(raw), b"", ""
+    form = await request.form()
+    payload = GearCreateIn.model_validate(
+        {
+            "brand": form.get("brand") or "",
+            "name": form.get("name") or "",
+            "type": form.get("type") or "",
+            "kind": form.get("kind") or "",
+            "highlights": form.get("highlights") or [],
+            "specs": form.get("specs") or {},
+        }
+    )
+    upload = form.get("file") or form.get("image") or form.get("photo")
+    raw_bytes = b""
+    filename = ""
+    if isinstance(upload, StarletteUploadFile):
+        raw_bytes = await upload.read()
+        filename = str(upload.filename or "")
+    return payload, raw_bytes, filename
+
+
+@router.post("")
+async def create_gear(
+    request: Request,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    del _admin
+    try:
+        payload, raw_bytes, filename = await _read_create_payload(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="gear_admin_fail") from exc
+    slot = _canonical_gear_kind(payload.type or payload.kind)
+    if slot not in _GEAR_SLOTS:
+        raise HTTPException(status_code=422, detail="gear_type_invalid")
+    kind = _canonical_gear_kind(payload.kind) if payload.kind else slot
+    if kind not in _GEAR_SLOTS:
+        kind = slot
+    name = payload.name.strip()
+    brand = payload.brand.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="gear_name_required")
+    image_url = ""
+    with connect() as conn:
+        _ensure_gear_table(conn)
+        existing = conn.execute(
+            "SELECT * FROM gear WHERE lower(name) = lower(?) AND lower(brand) = lower(?)",
+            (name, brand),
+        ).fetchone()
+        existing_id = str(existing["id"]) if existing else ""
+        taken = {str(row["id"]) for row in conn.execute("SELECT id FROM gear").fetchall()}
+        taken.update(str(item.get("id") or "") for item in GEAR_CATALOG)
+        slug = _unique_gear_slug(brand, name, existing_id, taken)
+        if raw_bytes:
+            try:
+                jpeg = await asyncio.to_thread(encode_scan_jpeg, raw_bytes)
+                image_url = await asyncio.to_thread(save_gear_catalog_image, jpeg, slug)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail="gear_photo_required") from exc
+        elif existing:
+            image_url = str(existing["image_url"] or "")
+        highlights = list(payload.highlights or [])
+        specs = dict(payload.specs or {})
+        if existing and not highlights:
+            try:
+                parsed = json.loads(existing["highlights"] or "[]")
+                highlights = parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                highlights = []
+        if existing and not specs:
+            try:
+                parsed = json.loads(existing["specs"] or "{}")
+                specs = parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                specs = {}
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        conn.execute(
+            """
+            INSERT INTO gear (id, brand, name, type, kind, highlights, specs, image_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                brand = excluded.brand,
+                name = excluded.name,
+                type = excluded.type,
+                kind = excluded.kind,
+                highlights = excluded.highlights,
+                specs = excluded.specs,
+                image_url = excluded.image_url
+            """,
+            (
+                slug,
+                brand,
+                name,
+                slot,
+                kind,
+                json.dumps(highlights if isinstance(highlights, list) else [], ensure_ascii=False),
+                json.dumps(specs if isinstance(specs, dict) else {}, ensure_ascii=False),
+                image_url,
+                now,
+            ),
+        )
+        row = conn.execute("SELECT * FROM gear WHERE id = ?", (slug,)).fetchone()
+    del filename
+    card = normalize_gear_item(_row_to_catalog(row))
+    if not card:
+        raise HTTPException(status_code=422, detail="gear_admin_fail")
+    card["kind"] = kind
+    card["type"] = slot
+    card["image_url"] = local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    return {"gear": card, "item": card}
 
 
 @router.put("")

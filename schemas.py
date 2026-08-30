@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -81,3 +82,43 @@ class GearIn(BaseModel):
     grinder: str = ""
     brewer_types: list[str] = Field(default_factory=list)
     gear_specs: Any = Field(default_factory=list)
+
+
+class GearCreateIn(BaseModel):
+    brand: str = Field(default="", max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    type: str = Field(min_length=1, max_length=40)
+    kind: str = ""
+    highlights: Any = Field(default_factory=list)
+    specs: Any = Field(default_factory=dict)
+
+    @field_validator("brand", "name", "type", "kind", mode="before")
+    @classmethod
+    def strip_text(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @field_validator("highlights", mode="before")
+    @classmethod
+    def parse_highlights(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return [part.strip() for part in value.split(",") if part.strip()][:8]
+        if isinstance(value, list):
+            return [str(part).strip() for part in value if str(part).strip()][:8]
+        return []
+
+    @field_validator("specs", mode="before")
+    @classmethod
+    def parse_specs(cls, value: Any) -> dict[str, Any]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        return value if isinstance(value, dict) else {}

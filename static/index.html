@@ -90,6 +90,12 @@
     <button type="button" class="gear-tab" data-gear-kind="brewer" data-i18n="gear_brewer">Brygger</button>
     <button type="button" class="gear-tab" data-gear-kind="scale_kettle" data-i18n="gear_scale_kettle">Vægt &amp; Kedel</button>
   </template>
+  <template id="gear-admin-types">
+    <option value="espresso_machine" data-i18n="gear_type_espresso_machine">Espresso-maskine</option>
+    <option value="grinder" data-i18n="gear_type_grinder">Kværn</option>
+    <option value="brewer" data-i18n="gear_type_brewer">Brygger</option>
+    <option value="scale_kettle" data-i18n="gear_type_scale_kettle">Vægt &amp; Kedel</option>
+  </template>
   <template id="sort-beans-select">
     <select id="sortBeansSelect" class="explore-sort" data-i18n-aria="sort_beans" aria-label="Sorter">
       <option value="rating_desc" data-i18n="sort_rating_desc">Bedste bedømmelse</option>
@@ -101,6 +107,6 @@
   </template>
   <div id="app" class="mx-auto flex min-h-dvh max-w-lg flex-col"></div>
   <input id="scan-input" type="file" accept="image/*" class="scan-file-input" tabindex="-1" aria-hidden="true">
-  <script src="/static/js/app.js?v=6.8.9"></script>
+  <script src="/static/js/app.js?v=6.8.10"></script>
 </body>
 </html>

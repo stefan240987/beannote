@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.10] - 2026-08-30
+
+- snapshot: feat - dynamic admin gear creation endpoint and frontend modal
+- Admins can add catalog gear from Coffee Setup: type, brand, model, and an optional product photo.
+- `POST /api/gear` (admin-only) writes `/static/img/gear/{slug}.jpg` and inserts the item into the `gear` table so search finds it immediately.
+
 ## [6.8.9] - 2026-08-30
 
 - snapshot: refactor - 5-tab bottom navigation (Explore, Favorites, Scan, Diary, Profile) and removed top view toggles
