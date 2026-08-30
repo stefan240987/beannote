@@ -2420,13 +2420,42 @@ def fetch_product_page(url: str, name: str = "", roaster: str = "", timeout: flo
     return html, focus_product_text(html_to_visible_text(html), name, roaster)
 
 
-def _lookup_cache_key(name: str, roaster: str, lang: str) -> tuple[str, str, str]:
-    return (name.strip().lower(), roaster.strip().lower(), _copy_lang(lang))
+def _lookup_cache_key(
+    name: str,
+    roaster: str,
+    lang: str,
+    page_url: str = "",
+) -> tuple[str, str, str, str]:
+    return (
+        name.strip().lower(),
+        roaster.strip().lower(),
+        _copy_lang(lang),
+        sanitize_roaster_url(page_url),
+    )
 
 
-def _lookup_cache_token(name: str, roaster: str, lang: str) -> str:
-    a, b, c = _lookup_cache_key(name, roaster, lang)
-    return f"{a}\x1f{b}\x1f{c}"
+def _lookup_cache_token(name: str, roaster: str, lang: str, page_url: str = "") -> str:
+    return "\x1f".join(_lookup_cache_key(name, roaster, lang, page_url))
+
+
+def _is_product_page_url(url: str, name: str = "") -> bool:
+    """Homepage-only links are not a product page we can extract a story from."""
+    clean = sanitize_roaster_url(url)
+    if not clean or is_unwanted_product_url(clean, name):
+        return False
+    path = (urlparse(clean).path or "").strip("/")
+    return bool(path)
+
+
+def _live_product_page(url: str, name: str = "", roaster: str = "") -> tuple[str, str, str]:
+    """Return (url, html, text) only when the page exists and has body copy."""
+    if not _is_product_page_url(url, name):
+        return "", "", ""
+    clean = sanitize_roaster_url(url)
+    html, text = fetch_product_page(clean, name, roaster)
+    if not (html or "").strip() or not (text or "").strip():
+        return "", "", ""
+    return clean, html, text
 
 
 def _gemini_generate_json(
@@ -2514,10 +2543,11 @@ def _gemini_official_product_lookup(
     roaster: str,
     key: str,
     lang: str = "da",
+    preferred_url: str = "",
 ) -> dict[str, Any]:
-    """Find official URL, fetch the page, extract only published fields."""
-    cache_key = _lookup_cache_key(name, roaster, lang)
-    cache_token = _lookup_cache_token(name, roaster, lang)
+    """Use a known live product URL first. Never extract from a guessed 404 slug."""
+    cache_key = _lookup_cache_key(name, roaster, lang, preferred_url)
+    cache_token = _lookup_cache_token(name, roaster, lang, preferred_url)
     with _PRODUCT_LOOKUP_LOCK:
         cached = _PRODUCT_LOOKUP_CACHE.get(cache_key)
     if not cached:
@@ -2533,9 +2563,13 @@ def _gemini_official_product_lookup(
     if cached:
         return dict(cached)
 
-    found = _gemini_find_product_page(name, roaster, key)
-    page_url = sanitize_roaster_url(found.get("product_page_url"))
-    html, page_text = fetch_product_page(page_url, name, roaster) if page_url else ("", "")
+    found: dict[str, Any] = {}
+    page_url, html, page_text = _live_product_page(preferred_url, name, roaster)
+    if not page_text:
+        found = _gemini_find_product_page(name, roaster, key)
+        page_url, html, page_text = _live_product_page(
+            found.get("product_page_url") or "", name, roaster
+        )
     data: dict[str, Any] = {}
     if page_text:
         try:
@@ -2550,21 +2584,26 @@ def _gemini_official_product_lookup(
                 "flavor_tags": flavor_tags_lang_map(page_text),
                 "product_page_url": page_url,
             }
-    elif _blank(data):
+    else:
         from google.genai import types
 
         tools = _google_search_tools(types)
         data = _gemini_generate_json(key, _grounded_product_prompt(name, roaster, lang), 30_000, tools)
-        page_url = page_url or sanitize_roaster_url(data.get("product_page_url"))
-        if page_url and not html:
-            html, page_text = fetch_product_page(page_url, name, roaster)
-            if page_text and _blank(data.get("flavor_tags")):
-                data["flavor_tags"] = flavor_tags_lang_map(page_text)
+        page_url, html, page_text = _live_product_page(
+            data.get("product_page_url") or found.get("product_page_url") or "",
+            name,
+            roaster,
+        )
+        if page_text and _blank(data.get("flavor_tags")):
+            data["flavor_tags"] = flavor_tags_lang_map(page_text)
+        if not page_text:
+            data["product_page_url"] = ""
     if found.get("roaster_url") and not data.get("roaster_url"):
         data["roaster_url"] = found["roaster_url"]
-    if page_url:
-        data["product_page_url"] = page_url
+    data["product_page_url"] = page_url
     data = ground_extracted_fields(data, page_text=page_text, html=html, lang=lang)
+    if not page_text:
+        data["product_page_url"] = ""
     data["_source_page_text"] = page_text
     data["_source_html"] = html
     with _PRODUCT_LOOKUP_LOCK:
@@ -2602,7 +2641,15 @@ def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") ->
         return bag
     official: dict[str, Any] = {}
     try:
-        official = _gemini_official_product_lookup(name, roaster, key, lang)
+        official = _gemini_official_product_lookup(
+            name,
+            roaster,
+            key,
+            lang,
+            preferred_url=sanitize_roaster_url(
+                bag.get("product_page_url") or bag.get("roaster_url")
+            ),
+        )
     except Exception:
         official = {}
     page_text = str(official.pop("_source_page_text", "") or "")
@@ -2613,12 +2660,20 @@ def enrich_scan_with_official_page(optical: dict[str, Any], lang: str = "da") ->
     return merged
 
 
-def enrich_bean_from_web(name: str, roaster: str, lang: str = "da") -> dict[str, Any]:
+def enrich_bean_from_web(
+    name: str,
+    roaster: str,
+    lang: str = "da",
+    page_url: str = "",
+) -> dict[str, Any]:
     """Grounded lookup for an existing archive bean that is missing a full story/profile."""
+    known = sanitize_roaster_url(page_url)
     optical = {
         "name": (name or "").strip(),
         "bean_name": (name or "").strip(),
         "roaster": (roaster or "").strip(),
+        "roaster_url": known,
+        "product_page_url": known,
     }
     if not optical["name"] and not optical["roaster"]:
         raise ValueError("name_roaster_required")

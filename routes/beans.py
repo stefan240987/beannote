@@ -246,7 +246,12 @@ def process_enrich_job(payload: dict[str, Any], user_id: int) -> dict[str, Any]:
     bean = get_bean(bean_id, user_id=user_id)
     if not bean:
         raise RuntimeError("not_found")
-    result = enrich_bean_from_web(bean.get("name") or "", bean.get("roaster") or "", lang=lang)
+    result = enrich_bean_from_web(
+        bean.get("name") or "",
+        bean.get("roaster") or "",
+        lang=lang,
+        page_url=str(bean.get("roaster_url") or bean.get("product_page_url") or ""),
+    )
     if isinstance(result, dict):
         result = dict(result)
         result["story"] = clean_story_field(result.get("story"))
@@ -267,7 +272,7 @@ def process_enrich_job(payload: dict[str, Any], user_id: int) -> dict[str, Any]:
 def enrich_bean(
     bean_id: int,
     request: Request,
-    user: dict[str, Any] = Depends(current_user),
+    user: dict[str, Any] = Depends(require_admin),
 ) -> JSONResponse:
     bean = get_bean(bean_id, user_id=user["id"])
     if not bean:

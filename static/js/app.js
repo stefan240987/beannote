@@ -2005,7 +2005,7 @@ function beanModal(profile) {
         <section>
           ${originMapBox(bean)}
         </section>
-        ${isGuest() ? "" : `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>`}
+        ${isAdmin() ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
         ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
         ${editor}
         ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
@@ -3593,7 +3593,7 @@ function bindApp() {
     requestAnimationFrame(() => $("#rate-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   });
   document.querySelectorAll("[data-enrich-bean]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (!state.user) { promptAuth(); return; }
+    if (!isAdmin()) return;
     const id = state.profile?.bean?.id;
     if (!id) return;
     startBusy();

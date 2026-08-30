@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from db import infer_intensity_scores
 from ocr import (
+    _PRODUCT_LOOKUP_CACHE,
+    _gemini_official_product_lookup,
+    _is_product_page_url,
+    _live_product_page,
     count_circle_meters,
     extract_flavor_canons,
     flavor_appears_in_text,
@@ -243,6 +248,85 @@ class EndToEndPageCopyTests(unittest.TestCase):
         self.assertIn("Karamel", da)
         self.assertFalse(any("rund" in tag.lower() or tag == "Dyb smag" for tag in da))
         self.assertIsNone(grounded.get("acidity_score") or grounded.get("roaster_acidity"))
+
+
+class LiveProductLookupTests(unittest.TestCase):
+    def setUp(self):
+        _PRODUCT_LOOKUP_CACHE.clear()
+
+    def test_homepage_is_not_a_product_page(self):
+        self.assertFalse(_is_product_page_url("https://www.dinluksus.dk", "Espresso Crema"))
+        self.assertTrue(
+            _is_product_page_url(
+                "https://www.dinluksus.dk/products/espresso-crema-blend-500g",
+                "Espresso Crema",
+            )
+        )
+
+    def test_dead_url_is_rejected(self):
+        with patch("ocr.fetch_product_page", return_value=("", "")):
+            self.assertEqual(
+                _live_product_page(
+                    "https://www.dinluksus.dk/products/espresso-crema-hele-bonner-500g",
+                    "Espresso Crema",
+                    "Dinluksus",
+                ),
+                ("", "", ""),
+            )
+
+    def test_preferred_live_url_skips_google(self):
+        live = "https://www.dinluksus.dk/products/espresso-crema-blend-500g"
+        with patch("ocr.fetch_product_page", return_value=("<html>Crema</html>", "Espresso Crema Blend tranebær")), \
+             patch("ocr._gemini_find_product_page") as find, \
+             patch(
+                 "ocr._gemini_extract_from_page",
+                 return_value={
+                     "origin": "Colombia & Indien",
+                     "official_notes": "tranebær, nødder og kakao",
+                     "flavor_tags": {"da": ["Kakao"]},
+                     "product_page_url": live,
+                 },
+             ), \
+             patch("ocr.ground_extracted_fields", side_effect=lambda data, **_k: data), \
+             patch("jobs.lookup_cache_get", return_value=None), \
+             patch("jobs.lookup_cache_set"):
+            data = _gemini_official_product_lookup(
+                "Espresso Crema hele bønner 500g",
+                "Dinluksus",
+                "key",
+                "da",
+                preferred_url=live,
+            )
+        find.assert_not_called()
+        self.assertEqual(data.get("product_page_url"), live)
+
+    def test_guessed_dead_url_is_dropped(self):
+        fake = "https://www.dinluksus.dk/products/espresso-crema-hele-bonner-500g"
+        with patch("ocr.fetch_product_page", return_value=("", "")), \
+             patch(
+                 "ocr._gemini_find_product_page",
+                 return_value={
+                     "product_page_url": fake,
+                     "roaster_url": "https://www.dinluksus.dk",
+                     "bean_name": "",
+                     "roaster": "Dinluksus",
+                 },
+             ), \
+             patch(
+                 "ocr._gemini_generate_json",
+                 return_value={"product_page_url": fake, "story": {"da": "hallucination"}},
+             ), \
+             patch("ocr.ground_extracted_fields", side_effect=lambda data, **_k: data), \
+             patch("ocr._google_search_tools", return_value=[]), \
+             patch("jobs.lookup_cache_get", return_value=None), \
+             patch("jobs.lookup_cache_set"):
+            data = _gemini_official_product_lookup(
+                "Espresso Crema hele bønner 500g",
+                "Dinluksus",
+                "key",
+                "da",
+            )
+        self.assertEqual(data.get("product_page_url") or "", "")
 
 
 if __name__ == "__main__":

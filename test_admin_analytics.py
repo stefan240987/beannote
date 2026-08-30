@@ -151,6 +151,17 @@ class AdminAnalyticsTests(unittest.TestCase):
         grown = admin_analytics(30)
         self.assertEqual(grown["traffic"]["pageviews"], before["traffic"]["pageviews"] + 1)
 
+    def test_member_cannot_enrich_bean(self):
+        from db import insert_bean
+
+        created = insert_bean("Audit Enrich Bean", "Audit Roaster", skip_fuzzy=True)
+        bean_id = created["bean"]["id"]
+        self._login("member@beannote.test")
+        res = self.client.post(f"/api/beans/{bean_id}/enrich?lang=da", json={})
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.json().get("detail"), "forbidden")
+        self.client.cookies.clear()
+
     def test_admin_near_match_queue_keep_and_delete(self):
         from db import insert_bean
 

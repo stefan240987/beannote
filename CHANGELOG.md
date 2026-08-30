@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.15] - 2026-08-30
+
+- snapshot: fix - Fetch AI uses a live shop URL and is admin-only
+- Enrich no longer Googles a guessed Shopify slug when the bean already has a product link. Dead URLs are dropped before extract. Only admins see and can call Fetch AI Story & Profile.
+
 ## [1.1.14] - 2026-08-30
 
 - snapshot: fix - Dinluksus Crema and Brasil shop URLs are not the same bean
