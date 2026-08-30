@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.19] - 2026-08-30
+
+- snapshot: feat - direct mobile header support button placement without version tag dependency
+- Mobile header shows a compact ☕ Støt pill on the right that opens the Support App modal. Desktop keeps using the sidebar support card.
+
 ## [1.1.18] - 2026-08-30
 
 - snapshot: feat - moved support app widget to desktop sidebar footer with eye-catching terracotta card design

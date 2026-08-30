@@ -1504,10 +1504,28 @@ function header() {
     <header class="header">
       <div class="header-row">
         <h1 class="header-title">${t("app_name")}</h1>
+        ${mobileHeaderSupportBtn()}
       </div>
     </header>
     ${explore}
   </div>`;
+}
+
+function mobileHeaderSupportBtn() {
+  if (!supportEnabled()) return "";
+  const tpl = document.getElementById("mobile-support-btn");
+  if (tpl) {
+    const wrap = document.createElement("div");
+    wrap.appendChild(tpl.content.cloneNode(true));
+    return wrap.innerHTML;
+  }
+  return `<button type="button" id="mobileSupportBtn" class="header-support-btn">☕ Støt</button>`;
+}
+
+function showSupportModal() {
+  if (!supportEnabled()) return;
+  state.supportOpen = true;
+  render();
 }
 
 function exploreToolbar() {
@@ -3667,11 +3685,9 @@ function bindApp() {
       if (event.currentTarget === event.target) closeBean();
     });
   });
+  $("#mobileSupportBtn")?.addEventListener("click", () => showSupportModal());
   document.querySelectorAll("[data-open-support]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.supportOpen = true;
-      render();
-    });
+    btn.addEventListener("click", () => showSupportModal());
   });
   $("[data-support-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
   document.querySelectorAll("[data-close-support]").forEach((el) => {

@@ -93,10 +93,10 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 }
 .header-row {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  align-items: center;
   width: 100%;
+  gap: 0.75rem;
   height: 54px;
 }
 .header-title {
@@ -106,6 +106,21 @@ body { padding-bottom: env(safe-area-inset-bottom); }
   letter-spacing: -0.02em;
   line-height: 1;
   color: #F7EFE6;
+}
+.header-support-btn {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(184, 92, 56, 0.3);
+  color: #FFFDF9;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.header-support-btn:active {
+  opacity: 0.8;
 }
 .explore-toolbar {
   background: #FFFDF9;
@@ -1000,6 +1015,9 @@ button.gear-badge-locked {
     padding-left: var(--nav-rail);
   }
   .header {
+    display: none;
+  }
+  .header-support-btn {
     display: none;
   }
   .app-chrome {
