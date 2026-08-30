@@ -1996,40 +1996,50 @@ function beanModal(profile) {
     suitableFor = [];
   }
   const suitableLine = suitabilityLine(suitableFor);
-  const extras = rating ? "" : `${retailerActions(bean)}
-          ${flavorPills || parseSuitableFor(suitableFor).length ? `<div class="flex flex-wrap items-center gap-1.5">${flavorPills}${suitableLine}</div>` : ""}
+  const rateBtn = rating ? "" : `<button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>`;
+  const leftCta = rating ? "" : `<div class="bean-modal-cta">
+          ${rateBtn}
+          ${retailerActions(bean)}
+        </div>`;
+  const leftSuit = (!rating && suitableLine) ? `<div class="bean-modal-suitable">${suitableLine}</div>` : "";
+  const flavorRow = flavorPills ? `<div class="bean-modal-flavors flex flex-wrap items-center gap-1.5">${flavorPills}</div>` : "";
+  const rightBody = rating ? "" : `<div class="bean-modal-body">
+          ${flavorRow}
           ${metaBadges(bean)}
-          ${storyBlock(bean.story)}`;
-  const footer = rating ? "" : `${roasterProfileCard(profile)}
-        ${personalLogSection(profile)}
-        <section>
-          ${originMapBox(bean)}
-        </section>
-        ${isAdmin() ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
-        ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
-        ${editor}
-        ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
-        ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}`;
+          ${storyBlock(bean.story)}
+          ${roasterProfileCard(profile)}
+          <div class="bean-modal-recipes">${personalLogSection(profile)}</div>
+          <section class="bean-modal-map">${originMapBox(bean)}</section>
+          ${isAdmin() ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
+          ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
+          ${editor}
+          ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
+          ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
+        </div>`;
   return `<div id="bean-modal" data-close-modal class="modal-overlay fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
-    <article class="modal-card bean-modal-content relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+    <article class="modal-card bean-modal-content bean-modal-container relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
       <div class="modal-close-bar">
         <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
-      <div class="modal-cover rounded-t-3xl sm:rounded-t-3xl">
-        ${cover}
-        ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
-        ${changePhoto}
-      </div>
-      <div class="space-y-4 p-4 ${rating ? "pb-6" : "pb-8"}">
-        <section class="space-y-3">
-          <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
-          <p class="text-sm text-muted">${esc(info)}</p>
-          ${reviewBox}
-          ${rating ? "" : `<button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>`}
-          ${rating ? rateForm() : ""}
-          ${extras}
-        </section>
-        ${footer}
+      <div class="bean-modal-grid">
+        <div class="bean-modal-col-left">
+          <div class="modal-cover bean-modal-cover rounded-t-3xl sm:rounded-t-3xl">
+            ${cover}
+            ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
+            ${changePhoto}
+          </div>
+          ${leftCta}
+          ${leftSuit}
+        </div>
+        <div class="bean-modal-col-right">
+          <section class="bean-modal-header">
+            <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
+            <p class="bean-modal-meta text-sm text-muted">${esc(info)}</p>
+            ${reviewBox}
+            ${rating ? rateForm() : ""}
+          </section>
+          ${rightBody}
+        </div>
       </div>
     </article>
   </div>`;

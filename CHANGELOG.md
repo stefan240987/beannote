@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.17] - 2026-08-30
+
+- snapshot: refactor - 2-column widescreen desktop bean modal layout eliminating vertical scroll
+- Desktop bean detail uses a 900px / 90vw sheet with image, CTAs, and suitability on the left and title, flavors, story, tasting, and recipes on the right.
+
 ## [1.1.16] - 2026-08-30
 
 - snapshot: fix - desktop modal viewport centering, image clipping prevention, and full-width toolbar layout
