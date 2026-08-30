@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from db import ENVIRONMENT, VERSION, get_images_dir, init_db, resolve_image_path
+from db import ENVIRONMENT, VERSION, get_images_dir, init_db, resolve_catalog_image, resolve_image_path
 from deps import STATIC
 from ocr import ensure_local_env, load_local_env
 from routes.auth import router as auth_router
@@ -72,6 +74,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+_CATALOG_MEDIA = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+}
+
+
+def _catalog_file_response(kind: str, name: str) -> FileResponse:
+    path = resolve_catalog_image(kind, name)
+    if not path:
+        raise HTTPException(status_code=404, detail="not_found")
+    media = _CATALOG_MEDIA.get(path.suffix.lower().lstrip("."), "application/octet-stream")
+    return FileResponse(path, media_type=media)
+
+
+@app.get("/static/img/beans/{name}")
+def catalog_bean_image(name: str) -> FileResponse:
+    return _catalog_file_response("beans", name)
+
+
+@app.get("/static/img/gear/{name}")
+def catalog_gear_image(name: str) -> FileResponse:
+    return _catalog_file_response("gear", name)
+
+
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -86,6 +118,8 @@ app.include_router(meta_router)
 
 @app.on_event("startup")
 def _startup() -> None:
+    if ENVIRONMENT == "production" and not (os.getenv("JWT_SECRET") or "").strip():
+        raise RuntimeError("JWT_SECRET is required when ENVIRONMENT=production")
     ensure_local_env()
     load_local_env()
     init_db()
@@ -116,7 +150,11 @@ def media(image_name: str) -> FileResponse:
 
 @app.get("/manifest.webmanifest")
 def manifest() -> FileResponse:
-    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+    return FileResponse(
+        STATIC / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/sw.js")
@@ -130,10 +168,10 @@ def service_worker() -> FileResponse:
 
 @app.get("/")
 def index() -> FileResponse:
-    headers = {}
-    if ENVIRONMENT != "production":
-        headers["Cache-Control"] = "no-store, max-age=0"
-    return FileResponse(STATIC / "index.html", headers=headers)
+    return FileResponse(
+        STATIC / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 if __name__ == "__main__":

@@ -33,27 +33,27 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/register")
-def register(payload: EmailAuthIn, response: Response) -> dict[str, Any]:
+def register(payload: EmailAuthIn, request: Request, response: Response) -> dict[str, Any]:
     try:
         user = create_email_user(payload.email, payload.password, payload.username)
     except ValueError as exc:
         raise _auth_error(str(exc)) from exc
-    token = _set_session(response, user)
+    token = _set_session(response, user, request)
     return {"user": user, "token": token}
 
 
 @router.post("/login")
-def login(payload: EmailAuthIn, response: Response) -> dict[str, Any]:
+def login(payload: EmailAuthIn, request: Request, response: Response) -> dict[str, Any]:
     user = authenticate_email(payload.email, payload.password)
     if not user:
         raise _auth_error("invalid_credentials")
-    token = _set_session(response, user)
+    token = _set_session(response, user, request)
     return {"user": user, "token": token}
 
 
 @router.post("/logout")
-def logout(response: Response) -> dict[str, bool]:
-    _clear_session(response)
+def logout(request: Request, response: Response) -> dict[str, bool]:
+    _clear_session(response, request)
     return {"ok": True}
 
 
@@ -63,17 +63,17 @@ def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
 
 
 @router.post("/{provider}/dev")
-def oauth_dev(provider: str, response: Response) -> dict[str, Any]:
+def oauth_dev(provider: str, request: Request, response: Response) -> dict[str, Any]:
     """Instant local test sign-in. Production always uses real OAuth client IDs."""
     user = _local_oauth_user(provider)
-    token = _set_session(response, user)
+    token = _set_session(response, user, request)
     return {"user": user, "token": token}
 
 
 @router.get("/google")
 def google_start(request: Request) -> RedirectResponse:
     if is_local_dev():
-        return _local_oauth_redirect("google")
+        return _local_oauth_redirect("google", request)
     if not _oauth_configured("google"):
         raise _auth_error("oauth_unavailable")
     state = _sign_oauth_state("google")
@@ -91,7 +91,7 @@ def google_start(request: Request) -> RedirectResponse:
         OAUTH_STATE_COOKIE,
         state,
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="lax",
         max_age=600,
         path="/",
@@ -141,15 +141,21 @@ def google_callback(request: Request) -> RedirectResponse:
         oauth_id=str(profile.get("sub") or ""),
     )
     dest = RedirectResponse("/")
-    _set_session(dest, user)
-    dest.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    _set_session(dest, user, request)
+    dest.delete_cookie(
+        OAUTH_STATE_COOKIE,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+    )
     return dest
 
 
 @router.get("/apple")
 def apple_start(request: Request) -> RedirectResponse:
     if is_local_dev():
-        return _local_oauth_redirect("apple")
+        return _local_oauth_redirect("apple", request)
     if not _oauth_configured("apple"):
         raise _auth_error("oauth_unavailable")
     state = _sign_oauth_state("apple")
@@ -166,7 +172,7 @@ def apple_start(request: Request) -> RedirectResponse:
         OAUTH_STATE_COOKIE,
         state,
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="lax",
         max_age=600,
         path="/",
@@ -208,8 +214,14 @@ def _apple_finish(request: Request, form: dict[str, str]) -> RedirectResponse:
         oauth_id=str(claims.get("sub") or ""),
     )
     dest = RedirectResponse("/")
-    _set_session(dest, user)
-    dest.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    _set_session(dest, user, request)
+    dest.delete_cookie(
+        OAUTH_STATE_COOKIE,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+    )
     return dest
 
 

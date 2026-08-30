@@ -14,9 +14,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 import db as db_mod
-from db import GEAR_CATALOG, connect, normalize_gear_item, save_bean_image, update_user_gear
+from db import GEAR_CATALOG, connect, get_catalog_dir, normalize_gear_item, resolve_catalog_image, save_bean_image, update_user_gear
 from deps import current_user, require_admin
-from ocr import encode_scan_jpeg, lookup_gear_catalog
+from ocr import assert_upload_size, encode_scan_jpeg, lookup_gear_catalog
 from schemas import GearCreateIn, GearIn, GearLookupIn
 from translations import SUPPORTED_LANGUAGES
 
@@ -24,7 +24,6 @@ router = APIRouter(prefix="/api/gear", tags=["gear"])
 
 _STATIC_GEAR_PREFIX = "/static/img/gear/"
 _GEAR_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
-_GEAR_IMG_DIR = Path(__file__).resolve().parent.parent / "static" / "img" / "gear"
 
 
 def local_gear_image_url(url: str) -> str:
@@ -178,7 +177,7 @@ def _unique_gear_slug(
     used = set(taken or ())
     candidate = slug
     n = 2
-    while candidate in used or (_GEAR_IMG_DIR / f"{candidate}.jpg").exists():
+    while candidate in used or resolve_catalog_image("gear", f"{candidate}.jpg"):
         candidate = f"{slug}-{n}"
         n += 1
     return candidate
@@ -268,8 +267,7 @@ def save_gear_catalog_image(image_bytes: bytes, slug: str) -> str:
     safe = re.sub(r"[^a-z0-9-]+", "", (slug or "").lower()).strip("-") or "gear"
     if ".." in safe or "/" in safe:
         raise ValueError("invalid_slug")
-    _GEAR_IMG_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _GEAR_IMG_DIR / f"{safe}.jpg"
+    dest = get_catalog_dir("gear") / f"{safe}.jpg"
     dest.write_bytes(image_bytes)
     return f"{_STATIC_GEAR_PREFIX}{safe}.jpg"
 
@@ -281,9 +279,9 @@ def bust_gear_image_url(url: str) -> str:
     local = local_gear_image_url(path)
     if not local:
         return raw
-    dest = _GEAR_IMG_DIR / local[len(_STATIC_GEAR_PREFIX) :]
+    dest = resolve_catalog_image("gear", local[len(_STATIC_GEAR_PREFIX) :])
     try:
-        return f"{local}?v={int(dest.stat().st_mtime)}"
+        return f"{local}?v={int(dest.stat().st_mtime)}" if dest else local
     except OSError:
         return local
 
@@ -481,7 +479,12 @@ async def gear_photo(
     if not raw:
         raise HTTPException(status_code=400, detail="empty_image")
     try:
+        assert_upload_size(raw)
         jpeg = await asyncio.to_thread(encode_scan_jpeg, raw)
+    except ValueError as exc:
+        if str(exc) == "upload_too_large":
+            raise HTTPException(status_code=413, detail="upload_too_large") from exc
+        raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     except Exception as exc:
         raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     image_url = await asyncio.to_thread(save_bean_image, jpeg, "gear.jpg")
@@ -503,8 +506,13 @@ async def admin_catalog_photo(
         raise HTTPException(status_code=400, detail="empty_image")
     slug = _catalog_photo_slug(item)
     try:
+        assert_upload_size(raw)
         jpeg = await asyncio.to_thread(encode_scan_jpeg, raw)
         image_url = await asyncio.to_thread(save_gear_catalog_image, jpeg, slug)
+    except ValueError as exc:
+        if str(exc) == "upload_too_large":
+            raise HTTPException(status_code=413, detail="upload_too_large") from exc
+        raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     except Exception as exc:
         raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     card = _upsert_gear_row({**item, "image_url": image_url}, image_url)
@@ -576,8 +584,13 @@ async def create_gear(
         slug = _unique_gear_slug(brand, name, existing_id, taken)
         if raw_bytes:
             try:
+                assert_upload_size(raw_bytes)
                 jpeg = await asyncio.to_thread(encode_scan_jpeg, raw_bytes)
                 image_url = await asyncio.to_thread(save_gear_catalog_image, jpeg, slug)
+            except ValueError as exc:
+                if str(exc) == "upload_too_large":
+                    raise HTTPException(status_code=413, detail="upload_too_large") from exc
+                raise HTTPException(status_code=422, detail="gear_photo_required") from exc
             except Exception as exc:
                 raise HTTPException(status_code=422, detail="gear_photo_required") from exc
         elif existing:

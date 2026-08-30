@@ -101,6 +101,12 @@ async def scan(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="empty_image")
+    try:
+        ocr.assert_upload_size(raw)
+    except ValueError as exc:
+        if str(exc) == "upload_too_large":
+            raise HTTPException(status_code=413, detail="upload_too_large") from exc
+        raise
     chosen = (lang or request.query_params.get("lang") or "da").lower().strip()
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"

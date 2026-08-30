@@ -23,7 +23,7 @@ services:
       APPLE_KEY_ID: ${APPLE_KEY_ID:-}
       APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
       RESET_DB_ON_START: "false"
-      WEB_WORKERS: "2"
+      WEB_WORKERS: "1"
       JOB_WORKERS: "0"
       OCR_MAX_CONCURRENT: "2"
       SCAN_RATE_PER_MINUTE: "8"

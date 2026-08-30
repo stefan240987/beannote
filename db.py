@@ -20,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.8.17"
+VERSION = "6.8.18"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -969,6 +969,31 @@ def get_images_dir() -> Path:
     path = get_db_path().parent / "images"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def packaged_img_dir(kind: str) -> Path:
+    return Path(__file__).resolve().parent / "static" / "img" / kind
+
+
+def get_catalog_dir(kind: str) -> Path:
+    """Writable catalog photos next to SQLite so Unraid image updates keep admin uploads."""
+    if kind not in {"beans", "gear"}:
+        raise ValueError("invalid_catalog")
+    path = get_db_path().parent / "catalog" / kind
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def resolve_catalog_image(kind: str, name: str) -> Path | None:
+    """Prefer volume catalog files, then photos shipped in the image."""
+    safe = Path((name or "").split("?", 1)[0]).name
+    if not safe or safe.startswith("."):
+        return None
+    for folder in (get_catalog_dir(kind), packaged_img_dir(kind)):
+        candidate = folder / safe
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def save_bean_image(image_bytes: bytes, filename: str = "") -> str:
@@ -2565,18 +2590,24 @@ def ensure_admin_from_env() -> dict[str, Any] | None:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (existing["id"],)).fetchone()
         print(f"BeanNote admin updated: {email}")
         return _public_user(row)
-    with connect() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO users (
-                email, username, password_hash, auth_provider, oauth_id, is_admin, created_at
-            ) VALUES (?, ?, ?, 'email', '', 1, ?)
-            """,
-            (email, username, hashed, _now()),
-        )
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
-    print(f"BeanNote admin created: {email}")
-    return _public_user(row)
+    try:
+        with connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO users (
+                    email, username, password_hash, auth_provider, oauth_id, is_admin, created_at
+                ) VALUES (?, ?, ?, 'email', '', 1, ?)
+                """,
+                (email, username, hashed, _now()),
+            )
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+        print(f"BeanNote admin created: {email}")
+        return _public_user(row)
+    except sqlite3.IntegrityError:
+        existing = get_user_by_email(email)
+        if not existing:
+            raise
+        return ensure_admin_from_env()
 
 
 def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:

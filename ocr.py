@@ -110,6 +110,7 @@ _PRODUCT_LOOKUP_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PRODUCT_LOOKUP_LOCK = threading.Lock()
 _AUX_SLOT_IDS = itertools.count(1)
 ENV_PLACEHOLDER = "GEMINI_API_KEY=\n"
+_DEFAULT_MAX_UPLOAD = 12 * 1024 * 1024
 
 KNOWN_ROASTERS = [
     "Copenhagen Roaster",
@@ -829,9 +830,33 @@ def _write_streamlit_secrets(key: str) -> Path | None:
     return secrets_path
 
 
+def _is_production_env() -> bool:
+    return (os.getenv("ENVIRONMENT") or "dev").strip().lower() == "production"
+
+
+def max_upload_bytes() -> int:
+    raw = (os.getenv("MAX_UPLOAD_BYTES") or "").strip()
+    if not raw:
+        return _DEFAULT_MAX_UPLOAD
+    try:
+        return max(1024 * 1024, int(raw))
+    except ValueError:
+        return _DEFAULT_MAX_UPLOAD
+
+
+def assert_upload_size(data: bytes) -> None:
+    if len(data or b"") > max_upload_bytes():
+        raise ValueError("upload_too_large")
+
+
 def ensure_local_env() -> Path:
     """Create or repair local .env so GEMINI_API_KEY is always declared."""
     env_path = _project_root() / ".env"
+    if _is_production_env():
+        key = (os.getenv("GEMINI_API_KEY") or "").strip()
+        if key:
+            os.environ["GEMINI_API_KEY"] = key
+        return env_path
     if not env_path.exists():
         env_path.write_text(ENV_PLACEHOLDER, encoding="utf-8")
     elif "GEMINI_API_KEY" not in env_path.read_text(encoding="utf-8"):

@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.18] - 2026-08-30
+
+- snapshot: feat - Unraid/Docker hardening without changing the PWA UI
+- Production login cookies are Secure only on HTTPS (or PUBLIC_BASE_URL https), proxy headers are trusted, catalog admin photos persist under `/app/data/catalog`, the container drops to PUID/PGID, JWT_SECRET fails fast, and HEIC uploads work in the image. Tailwind CDN, palette, and layout are unchanged.
+
 ## [6.8.17] - 2026-08-30
 
 - snapshot: feat - Unraid ADMIN_EMAIL and ADMIN_PASSWORD bootstrap the admin account

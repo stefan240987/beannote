@@ -1,9 +1,9 @@
-const CACHE = "beannote-v6.8.13";
+const CACHE = "beannote-v6.8.18";
 const SHELL = [
   "/",
   "/static/icon.svg",
-  "/static/css/styles.css?v=6.8.13",
-  "/static/js/app.js?v=6.8.13",
+  "/static/css/styles.css?v=6.8.18",
+  "/static/js/app.js?v=6.8.18",
   "/manifest.webmanifest",
 ];
 
@@ -26,7 +26,7 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) {
     return;
   }
-  if (url.pathname.startsWith("/static/img/gear/")) {
+  if (url.pathname.startsWith("/static/img/gear/") || url.pathname.startsWith("/static/img/beans/")) {
     event.respondWith(fetch(event.request, { cache: "no-store" }));
     return;
   }

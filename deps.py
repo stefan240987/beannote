@@ -84,8 +84,20 @@ def _public_base(request: Request | None = None) -> str:
     return "http://127.0.0.1:8501"
 
 
-def _cookie_secure() -> bool:
-    return ENVIRONMENT == "production"
+def _cookie_secure(request: Request | None = None) -> bool:
+    """Secure cookies on HTTPS only, so Unraid LAN HTTP login still works."""
+    if ENVIRONMENT != "production":
+        return False
+    public = (os.getenv("PUBLIC_BASE_URL") or "").strip().lower()
+    if public.startswith("https://"):
+        return True
+    if public.startswith("http://"):
+        return False
+    if request is None:
+        return False
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    scheme = forwarded or (request.url.scheme or "").lower()
+    return scheme == "https"
 
 
 def _issue_token(user: dict[str, Any]) -> str:
@@ -100,13 +112,13 @@ def _issue_token(user: dict[str, Any]) -> str:
     return jwt.encode(payload, _secret(), algorithm=JWT_ALG)
 
 
-def _set_session(response: Response, user: dict[str, Any]) -> str:
+def _set_session(response: Response, user: dict[str, Any], request: Request | None = None) -> str:
     token = _issue_token(user)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="lax",
         max_age=TOKEN_DAYS * 24 * 60 * 60,
         path="/",
@@ -114,9 +126,10 @@ def _set_session(response: Response, user: dict[str, Any]) -> str:
     return token
 
 
-def _clear_session(response: Response) -> None:
-    response.delete_cookie(COOKIE_NAME, path="/")
-    response.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+def _clear_session(response: Response, request: Request | None = None) -> None:
+    secure = _cookie_secure(request)
+    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=secure)
+    response.delete_cookie(OAUTH_STATE_COOKIE, path="/", httponly=True, samesite="lax", secure=secure)
 
 
 def _decode_token(token: str) -> dict[str, Any]:
@@ -199,10 +212,10 @@ def _local_oauth_user(provider: str) -> dict[str, Any]:
     )
 
 
-def _local_oauth_redirect(provider: str) -> RedirectResponse:
+def _local_oauth_redirect(provider: str, request: Request | None = None) -> RedirectResponse:
     user = _local_oauth_user(provider)
     dest = RedirectResponse("/")
-    _set_session(dest, user)
+    _set_session(dest, user, request)
     return dest
 
 
