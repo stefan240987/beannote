@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.5] - 2026-08-30
+
+- snapshot: fix - hide Google login when Google OAuth is not configured
+- On Unraid/production the Google button (and the OR divider) are omitted unless GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set. Apple already follows the same rule.
+
 ## [1.0.4] - 2026-08-30
 
 - snapshot: fix - hide Apple login when Sign in with Apple is not configured
