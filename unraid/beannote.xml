@@ -42,6 +42,6 @@ Put appdata on a cache-only share. JWT_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD a
   <Config Name="OCR Max Concurrent" Target="OCR_MAX_CONCURRENT" Default="2" Mode="" Description="Max simultaneous Gemini/OCR jobs" Type="Variable" Display="advanced" Required="false" Mask="false">2</Config>
   <Config Name="Scan Rate Per Minute" Target="SCAN_RATE_PER_MINUTE" Default="8" Mode="" Description="Bag scan rate limit" Type="Variable" Display="advanced" Required="false" Mask="false">8</Config>
   <Config Name="Enrich Rate Per Minute" Target="ENRICH_RATE_PER_MINUTE" Default="4" Mode="" Description="Bean enrich rate limit" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
-  <Config Name="MobilePay URL" Target="SUPPORT_MOBILEPAY_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
-  <Config Name="Buy Me a Coffee URL" Target="SUPPORT_BUYMEACOFFEE_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="MobilePay URL" Target="SUPPORT_MOBILEPAY_URL" Default="" Mode="" Description="https:// support link. Empty hides the sidebar Support card." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Buy Me a Coffee URL" Target="SUPPORT_BUYMEACOFFEE_URL" Default="" Mode="" Description="https:// support link. Empty hides the sidebar Support card." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

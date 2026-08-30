@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -218,18 +218,22 @@ def manifest() -> FileResponse:
     )
 
 
+def _with_version(text: str) -> str:
+    return text.replace("__BN_VERSION__", VERSION)
+
+
 @app.get("/sw.js")
-def service_worker() -> FileResponse:
-    return FileResponse(
-        STATIC / "sw.js",
+def service_worker() -> Response:
+    return Response(
+        _with_version((STATIC / "sw.js").read_text(encoding="utf-8")),
         media_type="text/javascript",
         headers={"Cache-Control": "no-store, max-age=0"},
     )
 
 
-def _spa_index() -> FileResponse:
-    return FileResponse(
-        STATIC / "index.html",
+def _spa_index() -> HTMLResponse:
+    return HTMLResponse(
+        _with_version((STATIC / "index.html").read_text(encoding="utf-8")),
         headers={"Cache-Control": "no-store, max-age=0"},
     )
 

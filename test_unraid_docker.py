@@ -161,6 +161,8 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertEqual(res.content, b"from-volume")
 
     def test_index_keeps_palette_tailwind_and_nav(self):
+        from db import VERSION
+
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
         body = res.text
@@ -171,6 +173,19 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertIn("bottom-nav-tabs", body)
         self.assertIn("/static/css/styles.css", body)
         self.assertIn("/static/js/app.js", body)
+        self.assertIn(f"?v={VERSION}", body)
+        self.assertNotIn("__BN_VERSION__", body)
+
+    def test_service_worker_cache_tracks_app_version(self):
+        from db import VERSION
+
+        res = self.client.get("/sw.js")
+        self.assertEqual(res.status_code, 200)
+        body = res.text
+        self.assertIn(f"beannote-v{VERSION}", body)
+        self.assertIn(f"/static/css/styles.css?v={VERSION}", body)
+        self.assertIn(f"/static/js/app.js?v={VERSION}", body)
+        self.assertNotIn("__BN_VERSION__", body)
 
     def test_oauth_buttons_gated_on_provider_flags(self):
         js = (Path(__file__).resolve().parent / "static" / "js" / "app.js").read_text(encoding="utf-8")

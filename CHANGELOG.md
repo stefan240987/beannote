@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.24] - 2026-08-30
+
+- snapshot: fix - keep the desktop sidebar support card pinned and bust stale PWA caches
+- The terracotta ☕ Support card stays at the bottom of the rail (`flex-shrink: 0`) even with a full nav. HTML and `sw.js` now stamp `VERSION`, so Unraid no longer keeps `beannote-v1.1.17` CSS that hid the card. Production still requires `SUPPORT_MOBILEPAY_URL` or `SUPPORT_BUYMEACOFFEE_URL`.
+
 ## [1.1.23] - 2026-08-30
 
 - snapshot: fix - copy the full app tree into Docker and fail publish if packages are missing

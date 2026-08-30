@@ -1079,10 +1079,12 @@ button.gear-badge-locked {
   .tabbar-grid,
   .tabbar-grid-guest,
   .tabbar-grid-guest-solo {
+    flex: 1 1 auto;
     grid-template-columns: 1fr;
     align-content: start;
     gap: 0.35rem;
     min-height: 0;
+    overflow-y: auto;
   }
   .tabbar-item {
     flex-direction: row;
@@ -1123,6 +1125,7 @@ button.gear-badge-locked {
   }
   .tabbar-support {
     display: block;
+    flex-shrink: 0;
     margin-top: auto;
     padding: 1rem;
   }
