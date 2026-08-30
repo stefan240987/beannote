@@ -181,5 +181,66 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertIn("strings", config.json())
 
 
+class AppleCallbackTests(unittest.TestCase):
+    """Apple form_post must not require the Lax state cookie."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+
+        import main
+
+        self._cm = TestClient(main.app)
+        self.client = self._cm.__enter__()
+
+    def tearDown(self):
+        self._cm.__exit__(None, None, None)
+
+    def _state(self, provider: str = "apple") -> str:
+        from deps import _sign_oauth_state
+
+        return _sign_oauth_state(provider)
+
+    def test_form_post_without_cookie_redirects_instead_of_json_400(self):
+        res = self.client.post(
+            "/api/auth/apple/callback",
+            data={"state": self._state(), "id_token": "not-a-jwt"},
+            follow_redirects=False,
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+
+    def test_provider_error_uses_see_other(self):
+        res = self.client.post(
+            "/api/auth/apple/callback",
+            data={"error": "user_cancelled"},
+            follow_redirects=False,
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+
+    def test_success_without_state_cookie(self):
+        user = {"id": 1, "email": "a@b.c", "username": "A", "is_admin": 0}
+        with patch("routes.auth._verify_apple_identity", return_value={"email": "a@b.c", "sub": "apple.sub"}):
+            with patch("routes.auth.upsert_oauth_user", return_value=user):
+                res = self.client.post(
+                    "/api/auth/apple/callback",
+                    data={"state": self._state(), "id_token": "ok"},
+                    follow_redirects=False,
+                )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers.get("location"), "/")
+        self.assertIn("beannote_session", res.headers.get("set-cookie", "").lower())
+
+    def test_mismatched_cookie_still_rejected(self):
+        res = self.client.post(
+            "/api/auth/apple/callback",
+            data={"state": self._state(), "id_token": "ok"},
+            cookies={"beannote_oauth": "other"},
+            follow_redirects=False,
+        )
+        self.assertEqual(res.status_code, 303)
+        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+
+
 if __name__ == "__main__":
     unittest.main()

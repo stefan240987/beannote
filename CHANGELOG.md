@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.3] - 2026-08-30
+
+- snapshot: fix - Apple Sign In callback works behind Unraid/HTTPS
+- Apple `form_post` no longer requires the Lax state cookie (browsers omit it on Apple's cross-site POST). Callback errors redirect to the login screen with 303 instead of JSON.
+
 ## [1.0.2] - 2026-08-30
 
 - snapshot: chore - bind BeanNote to port 8502 instead of 8501

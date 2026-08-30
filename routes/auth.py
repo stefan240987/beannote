@@ -30,6 +30,16 @@ from deps import (
 from schemas import EmailAuthIn
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+_OAUTH_FAIL = "/?auth_error=oauth"
+
+
+def _oauth_failed() -> RedirectResponse:
+    """Send the user back to the login screen after a failed provider callback."""
+    return RedirectResponse(_OAUTH_FAIL, status_code=303)
+
+
+def _oauth_home() -> RedirectResponse:
+    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/register")
@@ -197,23 +207,31 @@ def _verify_apple_identity(identity: str) -> dict[str, Any]:
 
 def _apple_finish(request: Request, form: dict[str, str]) -> RedirectResponse:
     if form.get("error"):
-        return RedirectResponse("/?auth_error=oauth")
+        return _oauth_failed()
     state = form.get("state") or ""
+    if not state:
+        return _oauth_failed()
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE) or ""
-    if not state or state != cookie_state:
-        raise HTTPException(status_code=400, detail="oauth_state")
-    _read_oauth_state(state, "apple")
+    if cookie_state and state != cookie_state:
+        return _oauth_failed()
+    try:
+        _read_oauth_state(state, "apple")
+    except HTTPException:
+        return _oauth_failed()
     identity = form.get("id_token") or ""
     if not identity:
-        raise HTTPException(status_code=400, detail="oauth_code")
-    claims = _verify_apple_identity(identity)
-    user = upsert_oauth_user(
-        email=claims.get("email") or "",
-        username=form.get("user_name") or "",
-        provider="apple",
-        oauth_id=str(claims.get("sub") or ""),
-    )
-    dest = RedirectResponse("/")
+        return _oauth_failed()
+    try:
+        claims = _verify_apple_identity(identity)
+        user = upsert_oauth_user(
+            email=claims.get("email") or "",
+            username=form.get("user_name") or "",
+            provider="apple",
+            oauth_id=str(claims.get("sub") or ""),
+        )
+    except (HTTPException, ValueError):
+        return _oauth_failed()
+    dest = _oauth_home()
     _set_session(dest, user, request)
     dest.delete_cookie(
         OAUTH_STATE_COOKIE,
