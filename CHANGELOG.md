@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.21] - 2026-08-30
+
+- snapshot: feat - add prepared Swedish and Norwegian UI catalogs without activating them
+- `translations.py` now holds complete `sv` / `no` dictionaries (same keys as EN), plus Gemini story-language labels. `SUPPORTED_LANGUAGES` stays `da` / `en`, so guests and the profile switcher are unchanged.
+
 ## [1.1.20] - 2026-08-30
 
 - snapshot: feat - localize mobile header support pill via support_header i18n key

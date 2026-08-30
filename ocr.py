@@ -52,6 +52,8 @@ STORY_LANG = {
     "de": "German",
     "fr": "French",
     "es": "Spanish",
+    "sv": "Swedish",
+    "no": "Norwegian",
 }
 
 ORIGINS = [
@@ -381,6 +383,8 @@ SUITABLE_LOCALES: dict[str, dict[str, str]] = {
         "de": "Vollautomatisch",
         "fr": "Entièrement automatique",
         "es": "Totalmente automática",
+        "sv": "Helautomatisk",
+        "no": "Helautomatisk",
     },
 }
 SUITABLE_ALIASES: dict[str, list[str]] = {
@@ -1478,7 +1482,7 @@ def _gemini_prompt(lang: str = "da") -> str:
         f"{press_name} / {grind_coarse} or ratios such as {espresso_ratio} / {pour_ratio} "
         "during this optical pass.\n"
         f"LANGUAGE MAPS: keys {lang_keys} MUST all be present for story, flavor_tags, and "
-        "brew_recommendation. Adding another ISO key later (de, fr, es) uses the same shape. "
+        "brew_recommendation. Adding another ISO key later (de, fr, es, sv, no) uses the same shape. "
         f"Scalar fields (origin, process, roast_level, official_notes) stay in "
         f"{story_lang} because lang={code}. "
         '"suitable_for" is always a JSON array of strings in that language, never a scalar.\n'

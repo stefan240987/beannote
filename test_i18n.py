@@ -1,9 +1,25 @@
 import unittest
 
-from translations import FALLBACK_LANG, language_from_accept_header, language_from_locales, normalize_lang
+from translations import (
+    FALLBACK_LANG,
+    LANGS,
+    STRINGS,
+    SUPPORTED_LANGUAGES,
+    language_from_accept_header,
+    language_from_locales,
+    normalize_lang,
+)
 
 
 class LanguageDetectionTests(unittest.TestCase):
+    def test_prepared_catalogs_are_not_activated(self):
+        self.assertEqual(SUPPORTED_LANGUAGES, ["da", "en"])
+        for code in ("de", "fr", "es", "sv", "no"):
+            self.assertIn(code, LANGS)
+            self.assertIn(code, STRINGS)
+            self.assertEqual(set(STRINGS[code]), set(STRINGS["en"]))
+            self.assertNotIn(code, SUPPORTED_LANGUAGES)
+
     def test_exact_catalog_codes(self):
         self.assertEqual(normalize_lang("da"), "da")
         self.assertEqual(normalize_lang("en"), "en")
