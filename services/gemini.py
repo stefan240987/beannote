@@ -94,6 +94,9 @@ def parse_bean_from_url(url: str, lang: str = "da") -> dict[str, Any]:
         raise ValueError("required")
 
     parsed = normalize_scan_fields(mapped, lang=chosen)
+    parsed["story"] = clean_story_field(parsed.get("story"))
+    parsed["official_notes"] = clean_story_text(parsed.get("official_notes"))
+    parsed["roaster_notes"] = clean_story_text(parsed.get("roaster_notes"))
     parsed["scan_source"] = "url"
     parsed["scan_enrichment"] = "url+gemini" if raw else "url+jsonld"
     parsed["roaster_url"] = parsed.get("roaster_url") or page_url
@@ -153,12 +156,20 @@ def _from_url_prompt(page_text: str, page_url: str, images: list[str], lang: str
         "Return JSON only with these keys:\n"
         '- "name": coffee bean / product name\n'
         '- "roaster": roaster / brand name\n'
-        '- "origin": origin country / region\n'
+        '- "origin": origin country / region. Dedicated key only — never inside description.\n'
+        '- "altitude": farm altitude / MASL if stated. Dedicated key only.\n'
+        '- "process": processing method (washed, natural, honey, …). Dedicated key only.\n'
         '- "roast_level": roast degree (Lys, Medium-Lys, Medium, Medium-Mørk, Mørk, or the page wording)\n'
+        '- "brew_ratio": brew ratio only if the page states one (e.g. 1:2, 1:16). Dedicated key only.\n'
         '- "flavor_notes": array of flavor tags copied from the page\n'
         '- "suitable_for": array of brew suitability tags (Espresso, Filter, AeroPress, etc.)\n'
         '- "image_url": main product photo URL (prefer the bag/packshot)\n'
-        '- "description": short roaster story / description from the page\n'
+        '- "description" / "story": a concise, engaging summary of maximum 2-3 sentences '
+        "(around 30-40 words) focused exclusively on taste profile and roaster story. "
+        "FORBIDDEN in description/story: raw copy-pasted shop copy, product specifications, "
+        "weight options (e.g. 500g, 1kg), machine listings, brew-ratio specs, "
+        "holdbarhed/shelf life, varianter/variants, or any Produktspecifikationer dump. "
+        "Put every technical parameter in its dedicated JSON key instead.\n"
         f"Write name, origin, description, and flavor notes in {lang} when the page language allows.\n"
         "If a field is not on the page, use \"\" or [].\n\n"
         f"Candidate product images:\n{image_hint}\n\n"
@@ -181,13 +192,85 @@ def _as_string_list(value: Any) -> list[str]:
     return []
 
 
+_STORY_MAX_CHARS = 350
+_STORY_SECTION_HEAD = re.compile(
+    r"(?im)(?:^|(?<=[.!?]\s))"
+    r"(?:"
+    r"produktspecifikation(?:er)?|"
+    r"product\s*specifications?|"
+    r"produktspezifikation(?:en)?|"
+    r"sp[eé]cifications?(?:\s+produit)?|"
+    r"especificaciones|"
+    r"holdbarhed|shelf\s*life|best\s*before|haltbarkeit|durabilit[eé]|caducidad|"
+    r"varianter|variants|varianten|variantes|"
+    r"tekniske\s*data|technical\s*(?:data|specs?|details)|"
+    r"brygge(?:anvisning|forhold)|brew\s*(?:ratio|specs?|instructions?)|"
+    r"compatible\s*machines?|maskiner|"
+    r"v[æe]gt(?:e|options?)?|weight\s*options?"
+    r")\b"
+)
+_STORY_BOILERPLATE_TOKEN = re.compile(
+    r"(?i)\b(?:"
+    r"produktspecifikation(?:er)?|product\s*specifications?|"
+    r"holdbarhed|shelf\s*life|varianter|variants"
+    r")\b[:\s]*"
+)
+_STORY_WEIGHT_OPTIONS = re.compile(
+    r"(?i)(?:\s*(?:f[aå]s i|available in|sizes?)[:\s]*)?"
+    r"(?:\b\d+(?:[.,]\d+)?\s*(?:g|kg|gr|gram|grams)\b(?:\s*[,;/&+|og and]+\s*)?)+"
+)
+
+
 def _clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def clean_story_text(value: Any) -> str:
+    """Strip shop boilerplate and cap a story/description at 350 characters."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    heading = _STORY_SECTION_HEAD.search(raw)
+    if heading:
+        raw = raw[: heading.start()].rstrip()
+    text = _clean_text(raw)
+    if not text:
+        return ""
+    text = _STORY_BOILERPLATE_TOKEN.sub("", text)
+    text = _STORY_WEIGHT_OPTIONS.sub(" ", text)
+    text = re.sub(r"(?i)\b(?:f[aå]s i|available in)\s*", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(?:[.!?]\s*){2,}", ". ", text)
+    text = re.sub(r"\s+([.,!?])", r"\1", text)
+    text = re.sub(r"^[\s\-:;,.|]+", "", text).rstrip(" -:;|")
+    if len(text) <= _STORY_MAX_CHARS:
+        return text
+    window = text[:_STORY_MAX_CHARS].rstrip()
+    sentence = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if sentence >= 80:
+        return window[: sentence + 1].strip()
+    space = window.rfind(" ")
+    clipped = window[:space] if space >= 40 else window
+    return clipped.rstrip(" ,;:-") + "…"
+
+
+def clean_story_field(value: Any) -> Any:
+    """Clean a plain story string or a language map of story strings."""
+    if isinstance(value, dict):
+        cleaned: dict[str, str] = {}
+        for key, item in value.items():
+            text = clean_story_text(item)
+            if text:
+                cleaned[str(key)] = text
+        return cleaned
+    return clean_story_text(value)
+
+
 def _map_url_fields(raw: dict[str, Any], page_url: str, candidates: list[str]) -> dict[str, Any]:
     name = _clean_text(raw.get("name") or raw.get("bean_name"))
-    description = _clean_text(raw.get("description") or raw.get("official_notes") or raw.get("story"))
+    description = clean_story_text(
+        raw.get("description") or raw.get("official_notes") or raw.get("story")
+    )
     image_url = _first_image_url(
         raw.get("image_url"),
         raw.get("product_image_url"),
@@ -200,7 +283,10 @@ def _map_url_fields(raw: dict[str, Any], page_url: str, candidates: list[str]) -
         "bean_name": name,
         "roaster": _clean_text(raw.get("roaster")),
         "origin": _clean_text(raw.get("origin")),
+        "altitude": _clean_text(raw.get("altitude")),
+        "process": _clean_text(raw.get("process")),
         "roast_level": _clean_text(raw.get("roast_level")),
+        "brew_ratio": _clean_text(raw.get("brew_ratio")),
         "flavor_notes": _as_string_list(raw.get("flavor_notes") or raw.get("flavor_tags")),
         "suitable_for": _as_string_list(raw.get("suitable_for")),
         "official_notes": description,
@@ -228,8 +314,14 @@ def _merge_facts(mapped: dict[str, Any], facts: dict[str, Any], page_url: str) -
         out["flavor_notes"] = list(facts.get("flavor_notes") or [])
     if not out.get("suitable_for"):
         out["suitable_for"] = list(facts.get("suitable_for") or [])
+    if not out.get("process"):
+        out["process"] = facts.get("process") or ""
+    if not out.get("altitude"):
+        out["altitude"] = facts.get("altitude") or ""
+    if not out.get("brew_ratio"):
+        out["brew_ratio"] = facts.get("brew_ratio") or ""
     if not out.get("official_notes"):
-        story = facts.get("description") or ""
+        story = clean_story_text(facts.get("description") or "")
         out["official_notes"] = story
         out["roaster_notes"] = story
         out["story"] = story
@@ -337,16 +429,16 @@ def _page_facts(html: str, page_url: str) -> dict[str, Any]:
 
     name = _jsonld_name(product.get("name")) or _clean_text(og.get("og:title")) or title
     brand = _jsonld_name(product.get("brand")) or organization
-    description = _clean_text(product.get("description")) or _clean_text(og.get("og:description"))
+    raw_description = _clean_text(product.get("description")) or _clean_text(og.get("og:description"))
     images = _jsonld_images(product.get("image"))
     og_image = og.get("og:image") or og.get("og:image:url") or og.get("twitter:image") or ""
     if og_image:
         images = [og_image, *images]
-    origin, roast, flavors, suitable = _infer_from_copy(f"{name} {description}")
+    origin, roast, flavors, suitable = _infer_from_copy(f"{name} {raw_description}")
     return {
         "name": name,
         "roaster": brand,
-        "description": description,
+        "description": clean_story_text(raw_description),
         "origin": origin,
         "roast_level": roast,
         "flavor_notes": flavors,

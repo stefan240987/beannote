@@ -35,7 +35,7 @@ from jobs import enqueue_job, public_job
 from ocr import assert_upload_size, compare_flavor_notes, encode_scan_jpeg, enrich_bean_from_web
 from routes.users import annotate_community_recipes
 from schemas import BeanImageIn, BeanIn
-from services.gemini import parse_bean_from_url
+from services.gemini import clean_story_field, clean_story_text, parse_bean_from_url
 from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/beans", tags=["beans"])
@@ -43,6 +43,28 @@ admin_router = APIRouter(prefix="/api/admin/beans", tags=["admin-beans"])
 explore_router = APIRouter(prefix="/api/explore", tags=["explore"])
 
 _STATIC_BEAN_PREFIX = "/static/img/beans/"
+
+
+def _clean_bean_copy(bean: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Strip shop boilerplate and cap long story/notes on API responses."""
+    if not isinstance(bean, dict):
+        return bean
+    out = dict(bean)
+    out["story"] = clean_story_field(out.get("story"))
+    notes = out.get("roaster_notes")
+    out["roaster_notes"] = (
+        clean_story_field(notes) if isinstance(notes, dict) else clean_story_text(notes)
+    )
+    return out
+
+
+def _clean_profile_copy(profile: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(profile, dict):
+        return profile
+    out = dict(profile)
+    if out.get("bean"):
+        out["bean"] = _clean_bean_copy(out.get("bean"))
+    return out
 
 
 def _public_explore_profile(bean_id: int) -> dict[str, Any]:
@@ -59,7 +81,7 @@ def _public_explore_profile(bean_id: int) -> dict[str, Any]:
     matched = annotate_community_recipes(profile.get("community_history") or [], None)
     profile["community_history"] = matched["recipes"]
     profile["community_gear_fallback"] = matched["fallback"]
-    return profile
+    return _clean_profile_copy(profile)
 
 
 @explore_router.get("")
@@ -117,7 +139,7 @@ def bean_detail(bean_id: int, user: dict[str, Any] = Depends(current_user)) -> d
     matched = annotate_community_recipes(profile.get("community_history") or [], user)
     profile["community_history"] = matched["recipes"]
     profile["community_gear_fallback"] = matched["fallback"]
-    return profile
+    return _clean_profile_copy(profile)
 
 
 @router.post("")
@@ -129,13 +151,13 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             origin=payload.origin,
             process=payload.process,
             roast_level=payload.roast_level,
-            roaster_notes=payload.roaster_notes,
+            roaster_notes=clean_story_text(payload.roaster_notes),
             flavor_tags=payload.flavor_tags,
             suitable_for=payload.suitable_for,
             skip_fuzzy=payload.skip_fuzzy,
             image_url=payload.image_url,
             roaster_url=payload.roaster_url,
-            story=payload.story,
+            story=clean_story_field(payload.story),
             recommended_method=payload.recommended_method,
             grind_size=payload.grind_size,
             water_temp=payload.water_temp,
@@ -157,6 +179,9 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(result, dict) and result.get("bean"):
+        result = dict(result)
+        result["bean"] = _clean_bean_copy(result.get("bean"))
     return result
 
 
@@ -176,10 +201,10 @@ def replace_bean(
             origin=payload.origin,
             process=payload.process,
             roast_level=payload.roast_level,
-            roaster_notes=payload.roaster_notes,
+            roaster_notes=clean_story_text(payload.roaster_notes),
             flavor_tags=payload.flavor_tags,
             suitable_for=payload.suitable_for,
-            story=payload.story,
+            story=clean_story_field(payload.story),
             image_url=payload.image_url,
             roaster_url=payload.roaster_url,
             recommended_method=payload.recommended_method,
@@ -204,7 +229,7 @@ def replace_bean(
         raise _auth_error(str(exc)) from exc
     if not bean:
         raise HTTPException(status_code=404, detail="not_found")
-    return {"status": "updated", "bean": bean}
+    return {"status": "updated", "bean": _clean_bean_copy(bean)}
 
 
 @router.post("/{bean_id}/favorite")
@@ -222,11 +247,20 @@ def process_enrich_job(payload: dict[str, Any], user_id: int) -> dict[str, Any]:
     if not bean:
         raise RuntimeError("not_found")
     result = enrich_bean_from_web(bean.get("name") or "", bean.get("roaster") or "", lang=lang)
+    if isinstance(result, dict):
+        result = dict(result)
+        result["story"] = clean_story_field(result.get("story"))
+        result["official_notes"] = clean_story_text(result.get("official_notes"))
+        result["roaster_notes"] = clean_story_text(result.get("roaster_notes"))
     updated = apply_bean_enrichment(bean_id, result, lang=lang)
     if not updated:
         raise RuntimeError("not_found")
     profile = get_flavor_profile(bean_id, user_id=user_id)
-    return {"status": "enriched", "bean": updated, "profile": profile}
+    return {
+        "status": "enriched",
+        "bean": _clean_bean_copy(updated),
+        "profile": _clean_profile_copy(profile),
+    }
 
 
 @router.post("/{bean_id}/enrich")
@@ -406,7 +440,7 @@ async def create_bean_from_url(
     except Exception as exc:
         print(f"from-url failed: {type(exc).__name__}: {exc} url={url[:180]}")
         raise HTTPException(status_code=422, detail="from_url_fail") from exc
-    return {"status": "draft", "scan": draft}
+    return {"status": "draft", "scan": _clean_bean_copy(draft) or draft}
 
 
 @admin_router.get("/pending-images")

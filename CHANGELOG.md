@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.13] - 2026-08-30
+
+- snapshot: fix - concise Gemini story summaries and UI description text truncation
+- Shop-URL extraction now asks Gemini for a 2–3 sentence taste/roaster summary, strips spec boilerplate (Produktspecifikationer, Holdbarhed, Varianter, weight options), and caps stories at 350 characters. Bean Detail clips long story text at 120px.
+
 ## [1.1.12] - 2026-08-30
 
 - snapshot: fix - create-from-link uses Shopify JSON-LD immediately and skips a slow Gemini call
