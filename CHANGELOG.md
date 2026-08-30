@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.7] - 2026-08-30
+
+- snapshot: fix - Approve & Save creates a new bean on 70–85% near matches
+- Near matches still show the duplicate warning. Pressing Approve & Save now sends `skip_fuzzy` so Miscela Uno can be stored next to Daily Espresso. Exact matches (90%+) and auto-open (≥85%) are unchanged.
+
 ## [1.1.6] - 2026-08-30
 
 - snapshot: feat - desktop and tablet layout with a left sidebar

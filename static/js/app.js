@@ -365,6 +365,7 @@ function startBusy() {
 }
 
 const SCAN_MATCH_CUTOFF = 0.85;
+const NEAR_MATCH_CUTOFF = 0.70;
 
 function existingScanMatch(scan) {
   if (!scan) return null;
@@ -373,6 +374,13 @@ function existingScanMatch(scan) {
   if (scan.scan_action === "rate") return hit;
   if (Number(hit.confidence || 0) >= SCAN_MATCH_CUTOFF) return hit;
   return null;
+}
+
+function skipFuzzyOnApprove(source) {
+  const hit = source?.similar?.[0] || source?.scan_match;
+  if (!hit?.id) return false;
+  const conf = Number(hit.confidence || 0);
+  return conf >= NEAR_MATCH_CUTOFF && conf < SCAN_MATCH_CUTOFF;
 }
 
 function stopBusy() {
@@ -3077,7 +3085,7 @@ function beanPayload(source) {
     roaster_acidity: source.roaster_acidity ?? source.acidity_score ?? null,
     roaster_body: source.roaster_body ?? source.body_score ?? null,
     roaster_roast_level: source.roaster_roast_level ?? source.roast_level_score ?? null,
-    skip_fuzzy: false,
+    skip_fuzzy: skipFuzzyOnApprove(source),
   };
 }
 

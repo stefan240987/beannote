@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from db import (
     SCAN_MATCH_CUTOFF,
     find_similar_beans,
+    init_db,
+    insert_bean,
     is_generic_bean_name,
     origins_conflict,
     qualify_generic_bean_name,
@@ -199,6 +204,37 @@ class CopenhagenRoasterLabelTests(unittest.TestCase):
         self.assertEqual(parsed["process"], "Natural")
         self.assertEqual(parsed["varietal"], "Catuai")
         self.assertEqual(parsed["region_full"], "Cerrado Mineiro")
+
+
+class NearMatchSkipFuzzyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("BEANNOTE_DB_PATH")
+        os.environ["BEANNOTE_DB_PATH"] = str(Path(self.tmp.name) / "beannote.db")
+        os.environ.setdefault("ENVIRONMENT", "dev")
+        os.environ["RESET_DB_ON_START"] = "false"
+        init_db()
+        created = insert_bean("Uno", "Risteriet Coffee")
+        self.assertEqual(created["status"], "created")
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("BEANNOTE_DB_PATH", None)
+        else:
+            os.environ["BEANNOTE_DB_PATH"] = self._prev
+        self.tmp.cleanup()
+
+    def test_near_match_blocks_without_skip(self):
+        result = insert_bean("Daily Espresso", "Risteriet Coffee")
+        self.assertEqual(result["status"], "fuzzy")
+        self.assertEqual(result["similar"][0]["name"], "Uno")
+        self.assertLess(result["similar"][0]["confidence"], SCAN_MATCH_CUTOFF)
+
+    def test_near_match_saves_with_skip(self):
+        result = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["bean"]["name"], "Daily Espresso")
+        self.assertNotEqual(result["bean"]["id"], 1)
 
 
 if __name__ == "__main__":
