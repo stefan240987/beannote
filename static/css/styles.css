@@ -1,4 +1,9 @@
-:root { color-scheme: light; --bg-color: #faf6f0; --bg-card-subtle: #F7F3EE; }
+:root {
+  color-scheme: light;
+  --bg-color: #faf6f0;
+  --bg-card-subtle: #F7F3EE;
+  --nav-rail: 15rem;
+}
 html, body { background: var(--bg-color); }
 body { padding-bottom: env(safe-area-inset-bottom); }
 .tabbar {
@@ -869,7 +874,153 @@ button.gear-badge-locked {
   border-top: 1px solid #e8d8c8;
 }
 .admin-user-row:first-of-type { border-top: 0; padding-top: 0; }
+#app {
+  width: 100%;
+  max-width: 32rem;
+}
 #app.is-admin {
   max-width: 36rem;
+}
+.app-page {
+  padding-bottom: 7rem;
+}
+.tabbar-brand {
+  display: none;
+}
+.explore-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+.profile-view,
+.profile-gear-col,
+.profile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.auth-view,
+.scan-view {
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  #app { max-width: 56rem; }
+  #app.is-admin { max-width: 64rem; }
+  .tabbar { max-width: 56rem; }
+  .explore-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .explore-sort { max-width: none; }
+  .explore-pills {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .gear-kind-tabs,
+  .gear-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+  .gear-picker-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .auth-view,
+  .scan-view {
+    max-width: 32rem;
+    margin-inline: auto;
+  }
+  .diary-view {
+    max-width: 40rem;
+    width: 100%;
+    margin-inline: auto;
+  }
+}
+
+@media (min-width: 1024px) {
+  #app,
+  #app.is-admin {
+    max-width: none;
+    padding-left: var(--nav-rail);
+  }
+  .tabbar {
+    inset: 0 auto 0 0;
+    width: var(--nav-rail);
+    max-width: none;
+    margin: 0;
+    border-top: 0;
+    border-right: 1px solid #e8d8c8;
+    padding: env(safe-area-inset-top, 0px) 0.75rem env(safe-area-inset-bottom, 0px) max(0.75rem, env(safe-area-inset-left, 0px));
+    display: flex;
+    flex-direction: column;
+  }
+  .tabbar-brand {
+    display: block;
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #3c2a21;
+    padding: 1.1rem 0.7rem 0.85rem;
+  }
+  .tabbar-grid,
+  .tabbar-grid-guest,
+  .tabbar-grid-guest-solo {
+    grid-template-columns: 1fr;
+    align-content: start;
+    gap: 0.25rem;
+    min-height: 0;
+  }
+  .tabbar-item {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 0.65rem;
+    min-height: 2.75rem;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.85rem;
+    border-radius: 0.75rem;
+  }
+  .tabbar-item.is-active {
+    background: #fff;
+    color: #3c2a21;
+  }
+  .tabbar-item.is-scan {
+    color: #b85c38;
+  }
+  .tabbar-scan-icon {
+    margin-top: 0;
+    height: 2rem;
+    width: 2rem;
+    font-size: 1rem;
+    box-shadow: none;
+  }
+  .app-page,
+  .explore-list,
+  .diary-view {
+    padding-bottom: 2rem;
+  }
+  .profile-view {
+    display: grid;
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+    align-items: start;
+  }
+  .profile-identity { grid-column: 1; grid-row: 1; }
+  .profile-actions { grid-column: 1; grid-row: 2; }
+  .profile-gear-col { grid-column: 2; grid-row: 1 / span 2; }
+  #app .bn-toast {
+    left: calc(var(--nav-rail) + 1rem);
+    right: 1rem;
+  }
+  .admin-stat-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .explore-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .bean-card-img-wrap,
+  .bean-card-photo {
+    height: 180px;
+  }
 }
 

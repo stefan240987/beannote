@@ -1389,7 +1389,7 @@ function authView() {
         <span class="h-px flex-1 bg-latte"></span>${t("or_divider")}<span class="h-px flex-1 bg-latte"></span>
       </div>` : `<div class="mt-6"></div>`;
   return `
-    <section class="flex min-h-dvh flex-col bg-cream px-5 pb-28 pt-12">
+    <section class="auth-view app-page flex min-h-dvh flex-col bg-cream px-5 pt-12">
       <div class="rounded-2xl bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta px-5 py-7 text-cream shadow-lg">
         <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/70">BeanNote</p>
         <h1 class="font-display mt-1 text-3xl font-bold">${t("app_name")}</h1>
@@ -1553,7 +1553,7 @@ function exploreView() {
     </article>`;
   }).join("");
   return `<section class="explore-list">
-    <div class="grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
+    <div class="explore-grid">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
     ${supportEnabled() ? `<div class="mt-5">${supportButton()}</div>` : ""}
     ${state.profile?.bean ? beanModal(state.profile) : ""}
   </section>`;
@@ -1918,7 +1918,7 @@ function beanModal(profile) {
 function scanView() {
   const scan = state.scan;
   if (!scan) {
-    return `<section class="px-4 pb-28 pt-6">
+    return `<section class="scan-view app-page px-4 pt-6">
       <div class="rounded-2xl border-2 border-dashed border-terracotta/50 bg-white p-6 text-center">
         <h2 class="font-display text-xl font-bold" data-i18n="scan_card_title">${t("scan_card_title")}</h2>
         <p class="mt-1 text-sm text-muted" data-i18n="scan_card_sub">${t("scan_card_sub")}</p>
@@ -1932,7 +1932,7 @@ function scanView() {
   const existing = existingScanMatch(scan);
   const canEdit = isAdmin();
   const fields = canEdit && state.editScan ? scanEditor(scan) : "";
-  return `<section class="px-4 pb-28 pt-4">
+  return `<section class="scan-view app-page px-4 pt-4">
     <article class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-latte">
       <div id="scan-cover-hero">${preview || bagFallback()}</div>
       <div class="space-y-3 p-4">
@@ -2422,7 +2422,7 @@ function gearPickerModal() {
           <h2 class="font-display text-xl font-bold" data-i18n="gear_picker_title">${esc(t("gear_picker_title"))}</h2>
           <p class="mt-1 text-sm text-muted" data-i18n="gear_picker_sub">${esc(t("gear_picker_sub"))}</p>
         </div>
-        <div class="grid grid-cols-2 gap-2">${cards}</div>
+        <div class="gear-picker-grid grid grid-cols-2 gap-2">${cards}</div>
         <button type="button" data-open-gear-custom class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="gear_custom_photo">${esc(t("gear_custom_photo"))}</button>
       </div>
     </article>
@@ -2725,7 +2725,7 @@ function adminView() {
       ${action}
     </article>`;
   }).join("") || `<p class="text-sm text-muted">${esc(t("admin_empty_users"))}</p>`;
-  return `<section class="space-y-4 px-4 pb-28 pt-4">
+  return `<section class="admin-view app-page space-y-4 px-4 pt-4">
     <div class="flex items-start justify-between gap-3">
       <div>
         <button type="button" id="admin-back" class="text-xs font-semibold text-terracotta">${esc(t("admin_back"))}</button>
@@ -2735,7 +2735,7 @@ function adminView() {
     </div>
     <div>
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_users_title"))}</h3>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="admin-stat-grid-4 grid grid-cols-2 gap-2">
         ${adminStat("admin_total_users", users.total ?? "–", `${esc(fmtGrowth(users.growth_week_pct))} ${esc(t("admin_growth_week"))}`)}
         ${adminStat("admin_mau", users.mau ?? "–", `${esc(t("admin_dau"))}: ${users.dau ?? 0}`)}
         ${adminStat("admin_new_signups", users.new_month ?? "–", `${esc(fmtGrowth(users.growth_month_pct))} ${esc(t("admin_growth_month"))}`)}
@@ -2783,7 +2783,7 @@ function adminView() {
     </div>
     <div>
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_content"))}</h3>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="admin-stat-grid-4 grid grid-cols-2 gap-2">
         ${adminStat("admin_beans", content.beans ?? 0)}
         ${adminStat("admin_tastings", content.tastings ?? 0)}
         ${adminStat("admin_favorites", content.favorites ?? 0)}
@@ -2860,8 +2860,8 @@ function photoReplaceModal() {
 }
 
 function profileView() {
-  return `<section class="space-y-4 px-4 pb-28 pt-5">
-    <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+  return `<section class="profile-view app-page px-4 pt-5">
+    <div class="profile-identity rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
           <p class="text-xs uppercase tracking-wider text-muted" data-i18n="signed_in_as">${t("signed_in_as")}</p>
@@ -2872,11 +2872,15 @@ function profileView() {
         ${langToggle()}
       </div>
     </div>
-    ${gearSetup()}
-    ${adminImageAuditCard()}
-    ${isAdmin() ? `<button type="button" id="open-admin" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${esc(t("admin_dash_open"))}</button>` : ""}
-    ${supportButton()}
-    <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
+    <div class="profile-gear-col">
+      ${gearSetup()}
+      ${adminImageAuditCard()}
+    </div>
+    <div class="profile-actions">
+      ${isAdmin() ? `<button type="button" id="open-admin" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${esc(t("admin_dash_open"))}</button>` : ""}
+      ${supportButton()}
+      <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
+    </div>
   </section>`;
 }
 
@@ -2926,6 +2930,7 @@ function tabbar() {
     ? "tabbar-grid"
     : `tabbar-grid tabbar-grid-guest${tabs.length === 1 ? " tabbar-grid-guest-solo" : ""}`;
   return `<nav class="tabbar" aria-label="BeanNote">
+    <p class="tabbar-brand">${esc(t("app_name"))}</p>
     <div class="${grid}">
       ${tabs.map(({ id, tab, icon, key, fallback }) => {
         const active = state.tab === tab;

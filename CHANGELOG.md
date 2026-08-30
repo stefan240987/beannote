@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.6] - 2026-08-30
+
+- snapshot: feat - desktop and tablet layout with a left sidebar
+- Tablets (768px) get a wider shell and a 2-column Explore feed. Widescreen (1024px) moves the tab bar into a left rail, splits Profile and gear, and uses a 3-column Explore feed from 1280px. Phone PWA layout, bottom sheets, and safe-area insets stay the default.
+
 ## [1.1.5] - 2026-08-30
 
 - snapshot: fix - Fuldautomatisk translates to Fullautomatic, not Superautomatic
