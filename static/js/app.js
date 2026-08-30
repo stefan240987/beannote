@@ -1138,13 +1138,15 @@ function authView() {
 
 function header() {
   const explore = state.tab === "explore" ? exploreToolbar() : "";
-  return `<header class="header">
-    <div class="header-row">
-      <h1 class="header-title">${t("app_name")}</h1>
-      <p class="header-ver">v${esc(state.config?.version || "")}</p>
-    </div>
+  return `<div class="app-chrome">
+    <header class="header">
+      <div class="header-row">
+        <h1 class="header-title">${t("app_name")}</h1>
+        <p class="header-ver">v${esc(state.config?.version || "")}</p>
+      </div>
+    </header>
     ${explore}
-  </header>`;
+  </div>`;
 }
 
 function exploreToolbar() {
@@ -1153,8 +1155,10 @@ function exploreToolbar() {
       <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
       ${exploreSortSelect()}
     </div>
-    ${suitabilityBar()}
-    ${exploreSegBar()}
+    <div class="explore-filter-bar">
+      ${suitabilityBar()}
+      ${exploreSegBar()}
+    </div>
   </div>`;
 }
 

@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.7] - 2026-08-30
+
+- snapshot: refactor - minimalist header layout, separated branding from light filter bar
+- Dark mocha branding is a slim ~54px topbar (plus iOS safe-area inset) with title and version badge only.
+- Search and sort sit in a cream `#F5EFE6` row. Brew-method pills scroll horizontally and view toggles stay visible in a compact `#FFFDF9` bar above the bean grid.
+
 ## [6.8.6] - 2026-08-29
 
 - snapshot: UI polish - added card depth, roast badges, rich topbar gradient, and iOS Dynamic Island safe-area support
