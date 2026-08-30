@@ -6,6 +6,7 @@ You are working on BeanNote, a FastAPI + Tailwind PWA coffee journal. Keep chang
 - `db.py`: SQLite schema, dual-env paths, users/auth, UNIQUE(name, roaster) ON CONFLICT IGNORE, fuzzy dedupe via `difflib.get_close_matches` (cutoff 0.80), queries, export.
 - `ocr.py`: Gemini 1.5 Flash Vision with Tesseract fallback. Detect `/opt/homebrew/bin/tesseract` or `/usr/local/bin/tesseract`. Auto EXIF rotation via `PIL.ImageOps.exif_transpose`.
 - `translations.py`: DA / EN / DE / FR / ES keys only. No inline UI copy in other files.
+- Mobile header support pill uses i18n key `support_header` (DA: "☕ Støt").
 - `main.py`: FastAPI API, JWT/OAuth, static PWA. No business logic that belongs in db.py/ocr.py.
 - `static/index.html`: Tailwind PWA. Do not add extra frameworks or a second database.
 

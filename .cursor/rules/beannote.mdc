@@ -7,6 +7,8 @@ alwaysApply: true
 
 Keep `db.py`, `ocr.py`, `translations.py`, and `main.py` as the Python modules. UI lives in `static/index.html`.
 
+- Mobile header support pill copy comes from i18n key `support_header` (DA: "☕ Støt"). No hardcoded button labels.
+
 - Local DB: `./data/beannote.db` (auto-flush on startup). Production DB: `/app/data/beannote.db` (never auto-flush).
 - Deduplicate with `UNIQUE(name, roaster)` and `difflib.get_close_matches` at 80% before every insert.
 - After user-facing changes: bump `VERSION` in `db.py`, append `CHANGELOG.md`, commit `snapshot: vX.Y.Z - <feature>`.

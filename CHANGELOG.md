@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.20] - 2026-08-30
+
+- snapshot: feat - localize mobile header support pill via support_header i18n key
+- The ☕ Støt header button uses translations.py (DA / EN / DE / FR / ES) instead of a hardcoded Danish label.
+
 ## [1.1.19] - 2026-08-30
 
 - snapshot: feat - direct mobile header support button placement without version tag dependency

@@ -1513,13 +1513,17 @@ function header() {
 
 function mobileHeaderSupportBtn() {
   if (!supportEnabled()) return "";
+  const label = t("support_header");
   const tpl = document.getElementById("mobile-support-btn");
   if (tpl) {
+    const node = tpl.content.cloneNode(true);
+    const btn = node.querySelector("#mobileSupportBtn") || node.querySelector(".header-support-btn");
+    if (btn) btn.textContent = label;
     const wrap = document.createElement("div");
-    wrap.appendChild(tpl.content.cloneNode(true));
+    wrap.appendChild(node);
     return wrap.innerHTML;
   }
-  return `<button type="button" id="mobileSupportBtn" class="header-support-btn">☕ Støt</button>`;
+  return `<button type="button" id="mobileSupportBtn" class="header-support-btn" data-i18n="support_header">${esc(label)}</button>`;
 }
 
 function showSupportModal() {
