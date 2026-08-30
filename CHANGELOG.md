@@ -2,6 +2,10 @@
 
 All notable BeanNote changes are recorded here.
 
+## [Unreleased]
+
+- Unraid install guide in `README.md` (shown on GitHub) and SWAG reverse proxy sample at `unraid/swag/beannote.subdomain.conf`.
+
 ## [6.8.18] - 2026-08-30
 
 - snapshot: feat - Unraid/Docker hardening without changing the PWA UI
