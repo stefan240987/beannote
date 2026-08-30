@@ -1,9 +1,9 @@
-const CACHE = "beannote-v6.8.18";
+const CACHE = "beannote-v1.0.0";
 const SHELL = [
   "/",
   "/static/icon.svg",
-  "/static/css/styles.css?v=6.8.18",
-  "/static/js/app.js?v=6.8.18",
+  "/static/css/styles.css?v=1.0.0",
+  "/static/js/app.js?v=1.0.0",
   "/manifest.webmanifest",
 ];
 

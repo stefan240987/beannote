@@ -2,9 +2,10 @@
 
 All notable BeanNote changes are recorded here.
 
-## [Unreleased]
+## [1.0.0] - 2026-08-30
 
-- Unraid install guide in `README.md` (shown on GitHub) and SWAG reverse proxy sample at `unraid/swag/beannote.subdomain.conf`.
+- First public GitHub release.
+- Unraid install guide in `README.md`, SWAG reverse proxy sample, `ADMIN_EMAIL` / `ADMIN_PASSWORD` bootstrap, and Docker/Unraid production hardening.
 
 ## [6.8.18] - 2026-08-30
 

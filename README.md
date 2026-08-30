@@ -2,7 +2,8 @@
 
 Personlig kaffe-journal og rating-PWA. Scan poser, gem smagninger, og kør den som ét Docker-image på Unraid.
 
-**Image:** `ghcr.io/stefan240987/beannote:latest`  
+**Version:** 1.0.0  
+**Image:** `ghcr.io/stefan240987/beannote:1.0.0` eller `:latest`  
 **Port:** `8501`  
 **Data:** `/app/data` (SQLite, brugerfotos, katalog-uploads)
 
