@@ -172,6 +172,10 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertIn("/static/css/styles.css", body)
         self.assertIn("/static/js/app.js", body)
 
+    def test_apple_button_gated_on_provider_flag(self):
+        js = (Path(__file__).resolve().parent / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('${providers.apple ? `<button type="button" data-oauth="apple"', js)
+
     def test_health_and_config_still_ok(self):
         health = self.client.get("/api/health")
         self.assertEqual(health.status_code, 200)

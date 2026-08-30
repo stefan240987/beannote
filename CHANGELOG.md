@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.4] - 2026-08-30
+
+- snapshot: fix - hide Apple login when Sign in with Apple is not configured
+- On Unraid/production the Apple button is omitted unless APPLE_CLIENT_ID, TEAM_ID, KEY_ID, and the private key are set. Local/dev test login is unchanged.
+
 ## [1.0.3] - 2026-08-30
 
 - snapshot: fix - Apple Sign In callback works behind Unraid/HTTPS
