@@ -663,6 +663,21 @@ async function loadPendingImages() {
   }
 }
 
+async function approveBeanPhoto(id) {
+  const beanId = Number(id);
+  if (!beanId || !isAdmin()) return;
+  try {
+    const result = await api(`/api/beans/${beanId}/image/approve`, { method: "POST", body: "{}" });
+    const bean = result.bean || {};
+    applyBeanPhoto(beanId, bean.image_url || "", bean);
+    if (state.imageReplaceId === beanId) state.imageReplaceId = null;
+    toast(t("photo_approved"));
+    render();
+  } catch (err) {
+    toast(t(err.detail || "image_replace_fail"));
+  }
+}
+
 function applyBeanPhoto(beanId, imageUrl, extra = {}) {
   const id = Number(beanId);
   const patch = { image_url: imageUrl, is_professional_image: true, image_source: "professional", ...extra };
@@ -1629,7 +1644,10 @@ function beanModal(profile) {
     ? `<button type="button" class="modal-cover-photo-btn" data-replace-bean-photo="${bean.id}" data-i18n-aria="change_bag_photo" aria-label="${esc(t("change_bag_photo"))}">${coverInner}</button>`
     : coverInner;
   const changePhoto = isAdmin()
-    ? `<button type="button" class="modal-cover-change" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>`
+    ? `<div class="modal-cover-actions">
+        <button type="button" class="modal-cover-change" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>
+        ${bean.is_professional_image ? "" : `<button type="button" class="modal-cover-approve" data-approve-bean-photo="${bean.id}" data-i18n="image_audit_approve">✓ ${esc(t("image_audit_approve"))}</button>`}
+      </div>`
     : "";
   const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
   const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
@@ -2402,7 +2420,10 @@ function adminImageAuditCard() {
           <p class="truncate text-sm font-semibold">${esc(bean.name)}</p>
           <p class="truncate text-xs text-muted">${esc(bean.roaster)}</p>
         </button>
-        <button type="button" class="mt-1 text-xs font-semibold text-terracotta" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>
+        <div class="image-audit-actions">
+          <button type="button" class="text-xs font-semibold text-terracotta" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>
+          <button type="button" class="text-xs font-semibold text-espresso" data-approve-bean-photo="${bean.id}" data-i18n="image_audit_approve">✓ ${esc(t("image_audit_approve"))}</button>
+        </div>
       </div>
     </article>`;
   }).join("");
@@ -2420,7 +2441,7 @@ function photoReplaceModal() {
     || (state.profile?.bean?.id === state.imageReplaceId ? state.profile.bean : null);
   const preview = photoImg(bean?.image_url, bean?.snapshot_url, "max-h-40 w-full object-contain bg-foam")
     || bagFallback("h-28");
-  return `<div id="bean-photo-replace" data-close-photo-replace class="fixed inset-0 z-[70] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+  return `<div id="bean-photo-replace" data-close-photo-replace class="fixed inset-0 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
     <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-photo-replace-sheet>
       <form id="bean-photo-form" class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="change_bag_photo">${esc(t("change_bag_photo"))}</h2>
@@ -2429,6 +2450,7 @@ function photoReplaceModal() {
         <button type="button" id="bean-photo-pick" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte">📷 ${esc(t("change_bag_photo"))}</button>
         <input id="bean-photo-url" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="image_url_ph" placeholder="${esc(t("image_url_ph"))}">
         <button type="submit" class="min-h-12 w-full rounded-xl bg-terracotta text-sm font-semibold text-cream" data-i18n="image_replace_save">${esc(t("image_replace_save"))}</button>
+        <button type="button" id="bean-photo-approve" class="min-h-12 w-full rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="image_audit_approve">✓ ${esc(t("image_audit_approve"))}</button>
         <button type="button" data-close-photo-replace class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
       </form>
     </article>
@@ -2965,6 +2987,16 @@ function bindApp() {
     if (!isAdmin()) return;
     state.editBean = !state.editBean;
     render();
+  });
+  document.querySelectorAll("[data-approve-bean-photo]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      approveBeanPhoto(btn.dataset.approveBeanPhoto);
+    });
+  });
+  $("#bean-photo-approve")?.addEventListener("click", () => {
+    approveBeanPhoto(state.imageReplaceId);
   });
   document.querySelectorAll("[data-replace-bean-photo]").forEach((btn) => {
     btn.addEventListener("click", (event) => {

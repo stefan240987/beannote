@@ -18,6 +18,7 @@ from db import (
     insert_bean,
     list_beans,
     list_pending_image_beans,
+    set_bean_professional_image,
     resolve_image_path,
     toggle_favorite,
     update_bean,
@@ -301,6 +302,19 @@ async def replace_bean_image(
     update_bean_image(bean_id, stored, professional=True)
     bean = _mark_professional(get_bean(bean_id), stored)
     return {"status": "updated", "bean": bean, "image_url": bean["image_url"], "is_professional_image": True}
+
+
+@router.post("/{bean_id}/image/approve")
+def approve_bean_image(
+    bean_id: int,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    del _admin
+    bean = set_bean_professional_image(bean_id, True)
+    if not bean:
+        raise HTTPException(status_code=404, detail="not_found")
+    marked = _mark_professional(bean, bean.get("image_url") or "")
+    return {"status": "approved", "bean": marked, "image_url": marked.get("image_url") or "", "is_professional_image": True}
 
 
 @admin_router.get("/pending-images")

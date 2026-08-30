@@ -2,6 +2,16 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.16] - 2026-08-30
+
+- snapshot: feat - admin can approve an existing bag photo as professional
+- **Allerede pro foto** on the audit list, bean modal, and photo picker marks the current image as professional and removes the bean from pending without a new upload.
+
+## [6.8.15] - 2026-08-30
+
+- snapshot: fix - show change-bag-photo picker above the open bean modal
+- The photo replace sheet used z-index 70 while `#bean-modal` is 120, so the picker stayed hidden until the bag window was closed.
+
 ## [6.8.14] - 2026-08-30
 
 - snapshot: feat - admin bean image audit list and direct photo replacement

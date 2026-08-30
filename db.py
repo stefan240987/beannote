@@ -20,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.8.14"
+VERSION = "6.8.16"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -1002,6 +1002,18 @@ def update_bean_image(bean_id: int, image_url: str, *, professional: bool | None
             "UPDATE beans SET image_url = ?, is_professional_image = ? WHERE id = ?",
             (image_url, int(bool(professional)), bean_id),
         )
+
+
+def set_bean_professional_image(bean_id: int, professional: bool = True) -> dict[str, Any] | None:
+    """Keep the current photo and mark it as professionally approved."""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE beans SET is_professional_image = ? WHERE id = ?",
+            (int(bool(professional)), bean_id),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_bean(bean_id)
 
 
 def list_pending_image_beans() -> list[dict[str, Any]]:
