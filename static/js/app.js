@@ -125,16 +125,6 @@ const i18nManager = {
     state.config = { ...(state.config || {}), lang: next, strings };
     refreshFlavorCatalog(next);
     this.applyToDom();
-    if (worldMap) {
-      worldMap.eachLayer((layer) => {
-        const popup = layer.getPopup?.();
-        const el = popup?.getElement?.();
-        el?.querySelectorAll("[data-i18n]").forEach((node) => {
-          const key = node.getAttribute("data-i18n");
-          if (key) node.textContent = this.t(key);
-        });
-      });
-    }
     render();
   },
   renderLanguageSwitcher() {
@@ -169,7 +159,6 @@ const state = {
   busyMessage: "",
   beanFilter: "all",
   beanSort: "newest",
-  exploreMode: "cards",
   suitabilityFilter: "",
   savedPrompt: null,
   supportOpen: false,
@@ -196,7 +185,6 @@ const state = {
   },
 };
 let originMap = null;
-let worldMap = null;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (value) => String(value ?? "")
@@ -885,18 +873,6 @@ function bagThumb() {
   </div>`;
 }
 
-function coffeeMiniCard(bean) {
-  const img = photoImg(bean.image_url, bean.snapshot_url, "h-16 w-16 shrink-0 rounded object-cover") || bagThumb();
-  return `<div class="flex min-w-[13.5rem] max-w-[16rem] items-center gap-3">
-    ${img}
-    <div class="min-w-0 flex-1">
-      <p class="font-display truncate text-sm font-semibold leading-tight">${esc(bean.name)}</p>
-      <p class="truncate text-xs text-muted">${esc(bean.roaster || "")}</p>
-      <button type="button" data-open-bean="${bean.id}" class="mt-1.5 min-h-8 rounded-lg border border-latte bg-transparent px-2.5 text-xs font-semibold text-espresso" data-i18n="view_details">${t("view_details")}</button>
-    </div>
-  </div>`;
-}
-
 function flavorList(tags) {
   const localized = getLocalized(tags, activeLang());
   return Array.isArray(localized) ? localized : [];
@@ -961,14 +937,11 @@ function originMapBox(source) {
 }
 
 function exploreSegBar() {
-  const btn = (attr, id, key, on) =>
-    `<button type="button" ${attr}="${id}" data-i18n="${key}" class="${on ? "is-on" : ""}">${esc(t(key))}</button>`;
+  const btn = (id, key, on) =>
+    `<button type="button" data-filter="${id}" data-i18n="${key}" class="${on ? "is-on" : ""}">${esc(t(key))}</button>`;
   return `<div class="explore-seg" role="toolbar" aria-label="${esc(t("filter_all_beans"))}">
-    ${btn("data-filter", "all", "filter_all_beans", state.beanFilter === "all")}
-    ${btn("data-filter", "favorites", "filter_favorites", state.beanFilter === "favorites")}
-    <span class="explore-seg-split" aria-hidden="true"></span>
-    ${btn("data-view", "cards", "view_cards", state.exploreMode === "cards")}
-    ${btn("data-view", "map", "view_map", state.exploreMode === "map")}
+    ${btn("all", "filter_all_beans", state.beanFilter === "all")}
+    ${btn("favorites", "filter_favorites", state.beanFilter === "favorites")}
   </div>`;
 }
 
@@ -1260,7 +1233,6 @@ function supportModal() {
 
 function exploreView() {
   const empty = state.beanFilter === "favorites" ? t("no_favorites") : t("empty_explore");
-  const mapMode = state.exploreMode === "map";
   const cards = visibleBeans().map((bean) => {
     const photo = photoImg(bean.image_url, bean.snapshot_url, "bean-card-img");
     return `<article class="bean-card">
@@ -1278,13 +1250,6 @@ function exploreView() {
       </button>
     </article>`;
   }).join("");
-  if (mapMode) {
-    return `<section class="explore-map">
-      <div id="world-map" class="w-full overflow-hidden rounded-xl ring-1 ring-latte"></div>
-      ${supportEnabled() ? `<div class="mt-3 shrink-0">${supportButton()}</div>` : ""}
-      ${state.profile?.bean ? beanModal(state.profile) : ""}
-    </section>`;
-  }
   return `<section class="explore-list">
     <div class="grid gap-3">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
     ${supportEnabled() ? `<div class="mt-5">${supportButton()}</div>` : ""}
@@ -2288,10 +2253,6 @@ function destroyMaps() {
     originMap.remove();
     originMap = null;
   }
-  if (worldMap) {
-    worldMap.remove();
-    worldMap = null;
-  }
 }
 
 function refreshMap(map, place) {
@@ -2325,41 +2286,6 @@ function drawMaps() {
       refreshMap(originMap, () => originMap.setView([lat, lng], 7));
     }
   }
-  const world = $("#world-map");
-  if (world) {
-    worldMap = L.map(world, { scrollWheelZoom: false, worldCopyJump: true }).setView([20, 0], 2);
-    addOsm(worldMap);
-    const points = [];
-    visibleBeans().forEach((bean) => {
-      const lat = Number(bean.latitude);
-      const lng = Number(bean.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      const marker = L.marker([lat, lng], { icon: coffeeIcon() }).addTo(worldMap);
-      marker.bindPopup(coffeeMiniCard(bean), {
-        className: "bn-mini-popup",
-        maxWidth: 280,
-        minWidth: 220,
-        closeButton: true,
-        autoPan: true,
-      });
-      marker.on("popupopen", () => {
-        const btn = marker.getPopup()?.getElement()?.querySelector("[data-open-bean]");
-        btn?.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          marker.closePopup();
-          openBean(Number(bean.id));
-        });
-      });
-      points.push([lat, lng]);
-    });
-    const placeWorld = () => {
-      if (points.length === 1) worldMap.setView(points[0], 5);
-      else if (points.length > 1) worldMap.fitBounds(points, { padding: [36, 36], maxZoom: 4 });
-      else worldMap.setView([20, 0], 2);
-    };
-    refreshMap(worldMap, placeWorld);
-  }
 }
 
 function savedPromptModal() {
@@ -2380,7 +2306,6 @@ function savedPromptModal() {
 async function resetExplore() {
   state.tab = "explore";
   state.search = "";
-  state.exploreMode = "cards";
   state.suitabilityFilter = "";
   state.beanFilter = "all";
   state.selectedId = null;
@@ -2660,10 +2585,6 @@ function bindApp() {
     state.selectedId = null;
     state.profile = null;
     await loadBeans();
-    render();
-  }));
-  document.querySelectorAll("[data-view]").forEach((btn) => btn.addEventListener("click", () => {
-    state.exploreMode = btn.dataset.view;
     render();
   }));
   document.querySelectorAll("[data-fav]").forEach((btn) => btn.addEventListener("click", async (event) => {

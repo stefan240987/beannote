@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.8] - 2026-08-30
+
+- snapshot: refactor - removed map and world map views, simplified to All Beans / Favorites toggle
+- Explore no longer has the Kort / Verdenskort view toggles or the unused world-map container.
+- The 4-button bar is now a compact Alle Bønner / Favoritter switch, with tighter search, sort, and filter spacing so the bean list sits higher.
+
 ## [6.8.7] - 2026-08-30
 
 - snapshot: refactor - minimalist header layout, separated branding from light filter bar
