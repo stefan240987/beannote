@@ -5,7 +5,7 @@ alwaysApply: true
 
 # BeanNote
 
-Keep `db.py`, `ocr.py`, `translations.py`, and `main.py` as the Python modules. UI lives in `static/index.html`.
+Keep `db.py`, `ocr.py`, `translations.py`, and `main.py` as the Python modules. UI lives in `static/index.html`. Docker copies the full app via `COPY . .` — do not revert to a file allowlist, and keep first-party packages out of `.dockerignore`.
 
 - Mobile header support pill copy comes from i18n key `support_header` (DA: "☕ Støt"). No hardcoded button labels.
 

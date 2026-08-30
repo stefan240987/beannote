@@ -9,6 +9,7 @@ You are working on BeanNote, a FastAPI + Tailwind PWA coffee journal. Keep chang
 - Mobile header support pill uses i18n key `support_header` (DA: "☕ Støt").
 - `main.py`: FastAPI API, JWT/OAuth, static PWA. No business logic that belongs in db.py/ocr.py.
 - `static/index.html`: Tailwind PWA. Do not add extra frameworks or a second database.
+- Docker copies the full app via `COPY . .`. Do not revert to a file allowlist. First-party packages (`routes`, `services`, …) must stay out of `.dockerignore`.
 
 ## Environment
 - `ENVIRONMENT=local` → `./data/beannote.db` (absolute wipe of beans/ratings/users on startup, no demo seed).

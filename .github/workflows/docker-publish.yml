@@ -15,7 +15,22 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/beannote
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Guard Docker image contents
+        run: python -m unittest test_docker_image.py -v
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

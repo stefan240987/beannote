@@ -1,6 +1,7 @@
 .git
 .github
 .venv
+.cursor
 __pycache__
 *.pyc
 data
@@ -10,4 +11,8 @@ data
 .streamlit/secrets.toml
 CHANGELOG.md
 .cursorrules
+README.md
 run_local.sh
+test_*.py
+scripts
+unraid

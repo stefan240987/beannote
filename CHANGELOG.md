@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.23] - 2026-08-30
+
+- snapshot: fix - copy the full app tree into Docker and fail publish if packages are missing
+- The image uses `COPY . .` instead of a file allowlist. `test_docker_image.py` walks the runtime import graph and blocks `.dockerignore` from dropping `services`/`routes`. Docker Publish runs that guard before building.
+
 ## [1.1.22] - 2026-08-30
 
 - snapshot: fix - include the services package in the Unraid/Docker image
