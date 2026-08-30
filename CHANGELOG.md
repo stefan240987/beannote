@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.17] - 2026-08-30
+
+- snapshot: feat - Unraid ADMIN_EMAIL and ADMIN_PASSWORD bootstrap the admin account
+- On startup the container creates or updates that email as admin and sets the password from env, so Docker/Unraid templates no longer need a manual SQL step.
+
 ## [6.8.16] - 2026-08-30
 
 - snapshot: feat - admin can approve an existing bag photo as professional

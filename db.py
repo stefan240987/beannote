@@ -20,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.8.16"
+VERSION = "6.8.17"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -867,6 +867,7 @@ def init_db() -> None:
             _wipe_all_tables(conn)
         sync_gemini_slots_on(conn)
     get_images_dir()
+    ensure_admin_from_env()
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -2492,8 +2493,20 @@ def _normalized_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
+def _configured_admin_email() -> str:
+    return _normalized_email(os.getenv("ADMIN_EMAIL") or "")
+
+
+def _configured_admin_password() -> str:
+    return (os.getenv("ADMIN_PASSWORD") or "").strip()
+
+
 def _is_bootstrap_admin(email: str) -> bool:
-    return _normalized_email(email) in LOCAL_ADMIN_EMAILS
+    normalized = _normalized_email(email)
+    if normalized in LOCAL_ADMIN_EMAILS:
+        return True
+    configured = _configured_admin_email()
+    return bool(configured) and normalized == configured
 
 
 def _is_forced_regular(email: str) -> bool:
@@ -2512,6 +2525,58 @@ def _grant_admin(email: str) -> bool:
             "SELECT 1 FROM users WHERE COALESCE(is_admin, 0) = 1 LIMIT 1"
         ).fetchone()
     return row is None
+
+
+def ensure_admin_from_env() -> dict[str, Any] | None:
+    """Create or update the Unraid admin from ADMIN_EMAIL / ADMIN_PASSWORD."""
+    email = _configured_admin_email()
+    password = _configured_admin_password()
+    if not email or "@" not in email or _is_forced_regular(email):
+        return None
+    existing = get_user_by_email(email)
+    if not password:
+        if not existing:
+            print("ADMIN_PASSWORD is required to create the admin account")
+            return None
+        with connect() as conn:
+            conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (existing["id"],))
+        print(f"BeanNote admin promoted: {email}")
+        return get_user(int(existing["id"]))
+    if len(password) < 8:
+        print("ADMIN_PASSWORD must be at least 8 characters")
+        return None
+    hashed = hash_password(password)
+    username = email.split("@")[0]
+    if existing:
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET is_admin = 1,
+                    password_hash = ?,
+                    auth_provider = CASE
+                        WHEN auth_provider IN ('', 'email') THEN 'email'
+                        ELSE auth_provider
+                    END
+                WHERE id = ?
+                """,
+                (hashed, existing["id"]),
+            )
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (existing["id"],)).fetchone()
+        print(f"BeanNote admin updated: {email}")
+        return _public_user(row)
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO users (
+                email, username, password_hash, auth_provider, oauth_id, is_admin, created_at
+            ) VALUES (?, ?, ?, 'email', '', 1, ?)
+            """,
+            (email, username, hashed, _now()),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+    print(f"BeanNote admin created: {email}")
+    return _public_user(row)
 
 
 def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
