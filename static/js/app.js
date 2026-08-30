@@ -697,8 +697,12 @@ async function openBean(id, tab = "explore") {
   };
   applyRecipeDefaults(user);
   state.rateOpen = tab === "rate";
-  state.tab = tab === "rate" || tab === "explore" ? "explore" : tab;
-  if (state.tab === "rate") state.tab = "explore";
+  if (tab === "favorites" || (tab === "rate" && state.tab === "favorites")) {
+    state.tab = "favorites";
+    state.beanFilter = "favorites";
+  } else {
+    state.tab = "explore";
+  }
   state.editBean = false;
   state.recipeTab = "mine";
   render();
@@ -936,15 +940,6 @@ function originMapBox(source) {
   return `<div id="origin-map" class="h-44 w-full rounded-xl overflow-hidden my-3" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
 }
 
-function exploreSegBar() {
-  const btn = (id, key, on) =>
-    `<button type="button" data-filter="${id}" data-i18n="${key}" class="${on ? "is-on" : ""}">${esc(t(key))}</button>`;
-  return `<div class="explore-seg" role="toolbar" aria-label="${esc(t("filter_all_beans"))}">
-    ${btn("all", "filter_all_beans", state.beanFilter === "all")}
-    ${btn("favorites", "filter_favorites", state.beanFilter === "favorites")}
-  </div>`;
-}
-
 function brewBadge(source) {
   const rec = brewSource(source);
   const compact = [rec.method, rec.grind, rec.temp].filter(Boolean);
@@ -1109,8 +1104,12 @@ function authView() {
     </section>`;
 }
 
+function isBeanListTab() {
+  return state.tab === "explore" || state.tab === "favorites";
+}
+
 function header() {
-  const explore = state.tab === "explore" ? exploreToolbar() : "";
+  const explore = isBeanListTab() ? exploreToolbar() : "";
   return `<div class="app-chrome">
     <header class="header">
       <div class="header-row">
@@ -1123,15 +1122,13 @@ function header() {
 }
 
 function exploreToolbar() {
+  const pills = suitabilityBar();
   return `<div class="explore-toolbar">
     <div class="explore-search-row">
       <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
       ${exploreSortSelect()}
     </div>
-    <div class="explore-filter-bar">
-      ${suitabilityBar()}
-      ${exploreSegBar()}
-    </div>
+    ${pills ? `<div class="explore-filter-bar">${pills}</div>` : ""}
   </div>`;
 }
 
@@ -2186,6 +2183,20 @@ function langToggle() {
   return i18nManager.renderLanguageSwitcher();
 }
 
+function diaryView() {
+  const groups = journalBeanGroups(state.journal);
+  const list = groups.length
+    ? groups.map((group) => journalBeanCard(group)).join("")
+    : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`;
+  return `<section class="diary-view">
+    <div class="diary-view-head">
+      <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
+      <p class="text-xs text-muted" data-i18n="journal_grouped">${esc(t("journal_grouped"))}</p>
+    </div>
+    <div class="journal-feed">${list}</div>
+  </section>`;
+}
+
 function profileView() {
   return `<section class="space-y-4 px-4 pb-28 pt-5">
     <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
@@ -2198,32 +2209,47 @@ function profileView() {
         </div>
         ${langToggle()}
       </div>
-      <button type="button" data-open-journal class="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte" data-i18n="journal_title">${esc(t("journal_title"))}</button>
     </div>
-    ${journalFeed()}
     ${gearSetup()}
     ${supportButton()}
     <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
   </section>`;
 }
 
-function tabbar() {
-  const tabs = [
-    ["explore", "☕", "tab_explore"],
-    ["scan", "📸", "tab_scan"],
-    ["profile", "👤", "tab_profile"],
+function bottomNavTabs() {
+  const tpl = document.getElementById("bottom-nav-tabs");
+  if (tpl) {
+    return [...tpl.content.querySelectorAll("[data-tab]")].map((btn) => ({
+      id: btn.id || `${btn.dataset.tab}-tab`,
+      tab: btn.dataset.tab,
+      icon: btn.dataset.icon || "",
+      key: btn.getAttribute("data-i18n") || "",
+      fallback: (btn.textContent || "").trim(),
+    }));
+  }
+  return [
+    { id: "explore-tab", tab: "explore", icon: "☕", key: "tab_explore", fallback: "Udforsk" },
+    { id: "favorites-tab", tab: "favorites", icon: "❤️", key: "tab_favorites", fallback: "Favoritter" },
+    { id: "scan-tab", tab: "scan", icon: "📸", key: "tab_scan", fallback: "Scan" },
+    { id: "diary-tab", tab: "diary", icon: "📖", key: "tab_diary", fallback: "Dagbog" },
+    { id: "profile-tab", tab: "profile", icon: "👤", key: "tab_profile", fallback: "Profil" },
   ];
-  return `<nav class="tabbar fixed inset-x-0 bottom-0 z-30 mx-auto max-w-lg border-t border-latte bg-cream/95 backdrop-blur">
-    <div class="grid grid-cols-3">
-      ${tabs.map(([id, icon, key]) => {
-        const active = state.tab === id;
-        const scan = id === "scan";
+}
+
+function tabbar() {
+  const tabs = bottomNavTabs();
+  return `<nav class="tabbar" aria-label="BeanNote">
+    <div class="tabbar-grid">
+      ${tabs.map(({ id, tab, icon, key, fallback }) => {
+        const active = state.tab === tab;
+        const scan = tab === "scan";
+        const label = key ? t(key) : fallback;
         return `
-        <button data-tab="${id}" type="button" class="flex min-h-14 flex-col items-center justify-center text-[11px] font-semibold ${active || scan ? "text-terracotta" : "text-muted"}">
+        <button id="${esc(id)}" data-tab="${esc(tab)}" type="button" class="tabbar-item${active ? " is-active" : ""}${scan ? " is-scan" : ""}">
           ${scan
-            ? `<span class="tabbar-scan-icon flex h-11 w-11 items-center justify-center rounded-full bg-terracotta text-lg text-cream ring-4 ring-cream">${icon}</span>`
-            : `<span class="text-lg">${icon}</span>`}
-          <span data-i18n="${key}">${esc(t(key))}</span>
+            ? `<span class="tabbar-scan-icon">${icon}</span>`
+            : `<span class="tabbar-icon">${icon}</span>`}
+          <span class="tabbar-label" data-i18n="${esc(key)}">${esc(label)}</span>
         </button>`;
       }).join("")}
     </div>
@@ -2370,14 +2396,15 @@ function render() {
     return;
   }
   document.documentElement.lang = state.config.lang || i18nManager.FALLBACK_LANG;
-  document.body.classList.toggle("modal-open", !!(state.user && ((state.tab === "explore" && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.journalOpen)));
+  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.journalOpen)));
   if (!state.user) {
     root.innerHTML = authView();
     bindAuth();
     bindLanguageButtons();
     return;
   }
-  const body = { explore: exploreView, scan: scanView, profile: profileView }[state.tab]() || exploreView();
+  const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView };
+  const body = (views[state.tab] || exploreView)();
   root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${journalModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
@@ -2518,6 +2545,19 @@ function bindApp() {
       await resetExplore();
       return;
     }
+    if (btn.dataset.tab === "favorites") {
+      state.tab = "favorites";
+      state.beanFilter = "favorites";
+      state.selectedId = null;
+      state.profile = null;
+      state.editBean = false;
+      state.rateOpen = false;
+      state.journalOpen = false;
+      await loadBeans();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     if (btn.dataset.tab === "scan") {
       state.journalOpen = false;
       if (state.busy) return;
@@ -2529,12 +2569,21 @@ function bindApp() {
       triggerScanPicker();
       return;
     }
+    if (btn.dataset.tab === "diary") {
+      state.tab = "diary";
+      state.journalOpen = false;
+      state.selectedId = null;
+      state.profile = null;
+      await loadJournal();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     state.journalOpen = false;
     state.tab = btn.dataset.tab;
     if (state.tab === "rate") {
       state.tab = "explore";
     }
-    if (state.tab === "profile") await loadJournal();
     render();
   }));
   document.querySelectorAll("[data-suitable]").forEach((btn) => btn.addEventListener("click", () => {
@@ -2602,7 +2651,9 @@ function bindApp() {
       toast(t(err.detail || "auth_required"));
     }
   }));
-  document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openBean))));
+  document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => {
+    openBean(Number(btn.dataset.openBean), state.tab === "favorites" ? "favorites" : "explore");
+  }));
   document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.rateBean), "rate")));
   document.querySelectorAll("[data-open-archive]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openArchive), "rate")));
   $("#open-rate-form")?.addEventListener("click", () => {
@@ -3077,7 +3128,7 @@ function bindLanguageButtons() {
     render();
     return;
   }
-  if (state.profile?.bean && state.tab === "explore") closeBean();
+  if (state.profile?.bean && isBeanListTab()) closeBean();
 });
 
 bindScanInput();

@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.9] - 2026-08-30
+
+- snapshot: refactor - 5-tab bottom navigation (Explore, Favorites, Scan, Diary, Profile) and removed top view toggles
+- Bottom nav is now Udforsk, Favoritter, Scan, Dagbog, and Profil. Scan stays the centered raised accent.
+- Alle Bønner / Favoritter is gone from the Explore top bar. Favorites is its own tab; Coffee Diary is a full-screen Dagbog view instead of a Profile preview.
+
 ## [6.8.8] - 2026-08-30
 
 - snapshot: refactor - removed map and world map views, simplified to All Beans / Favorites toggle

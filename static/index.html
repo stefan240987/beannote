@@ -35,7 +35,7 @@
   </script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/css/styles.css?v=6.8.8">
+  <link rel="stylesheet" href="/static/css/styles.css?v=6.8.9">
   <style>
     .journal-bean-chevron {
       display: grid;
@@ -77,6 +77,13 @@
   </style>
 </head>
 <body class="min-h-dvh bg-cream font-sans text-espresso antialiased">
+  <template id="bottom-nav-tabs">
+    <button type="button" id="explore-tab" data-tab="explore" data-icon="☕" data-i18n="tab_explore">Udforsk</button>
+    <button type="button" id="favorites-tab" data-tab="favorites" data-icon="❤️" data-i18n="tab_favorites">Favoritter</button>
+    <button type="button" id="scan-tab" data-tab="scan" data-icon="📸" data-i18n="tab_scan">Scan</button>
+    <button type="button" id="diary-tab" data-tab="diary" data-icon="📖" data-i18n="tab_diary">Dagbog</button>
+    <button type="button" id="profile-tab" data-tab="profile" data-icon="👤" data-i18n="tab_profile">Profil</button>
+  </template>
   <template id="gear-kind-tabs">
     <button type="button" class="gear-tab" data-gear-kind="espresso_machine" data-i18n="gear_machine">Espresso</button>
     <button type="button" class="gear-tab" data-gear-kind="grinder" data-i18n="gear_grinder">Kværn</button>
@@ -94,6 +101,6 @@
   </template>
   <div id="app" class="mx-auto flex min-h-dvh max-w-lg flex-col"></div>
   <input id="scan-input" type="file" accept="image/*" class="scan-file-input" tabindex="-1" aria-hidden="true">
-  <script src="/static/js/app.js?v=6.8.8"></script>
+  <script src="/static/js/app.js?v=6.8.9"></script>
 </body>
 </html>
