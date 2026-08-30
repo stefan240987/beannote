@@ -128,3 +128,8 @@ class GearCreateIn(BaseModel):
             except json.JSONDecodeError:
                 return {}
         return value if isinstance(value, dict) else {}
+
+
+class PageviewIn(BaseModel):
+    path: str = Field(default="/", max_length=160)
+

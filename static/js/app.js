@@ -25,6 +25,13 @@ const i18nManager = {
     const fallback = this.FALLBACK_LANG;
     return supported.includes(fallback) ? fallback : (supported[0] || "en");
   },
+  hasSession() {
+    try {
+      return Boolean(localStorage.getItem(TOKEN_KEY) || state.user);
+    } catch {
+      return Boolean(state.user);
+    }
+  },
   fromDevice() {
     const supported = this.supported();
     const locales = [];
@@ -41,12 +48,19 @@ const i18nManager = {
     return this.FALLBACK_LANG;
   },
   preferred() {
-    const stored = localStorage.getItem(LANG_KEY);
-    if (stored) return this.normalize(stored);
+    if (this.hasSession()) {
+      const stored = localStorage.getItem(LANG_KEY);
+      if (stored) return this.normalize(stored);
+    }
     return this.normalize(this.fromDevice());
   },
   active() {
-    return this.normalize(state.config?.lang || localStorage.getItem(LANG_KEY) || this.fromDevice());
+    if (state.config?.lang) return this.normalize(state.config.lang);
+    if (this.hasSession()) {
+      const stored = localStorage.getItem(LANG_KEY);
+      if (stored) return this.normalize(stored);
+    }
+    return this.normalize(this.fromDevice());
   },
   getLocalized(jsonObj, activeLang, fallbackLang) {
     const fallback = fallbackLang || this.FALLBACK_LANG;
@@ -117,14 +131,21 @@ const i18nManager = {
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
   },
-  setLanguage(lang) {
+  persistLanguage(lang) {
+    if (!this.hasSession()) return;
+    try { localStorage.setItem(LANG_KEY, this.normalize(lang)); } catch { /* ignore */ }
+  },
+  applyLang(lang) {
     const next = this.normalize(lang);
-    localStorage.setItem(LANG_KEY, next);
+    this.persistLanguage(next);
     document.documentElement.lang = next;
     const strings = state.i18n?.[next] || state.config?.strings || {};
     state.config = { ...(state.config || {}), lang: next, strings };
     refreshFlavorCatalog(next);
     this.applyToDom();
+  },
+  setLanguage(lang) {
+    this.applyLang(lang);
     render();
   },
   renderLanguageSwitcher() {
@@ -145,6 +166,8 @@ const state = {
   user: null,
   tab: "explore",
   authMode: "login",
+  authPrompt: false,
+  authNext: "",
   beans: [],
   search: "",
   selectedId: null,
@@ -185,6 +208,9 @@ const state = {
   gearAdminPhotoId: "",
   pendingImages: [],
   imageReplaceId: null,
+  adminRange: 30,
+  adminData: null,
+  adminUsers: { items: [], page: 1, pages: 1, total: 0, q: "" },
   searchTimer: null,
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
@@ -210,6 +236,126 @@ const normalizeLang = (lang) => i18nManager.normalize(lang);
 const activeLang = () => i18nManager.active();
 const applyLanguage = (lang) => i18nManager.setLanguage(lang);
 const isAdmin = () => !!state.user?.is_admin || state.user?.role === "admin";
+const isGuest = () => !state.user;
+const AUTH_TABS = new Set(["login", "register"]);
+const PROTECTED_TABS = new Set(["favorites", "scan", "diary", "profile"]);
+const TAB_PATHS = {
+  explore: "/explore",
+  favorites: "/favorites",
+  scan: "/scan",
+  diary: "/diary",
+  profile: "/profile",
+  login: "/login",
+  register: "/register",
+  admin: "/admin",
+};
+
+function safeNextPath(value) {
+  const raw = String(value || "").trim();
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("://")) return "";
+  return raw.split("#")[0];
+}
+
+function pathToTab(pathname) {
+  const raw = String(pathname || "/").replace(/\/+$/, "") || "/";
+  if (raw === "/" || raw === "/explore") return "explore";
+  if (raw === "/signup") return "register";
+  const hit = Object.entries(TAB_PATHS).find(([, path]) => path === raw);
+  return hit ? hit[0] : "explore";
+}
+
+function routePathForTab(tab) {
+  return TAB_PATHS[tab] || "/explore";
+}
+
+function syncPath(replace = false) {
+  const next = routePathForTab(state.tab);
+  if (location.pathname === next) return;
+  const fn = replace ? history.replaceState : history.pushState;
+  fn.call(history, { tab: state.tab }, "", next);
+}
+
+function applyRouteFromLocation() {
+  const params = new URLSearchParams(location.search);
+  const next = safeNextPath(params.get("next"));
+  if (next) state.authNext = next;
+  const tab = pathToTab(location.pathname);
+  if (tab === "admin") {
+    if (isAdmin()) {
+      state.tab = "admin";
+      return;
+    }
+    if (!state.user) {
+      state.authNext = "/admin";
+      state.tab = "login";
+      state.authMode = "login";
+      if (location.pathname !== "/login") history.replaceState({ tab: "login" }, "", "/login?next=/admin");
+      return;
+    }
+    state.tab = "explore";
+    syncPath(true);
+    return;
+  }
+  if (state.user) {
+    const dest = AUTH_TABS.has(tab) ? "explore" : tab;
+    state.tab = dest;
+    if (dest === "favorites") state.beanFilter = "favorites";
+    else if (dest === "explore") state.beanFilter = "all";
+    if (location.pathname !== routePathForTab(dest)) syncPath(true);
+    return;
+  }
+  if (AUTH_TABS.has(tab)) {
+    state.tab = tab;
+    state.authMode = tab === "register" ? "register" : "login";
+    if (location.pathname === "/signup") syncPath(true);
+    return;
+  }
+  if (PROTECTED_TABS.has(tab)) {
+    state.authNext = `${location.pathname}${location.search}`;
+    state.tab = "login";
+    state.authMode = "login";
+    if (location.pathname !== "/login") history.replaceState({ tab: "login" }, "", "/login");
+    return;
+  }
+  state.tab = "explore";
+  if (location.pathname !== "/explore") syncPath(true);
+}
+
+function promptAuth() {
+  if (state.user) return false;
+  state.authPrompt = true;
+  render();
+  return true;
+}
+
+function goAuth(mode) {
+  state.authPrompt = false;
+  state.authMode = mode === "register" ? "register" : "login";
+  state.tab = state.authMode;
+  syncPath();
+  render();
+}
+
+async function enterApp() {
+  state.authPrompt = false;
+  const nextPath = state.authNext || "";
+  state.authNext = "";
+  const tab = nextPath ? pathToTab(nextPath) : "explore";
+  if (tab === "admin" && isAdmin()) {
+    state.tab = "admin";
+    await loadAdmin();
+    syncPath(true);
+    render();
+    return;
+  }
+  state.tab = PROTECTED_TABS.has(tab) || tab === "explore" ? tab : "explore";
+  state.beanFilter = state.tab === "favorites" ? "favorites" : "all";
+  await loadBeans();
+  await loadJournal();
+  if (isAdmin()) await loadPendingImages();
+  syncPath(true);
+  render();
+}
 let gearAdminFile = null;
 
 function startBusy() {
@@ -349,7 +495,7 @@ function matchesSuitable(tags, filter) {
     espresso: ["espresso", "machines", "maskine"],
     filter: ["filter", "pour-over", "pour over", "v60", "drip"],
     milk: ["mælkedrikke", "milk", "latte", "macchiato"],
-    superautomatic: ["fuldautomat", "superautomatic", "super-automatic", "super automatic", "bean to cup", "bean-to-cup"],
+    superautomatic: ["fuldautomat", "fullautomatic", "full automatic", "full-automatic", "fully automatic", "superautomatic", "super-automatic", "super automatic", "bean to cup", "bean-to-cup"],
     press: ["stempelkande", "french press", "plunger"],
   };
   const needles = aliases[filter] || [filter];
@@ -557,11 +703,56 @@ async function api(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = errorDetail(data) || "error";
+    if (detail === "account_blocked") {
+      localStorage.removeItem(TOKEN_KEY);
+      state.user = null;
+      i18nManager.applyLang(i18nManager.fromDevice());
+    }
     const err = new Error(detail);
     err.detail = detail;
     throw err;
   }
   return data;
+}
+
+let lastTrackedPath = "";
+function trackPageview() {
+  if (isAdmin()) return;
+  const path = routePathForTab(state.tab);
+  if (!path || path === lastTrackedPath) return;
+  lastTrackedPath = path;
+  const headers = { "Content-Type": "application/json" };
+  if (token()) headers.Authorization = `Bearer ${token()}`;
+  fetch("/api/analytics/pageview", {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify({ path }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+async function loadAdmin() {
+  if (!isAdmin()) return;
+  const days = state.adminRange || 30;
+  try {
+    state.adminData = await api(`/api/admin/analytics?days=${days}`);
+    await loadAdminUsers();
+  } catch (err) {
+    state.adminData = null;
+    toast(t(err.detail || "admin_load_fail"));
+  }
+}
+
+async function loadAdminUsers() {
+  if (!isAdmin()) return;
+  const q = new URLSearchParams({
+    page: String(state.adminUsers?.page || 1),
+    per_page: "8",
+    q: state.adminUsers?.q || "",
+  });
+  const data = await api(`/api/admin/users?${q}`);
+  state.adminUsers = { ...state.adminUsers, ...data };
 }
 
 async function waitForJob(job, { interval = 700, timeoutMs = 270000 } = {}) {
@@ -600,6 +791,7 @@ function toast(message) {
 function setAuth(payload) {
   if (payload?.token) localStorage.setItem(TOKEN_KEY, payload.token);
   state.user = payload?.user || null;
+  i18nManager.persistLanguage(i18nManager.active());
 }
 
 async function boot() {
@@ -614,17 +806,27 @@ async function boot() {
     state.config.lang = lang;
     state.config.strings = state.i18n[lang] || state.config.strings || {};
     state.user = state.config.user;
-    if (state.user) {
-      await loadBeans();
-      await loadJournal();
-      if (isAdmin()) await loadPendingImages();
+    applyRouteFromLocation();
+    try {
+      if (state.user) {
+        await loadBeans();
+        await loadJournal();
+        if (isAdmin()) await loadPendingImages();
+        if (state.tab === "admin" && isAdmin()) await loadAdmin();
+      } else if (state.tab === "explore") {
+        await loadBeans();
+      }
+    } catch {
+      state.beans = [];
     }
   } catch {
     state.config = { lang, strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
   }
   document.documentElement.lang = lang;
   const params = new URLSearchParams(location.search);
-  if (params.get("auth_error")) toast(t("oauth_unavailable"));
+  if (params.get("auth_error") === "account_blocked") toast(t("account_blocked"));
+  else if (params.get("auth_error")) toast(t("oauth_unavailable"));
+  window.addEventListener("popstate", onPopState);
   render();
   bindScanInput();
   if ("serviceWorker" in navigator) {
@@ -634,8 +836,9 @@ async function boot() {
 
 async function loadBeans() {
   const q = new URLSearchParams({ search: state.search });
-  if (state.beanFilter === "favorites") q.set("favorites", "1");
-  state.beans = await api(`/api/beans?${q}`);
+  if (state.user && state.beanFilter === "favorites") q.set("favorites", "1");
+  const path = state.user ? `/api/beans?${q}` : `/api/explore?${q}`;
+  state.beans = await api(path);
   if (state.suitabilityFilter && !availableSuitableFilters().some(([id]) => id === state.suitabilityFilter)) {
     state.suitabilityFilter = "";
   }
@@ -767,7 +970,15 @@ function resetScanPreview() {
 
 async function openBean(id, tab = "explore") {
   state.selectedId = id;
-  state.profile = await api(`/api/beans/${id}`);
+  const path = state.user ? `/api/beans/${id}` : `/api/explore/${id}`;
+  try {
+    state.profile = await api(path);
+  } catch (err) {
+    state.selectedId = null;
+    state.profile = null;
+    toast(t(err.detail || "not_found"));
+    return;
+  }
   const user = state.profile.user;
   const gear = userGear();
   state.rate = {
@@ -1003,7 +1214,8 @@ function brewSource(source) {
 
 function heartBtn(bean, extra = "") {
   const on = !!bean?.is_favorite;
-  return `<button type="button" data-fav="${bean.id}" aria-label="${esc(on ? t("favorite_remove") : t("favorite_add"))}"
+  const guest = isGuest() ? " data-need-auth=\"1\"" : "";
+  return `<button type="button" data-fav="${bean.id}"${guest} aria-label="${esc(on ? t("favorite_remove") : t("favorite_add"))}"
     class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg shadow ${extra}">${on ? "❤️" : "♡"}</button>`;
 }
 
@@ -1177,7 +1389,7 @@ function authView() {
         <span class="h-px flex-1 bg-latte"></span>${t("or_divider")}<span class="h-px flex-1 bg-latte"></span>
       </div>` : `<div class="mt-6"></div>`;
   return `
-    <section class="flex min-h-dvh flex-col bg-cream px-5 pb-8 pt-12">
+    <section class="flex min-h-dvh flex-col bg-cream px-5 pb-28 pt-12">
       <div class="rounded-2xl bg-gradient-to-br from-espresso via-[#4a3328] to-terracotta px-5 py-7 text-cream shadow-lg">
         <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/70">BeanNote</p>
         <h1 class="font-display mt-1 text-3xl font-bold">${t("app_name")}</h1>
@@ -1208,7 +1420,6 @@ function header() {
     <header class="header">
       <div class="header-row">
         <h1 class="header-title">${t("app_name")}</h1>
-        <p class="header-ver">v${esc(state.config?.version || "")}</p>
       </div>
     </header>
     ${explore}
@@ -1545,6 +1756,9 @@ function latestTastingCard(profile) {
 }
 
 function personalLogSection(profile) {
+  if (isGuest()) {
+    return recipeLogSection(profile);
+  }
   return `<section class="space-y-3">
     <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted" data-i18n="personal_log">${esc(t("personal_log"))}</p>
     ${latestTastingCard(profile)}
@@ -1579,7 +1793,8 @@ function tastingHistory(history) {
 }
 
 function recipeLogSection(profile) {
-  const tab = state.recipeTab === "community" ? "community" : "mine";
+  const guest = isGuest();
+  const tab = guest || state.recipeTab === "community" ? "community" : "mine";
   const mine = profile?.history || [];
   let rows = mine;
   let banner = "";
@@ -1597,10 +1812,10 @@ function recipeLogSection(profile) {
   };
   return `<section class="space-y-2">
     <p class="text-sm font-semibold" data-i18n="recipe_log">${esc(t("recipe_log"))}</p>
-    <div class="flex gap-1 rounded-xl bg-foam p-1" role="tablist">
+    ${guest ? "" : `<div class="flex gap-1 rounded-xl bg-foam p-1" role="tablist">
       ${tabBtn("mine", "my_recipes")}
       ${tabBtn("community", "community_recipes")}
-    </div>
+    </div>`}
     ${banner}
     ${rows.length ? tastingHistory(rows) : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="${emptyKey}">${esc(t(emptyKey))}</p>`}
   </section>`;
@@ -1640,7 +1855,7 @@ function retailerActions(bean) {
 
 function beanModal(profile) {
   const bean = profile.bean;
-  const rating = state.rateOpen;
+  const rating = state.rateOpen && !isGuest();
   const photo = photoImg(bean.image_url, bean.snapshot_url, "modal-cover-img", ' id="modalCoverImg"');
   const coverInner = photo || bagFallback(rating ? "h-28" : "h-56");
   const cover = isAdmin()
@@ -1671,7 +1886,7 @@ function beanModal(profile) {
         <section>
           ${originMapBox(bean)}
         </section>
-        <button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>
+        ${isGuest() ? "" : `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>`}
         ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
         ${editor}
         ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
@@ -2411,6 +2626,190 @@ function diaryView() {
   </section>`;
 }
 
+function fmtGrowth(value) {
+  const n = Number(value || 0);
+  if (!n) return "0%";
+  return `${n > 0 ? "+" : ""}${n}%`;
+}
+
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+function fmtWhen(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return t("admin_never");
+  return text.slice(0, 16).replace("T", " ");
+}
+
+function adminBarChart(items, labelFn) {
+  const rows = items || [];
+  if (!rows.length) return `<p class="text-xs text-muted">${esc(t("admin_no_data"))}</p>`;
+  const max = Math.max(1, ...rows.map((row) => Number(row.count || 0)));
+  const sparse = rows.length > 14;
+  return `<div class="admin-bars" aria-hidden="true">${rows.map((row, idx) => {
+    const count = Number(row.count || 0);
+    const pct = Math.max(count ? 6 : 2, Math.round((count / max) * 100));
+    const show = !sparse || idx === 0 || idx === rows.length - 1 || idx % Math.ceil(rows.length / 6) === 0;
+    const label = show ? esc(labelFn(row, idx)) : "";
+    return `<div class="admin-bar-col">
+      <div class="admin-bar${count ? "" : " is-muted"}" style="height:${pct}%"></div>
+      <span class="admin-bar-label">${label}</span>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function adminStat(labelKey, value, hint) {
+  return `<article class="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
+    <p class="text-[0.65rem] uppercase tracking-wider text-muted">${esc(t(labelKey))}</p>
+    <p class="mt-1 font-display text-2xl font-bold">${esc(value)}</p>
+    ${hint ? `<p class="mt-0.5 text-xs text-muted">${hint}</p>` : ""}
+  </article>`;
+}
+
+function adminView() {
+  const data = state.adminData;
+  const users = data?.users || {};
+  const traffic = data?.traffic || {};
+  const engagement = data?.engagement || {};
+  const content = data?.content || {};
+  const health = data?.health || {};
+  const dist = users.distribution || {};
+  const groups = traffic.groups || {};
+  const range = state.adminRange || 30;
+  const rangeBtn = (days, key) => {
+    const on = range === days;
+    return `<button type="button" data-admin-range="${days}" class="min-h-9 rounded-full px-3 text-xs font-semibold ${on ? "bg-terracotta text-cream" : "bg-foam text-espresso"}">${esc(t(key))}</button>`;
+  };
+  const groupTotal = Math.max(1, Number(groups.explore || 0) + Number(groups.internal || 0) + Number(groups.admin || 0) + Number(groups.other || 0));
+  const groupRow = (key, count) => {
+    const n = Number(count || 0);
+    const pct = Math.round((n / groupTotal) * 100);
+    return `<div>
+      <div class="flex justify-between text-xs"><span>${esc(t(key))}</span><span class="text-muted">${n} · ${pct}%</span></div>
+      <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-foam"><div class="h-full rounded-full bg-terracotta" style="width:${pct}%"></div></div>
+    </div>`;
+  };
+  const topPages = (traffic.top_pages || []).map((row) => {
+    const groupKey = row.group === "explore" ? "admin_page_explore" : row.group === "admin" ? "admin_page_admin" : row.group === "internal" ? "admin_page_internal" : "admin_page_other";
+    return `<li class="flex justify-between gap-2 text-sm"><span class="truncate">${esc(row.path || t(groupKey))}</span><span class="shrink-0 text-muted">${row.views || 0}</span></li>`;
+  }).join("") || `<li class="text-sm text-muted">${esc(t("admin_no_data"))}</li>`;
+  const signupLabel = (row) => {
+    const d = String(row.date || "");
+    return d.slice(5).replace("-", "/");
+  };
+  const hourItems = (traffic.hours || []).filter((_, idx) => idx % 2 === 0).map((row) => ({ ...row, count: Number(row.count || 0) + Number((traffic.hours || [])[row.hour + 1]?.count || 0) }));
+  const table = state.adminUsers || {};
+  const rows = (table.items || []).map((user) => {
+    const blocked = !!user.is_blocked;
+    const self = Number(user.id) === Number(state.user?.id);
+    const role = user.is_admin ? t("admin_role_admin") : t("admin_role_user");
+    const status = blocked ? t("admin_status_blocked") : t("admin_status_active");
+    const action = user.is_admin || self
+      ? ""
+      : `<button type="button" class="min-h-9 rounded-xl px-3 text-xs font-semibold ${blocked ? "bg-foam text-espresso" : "bg-espresso text-cream"}" data-admin-block="${user.id}" data-blocked="${blocked ? "1" : "0"}">${esc(blocked ? t("admin_unblock") : t("admin_block"))}</button>`;
+    return `<article class="admin-user-row">
+      <div class="min-w-0">
+        <p class="truncate text-sm font-semibold">${esc(user.username || user.email)}</p>
+        <p class="truncate text-xs text-muted">${esc(user.email)}</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-1.5 text-[0.65rem] font-semibold">
+        <span class="rounded-full bg-[#f4ebd9] px-2 py-0.5">${esc(role)}</span>
+        <span class="rounded-full px-2 py-0.5 ${blocked ? "bg-espresso text-cream" : "bg-foam"}">${esc(status)}</span>
+      </div>
+      <p class="text-xs text-muted">${esc(t("admin_col_joined"))}: ${esc(fmtWhen(user.created_at))} · ${esc(t("admin_col_active"))}: ${esc(fmtWhen(user.last_active_at))}</p>
+      ${action}
+    </article>`;
+  }).join("") || `<p class="text-sm text-muted">${esc(t("admin_empty_users"))}</p>`;
+  return `<section class="space-y-4 px-4 pb-28 pt-4">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <button type="button" id="admin-back" class="text-xs font-semibold text-terracotta">${esc(t("admin_back"))}</button>
+        <h2 class="font-display text-2xl font-bold">${esc(t("admin_dash_title"))}</h2>
+      </div>
+      <div class="flex gap-1">${rangeBtn(7, "admin_range_7")}${rangeBtn(30, "admin_range_30")}${rangeBtn(90, "admin_range_90")}</div>
+    </div>
+    <div>
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_users_title"))}</h3>
+      <div class="grid grid-cols-2 gap-2">
+        ${adminStat("admin_total_users", users.total ?? "–", `${esc(fmtGrowth(users.growth_week_pct))} ${esc(t("admin_growth_week"))}`)}
+        ${adminStat("admin_mau", users.mau ?? "–", `${esc(t("admin_dau"))}: ${users.dau ?? 0}`)}
+        ${adminStat("admin_new_signups", users.new_month ?? "–", `${esc(fmtGrowth(users.growth_month_pct))} ${esc(t("admin_growth_month"))}`)}
+        ${adminStat("admin_distribution", `${dist.guest ?? 0} / ${dist.user ?? 0}`, `${esc(t("admin_role_guest"))} / ${esc(t("admin_role_user"))}`)}
+      </div>
+      <div class="mt-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_new_signups"))}</p>
+        <div class="mt-3">${adminBarChart(users.signups || [], signupLabel)}</div>
+        <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <p>${esc(t("admin_role_guest"))}: <strong>${dist.guest ?? 0}</strong></p>
+          <p>${esc(t("admin_role_user"))}: <strong>${dist.user ?? 0}</strong></p>
+          <p>${esc(t("admin_role_admin"))}: <strong>${dist.admin ?? 0}</strong></p>
+          <p>${esc(t("admin_role_blocked"))}: <strong>${dist.blocked ?? 0}</strong></p>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_traffic_title"))}</h3>
+      <div class="grid grid-cols-2 gap-2">
+        ${adminStat("admin_pageviews", traffic.pageviews ?? "–")}
+        ${adminStat("admin_unique", traffic.unique_visitors ?? "–")}
+      </div>
+      <div class="mt-2 space-y-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_top_pages"))}</p>
+        ${groupRow("admin_page_explore", groups.explore)}
+        ${groupRow("admin_page_internal", groups.internal)}
+        ${groupRow("admin_page_admin", groups.admin)}
+        <ul class="space-y-1">${topPages}</ul>
+      </div>
+      <div class="mt-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_peak_hours"))}</p>
+        <div class="mt-3">${adminBarChart(hourItems.length ? hourItems : (traffic.hours || []), (row) => `${row.hour}`)}</div>
+      </div>
+      <div class="mt-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-latte">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_peak_days"))}</p>
+        <div class="mt-3">${adminBarChart(traffic.weekdays || [], (row) => t(`admin_wd_${row.weekday}`))}</div>
+      </div>
+    </div>
+    <div>
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_engagement"))}</h3>
+      <div class="grid grid-cols-2 gap-2">
+        ${adminStat("admin_avg_session", fmtDuration(engagement.avg_session_ms))}
+        ${adminStat("admin_bounce", `${engagement.bounce_rate ?? 0}%`)}
+      </div>
+    </div>
+    <div>
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_content"))}</h3>
+      <div class="grid grid-cols-2 gap-2">
+        ${adminStat("admin_beans", content.beans ?? 0)}
+        ${adminStat("admin_tastings", content.tastings ?? 0)}
+        ${adminStat("admin_favorites", content.favorites ?? 0)}
+        ${adminStat("admin_scans", content.scans ?? 0)}
+      </div>
+    </div>
+    <div>
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_health"))}</h3>
+      <div class="grid grid-cols-2 gap-2">
+        ${adminStat("admin_errors", health.errors ?? 0, `${esc(t("admin_error_rate"))}: ${health.error_rate ?? 0}%`)}
+        ${adminStat("admin_health", `401 ${health.status_401 ?? 0}`, `403: ${health.status_403 ?? 0} · 500: ${health.status_500 ?? 0}`)}
+      </div>
+    </div>
+    <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+      <h3 class="font-display text-lg font-bold">${esc(t("admin_user_table"))}</h3>
+      <input id="admin-user-search" value="${esc(table.q || "")}" class="mt-3 min-h-11 w-full rounded-xl border border-latte bg-cream px-3 text-sm" data-i18n-placeholder="admin_search_users" placeholder="${esc(t("admin_search_users"))}">
+      <div class="mt-3">${rows}</div>
+      <div class="mt-3 flex items-center justify-between gap-2 text-xs">
+        <button type="button" id="admin-users-prev" class="min-h-9 rounded-xl bg-foam px-3 font-semibold" ${table.page <= 1 ? "disabled" : ""}>${esc(t("admin_prev"))}</button>
+        <span>${esc(t("admin_page_of", { page: table.page || 1, pages: table.pages || 1 }))}</span>
+        <button type="button" id="admin-users-next" class="min-h-9 rounded-xl bg-foam px-3 font-semibold" ${(table.page || 1) >= (table.pages || 1) ? "disabled" : ""}>${esc(t("admin_next"))}</button>
+      </div>
+    </div>
+  </section>`;
+}
+
 function adminImageAuditCard() {
   if (!isAdmin()) return "";
   const beans = state.pendingImages || [];
@@ -2475,6 +2874,7 @@ function profileView() {
     </div>
     ${gearSetup()}
     ${adminImageAuditCard()}
+    ${isAdmin() ? `<button type="button" id="open-admin" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${esc(t("admin_dash_open"))}</button>` : ""}
     ${supportButton()}
     <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
   </section>`;
@@ -2500,13 +2900,36 @@ function bottomNavTabs() {
   ];
 }
 
+function guestNavTabs() {
+  const tpl = document.getElementById("guest-nav-tabs");
+  if (tpl) {
+    return [...tpl.content.querySelectorAll("[data-tab]")].map((btn) => ({
+      id: btn.id || `${btn.dataset.tab}-tab`,
+      tab: btn.dataset.tab,
+      icon: btn.dataset.icon || "",
+      key: btn.getAttribute("data-i18n") || "",
+      fallback: (btn.textContent || "").trim(),
+    }));
+  }
+  return [
+    { id: "explore-tab", tab: "explore", icon: "☕", key: "tab_explore", fallback: "Udforsk" },
+    { id: "login-tab", tab: "login", icon: "🔑", key: "login", fallback: "Log ind" },
+  ];
+}
+
 function tabbar() {
-  const tabs = bottomNavTabs();
+  let tabs = state.user ? bottomNavTabs() : guestNavTabs();
+  if (!state.user && (AUTH_TABS.has(state.tab) || state.authPrompt)) {
+    tabs = tabs.filter((item) => item.tab === "explore");
+  }
+  const grid = state.user
+    ? "tabbar-grid"
+    : `tabbar-grid tabbar-grid-guest${tabs.length === 1 ? " tabbar-grid-guest-solo" : ""}`;
   return `<nav class="tabbar" aria-label="BeanNote">
-    <div class="tabbar-grid">
+    <div class="${grid}">
       ${tabs.map(({ id, tab, icon, key, fallback }) => {
         const active = state.tab === tab;
-        const scan = tab === "scan";
+        const scan = !!state.user && tab === "scan";
         const label = key ? t(key) : fallback;
         return `
         <button id="${esc(id)}" data-tab="${esc(tab)}" type="button" class="tabbar-item${active ? " is-active" : ""}${scan ? " is-scan" : ""}">
@@ -2605,6 +3028,7 @@ async function resetExplore() {
   state.savedPrompt = null;
   state.journalOpen = false;
   await loadBeans();
+  syncPath();
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -2652,6 +3076,21 @@ function beanPayload(source) {
   };
 }
 
+function guestAuthModal() {
+  if (!state.authPrompt || state.user) return "";
+  return `<div id="guest-auth-modal" data-close-guest-auth class="fixed inset-0 z-[140] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0" data-guest-auth-sheet>
+      <h2 class="font-display text-2xl font-bold">${esc(t("guest_signin_title"))}</h2>
+      <p class="mt-2 text-sm text-muted">${esc(t("guest_signin_sub"))}</p>
+      <div class="mt-5 grid gap-2">
+        <button type="button" data-guest-login class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream">${esc(t("login"))}</button>
+        <button type="button" data-guest-register class="min-h-11 w-full text-sm font-semibold text-muted">${esc(t("no_account"))} ${esc(t("register"))}</button>
+        <button type="button" data-close-guest-auth class="min-h-11 w-full text-sm font-semibold text-muted">${esc(t("close_detail"))}</button>
+      </div>
+    </article>
+  </div>`;
+}
+
 function render() {
   destroyMaps();
   const root = $("#app");
@@ -2660,18 +3099,25 @@ function render() {
     return;
   }
   document.documentElement.lang = state.config.lang || i18nManager.FALLBACK_LANG;
-  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
-  if (!state.user) {
-    root.innerHTML = authView();
+  const rootEl = $("#app");
+  if (rootEl) rootEl.classList.toggle("is-admin", state.tab === "admin");
+  const authScreen = isGuest() && AUTH_TABS.has(state.tab);
+  const modalOpen = !!(state.authPrompt || (isBeanListTab() && state.profile?.bean) || (state.user && (state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
+  document.body.classList.toggle("modal-open", modalOpen);
+  const toast = state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : "";
+  if (authScreen) {
+    root.innerHTML = `${authView()}${tabbar()}${guestAuthModal()}${toast}`;
     bindAuth();
-    bindLanguageButtons();
+    bindApp();
     return;
   }
-  const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView };
+  const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView, admin: adminView };
   const body = (views[state.tab] || exploreView)();
-  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${photoReplaceModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${header()}${body}${tabbar()}${guestAuthModal()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${photoReplaceModal()}${toast}${coffeeLoaderOverlay()}`;
   bindApp();
+  if (isGuest()) bindAuth();
   drawMaps();
+  trackPageview();
 }
 
 function bindAuth() {
@@ -2683,9 +3129,7 @@ function bindAuth() {
         try {
           const result = await api(`/api/auth/${provider}/dev`, { method: "POST", body: "{}" });
           setAuth(result);
-          await loadBeans();
-          await loadJournal();
-          render();
+          await enterApp();
         } catch (err) {
           toast(t(err.detail || "oauth_unavailable"));
         }
@@ -2700,6 +3144,8 @@ function bindAuth() {
   });
   $("#toggle-auth")?.addEventListener("click", () => {
     state.authMode = state.authMode === "login" ? "register" : "login";
+    state.tab = state.authMode;
+    syncPath();
     render();
   });
   $("#auth-form")?.addEventListener("submit", async (event) => {
@@ -2714,9 +3160,7 @@ function bindAuth() {
       const path = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
       const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
       setAuth(result);
-      await loadBeans();
-      await loadJournal();
-      render();
+      await enterApp();
     } catch (err) {
       toast(t(err.detail || "invalid_credentials"));
     }
@@ -2805,11 +3249,20 @@ async function uploadScan(file) {
 
 function bindApp() {
   document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (btn.dataset.tab === "explore") {
+    const tab = btn.dataset.tab;
+    if (tab === "login" || tab === "register") {
+      goAuth(tab);
+      return;
+    }
+    if (!state.user && PROTECTED_TABS.has(tab)) {
+      promptAuth();
+      return;
+    }
+    if (tab === "explore") {
       await resetExplore();
       return;
     }
-    if (btn.dataset.tab === "favorites") {
+    if (tab === "favorites") {
       state.tab = "favorites";
       state.beanFilter = "favorites";
       state.selectedId = null;
@@ -2818,44 +3271,62 @@ function bindApp() {
       state.rateOpen = false;
       state.journalOpen = false;
       await loadBeans();
+      syncPath();
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
-    if (btn.dataset.tab === "scan") {
+    if (tab === "scan") {
       state.journalOpen = false;
       if (state.busy) return;
       if (state.scan) {
         state.tab = "scan";
+        syncPath();
         render();
         return;
       }
       triggerScanPicker();
       return;
     }
-    if (btn.dataset.tab === "diary") {
+    if (tab === "diary") {
       state.tab = "diary";
       state.journalOpen = false;
       state.selectedId = null;
       state.profile = null;
       await loadJournal();
+      syncPath();
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
-    if (btn.dataset.tab === "profile") {
+    if (tab === "profile") {
       state.tab = "profile";
       state.journalOpen = false;
       if (isAdmin()) await loadPendingImages();
+      syncPath();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (tab === "admin") {
+      if (!isAdmin()) {
+        await resetExplore();
+        return;
+      }
+      state.tab = "admin";
+      state.journalOpen = false;
+      await loadAdmin();
+      syncPath();
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
     state.journalOpen = false;
-    state.tab = btn.dataset.tab;
+    state.tab = tab;
     if (state.tab === "rate") {
       state.tab = "explore";
     }
+    syncPath();
     render();
   }));
   document.querySelectorAll("[data-suitable]").forEach((btn) => btn.addEventListener("click", () => {
@@ -2911,6 +3382,10 @@ function bindApp() {
   document.querySelectorAll("[data-fav]").forEach((btn) => btn.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (!state.user) {
+      promptAuth();
+      return;
+    }
     try {
       const result = await api(`/api/beans/${btn.dataset.fav}/favorite`, { method: "POST", body: "{}" });
       const id = Number(result.bean_id);
@@ -2926,14 +3401,25 @@ function bindApp() {
   document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => {
     openBean(Number(btn.dataset.openBean), state.tab === "favorites" ? "favorites" : "explore");
   }));
-  document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.rateBean), "rate")));
-  document.querySelectorAll("[data-open-archive]").forEach((btn) => btn.addEventListener("click", () => openBean(Number(btn.dataset.openArchive), "rate")));
+  document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!state.user) { promptAuth(); return; }
+    openBean(Number(btn.dataset.rateBean), "rate");
+  }));
+  document.querySelectorAll("[data-open-archive]").forEach((btn) => btn.addEventListener("click", () => {
+    if (!state.user) { promptAuth(); return; }
+    openBean(Number(btn.dataset.openArchive), "rate");
+  }));
   $("#open-rate-form")?.addEventListener("click", () => {
+    if (!state.user) {
+      promptAuth();
+      return;
+    }
     state.rateOpen = true;
     render();
     requestAnimationFrame(() => $("#rate-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   });
   document.querySelectorAll("[data-enrich-bean]").forEach((btn) => btn.addEventListener("click", async () => {
+    if (!state.user) { promptAuth(); return; }
     const id = state.profile?.bean?.id;
     if (!id) return;
     startBusy();
@@ -3546,11 +4032,98 @@ function bindApp() {
     });
   });
   bindLanguageButtons();
+  $("[data-guest-auth-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelectorAll("[data-close-guest-auth]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (event.currentTarget === event.target || el.tagName === "BUTTON") {
+        state.authPrompt = false;
+        render();
+      }
+    });
+  });
+  $("[data-guest-login]")?.addEventListener("click", () => goAuth("login"));
+  $("[data-guest-register]")?.addEventListener("click", () => goAuth("register"));
+  $("#open-admin")?.addEventListener("click", async () => {
+    if (!isAdmin()) return;
+    state.tab = "admin";
+    state.journalOpen = false;
+    await loadAdmin();
+    syncPath();
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  $("#admin-back")?.addEventListener("click", async () => {
+    state.tab = "profile";
+    if (isAdmin()) await loadPendingImages();
+    syncPath();
+    render();
+  });
+  document.querySelectorAll("[data-admin-range]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.adminRange = Number(btn.dataset.adminRange) || 30;
+      await loadAdmin();
+      render();
+    });
+  });
+  const searchUsers = (event) => {
+    const value = event.target.value || "";
+    clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(async () => {
+      state.adminUsers = { ...state.adminUsers, q: value, page: 1 };
+      try {
+        await loadAdminUsers();
+      } catch (err) {
+        toast(t(err.detail || "admin_load_fail"));
+      }
+      render();
+      const box = $("#admin-user-search");
+      if (box) {
+        box.focus();
+        box.value = value;
+        box.setSelectionRange(value.length, value.length);
+      }
+    }, 280);
+  };
+  $("#admin-user-search")?.addEventListener("input", searchUsers);
+  $("#admin-user-search")?.addEventListener("change", searchUsers);
+  $("#admin-users-prev")?.addEventListener("click", async () => {
+    if ((state.adminUsers?.page || 1) <= 1) return;
+    state.adminUsers.page -= 1;
+    await loadAdminUsers();
+    render();
+  });
+  $("#admin-users-next")?.addEventListener("click", async () => {
+    if ((state.adminUsers?.page || 1) >= (state.adminUsers?.pages || 1)) return;
+    state.adminUsers.page += 1;
+    await loadAdminUsers();
+    render();
+  });
+  document.querySelectorAll("[data-admin-block]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.adminBlock;
+      const blocked = btn.dataset.blocked === "1";
+      try {
+        await api(`/api/admin/users/${id}/${blocked ? "unblock" : "block"}`, { method: "POST", body: "{}" });
+        toast(t(blocked ? "admin_unblocked_ok" : "admin_blocked_ok"));
+        await loadAdmin();
+        render();
+      } catch (err) {
+        toast(t(err.detail || "admin_load_fail"));
+      }
+    });
+  });
   $("#logout")?.addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST", body: "{}" });
     localStorage.removeItem(TOKEN_KEY);
     state.user = null;
+    i18nManager.applyLang(i18nManager.fromDevice());
     state.beans = [];
+    state.journal = [];
+    state.profile = null;
+    state.tab = "explore";
+    state.beanFilter = "all";
+    try { await loadBeans(); } catch { state.beans = []; }
+    syncPath(true);
     render();
   });
 }
@@ -3572,6 +4145,11 @@ function bindBeanPhotoInput() {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (state.authPrompt) {
+    state.authPrompt = false;
+    render();
+    return;
+  }
   if (state.imageReplaceId) {
     state.imageReplaceId = null;
     render();
@@ -3603,4 +4181,15 @@ document.addEventListener("keydown", (event) => {
 
 bindScanInput();
 bindBeanPhotoInput();
+
+async function onPopState() {
+  applyRouteFromLocation();
+  try {
+    if (state.tab === "explore" || (state.tab === "favorites" && state.user)) await loadBeans();
+    if (state.tab === "diary" && state.user) await loadJournal();
+    if (state.tab === "admin" && isAdmin()) await loadAdmin();
+  } catch { /* keep lists */ }
+  render();
+}
+
 boot();

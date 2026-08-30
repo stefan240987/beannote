@@ -18,7 +18,14 @@ from ocr import (
     suitable_for_catalog,
     suitable_for_i18n_table,
 )
-from translations import FALLBACK_LANG, STRINGS, SUPPORTED_LANGUAGES, brew_method_i18n_table, normalize_lang
+from translations import (
+    FALLBACK_LANG,
+    STRINGS,
+    SUPPORTED_LANGUAGES,
+    brew_method_i18n_table,
+    language_from_accept_header,
+    normalize_lang,
+)
 
 router = APIRouter(tags=["meta"])
 
@@ -38,7 +45,12 @@ def health() -> dict[str, Any]:
 
 @router.get("/api/config")
 def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_user)) -> dict[str, Any]:
-    lang = normalize_lang(request.query_params.get("lang"))
+    query_lang = (request.query_params.get("lang") or "").strip()
+    lang = (
+        normalize_lang(query_lang)
+        if query_lang
+        else language_from_accept_header(request.headers.get("accept-language"))
+    )
     local = is_local_dev()
     return {
         "version": VERSION,

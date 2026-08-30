@@ -1,7 +1,36 @@
 <!DOCTYPE html>
-<html lang="da">
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <script>
+    (function () {
+      var supported = ["da", "en"];
+      var fallback = "en";
+      function primary(lang) {
+        return String(lang || "").toLowerCase().replace(/_/g, "-").split("-")[0];
+      }
+      try {
+        if (localStorage.getItem("beannote_token")) {
+          var stored = primary(localStorage.getItem("beannote_lang"));
+          if (supported.indexOf(stored) !== -1) {
+            document.documentElement.lang = stored;
+            return;
+          }
+        }
+      } catch (e) {}
+      var locales = [];
+      try { if (navigator.languages) locales = locales.concat(navigator.languages); } catch (e) {}
+      try { if (navigator.language) locales.push(navigator.language); } catch (e) {}
+      for (var i = 0; i < locales.length; i++) {
+        var code = primary(locales[i]);
+        if (supported.indexOf(code) !== -1) {
+          document.documentElement.lang = code;
+          return;
+        }
+      }
+      document.documentElement.lang = fallback;
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#2D1B14">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -35,7 +64,7 @@
   </script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/css/styles.css?v=1.0.0">
+  <link rel="stylesheet" href="/static/css/styles.css?v=1.1.5">
   <style>
     .journal-bean-chevron {
       display: grid;
@@ -84,6 +113,10 @@
     <button type="button" id="diary-tab" data-tab="diary" data-icon="📖" data-i18n="tab_diary">Dagbog</button>
     <button type="button" id="profile-tab" data-tab="profile" data-icon="👤" data-i18n="tab_profile">Profil</button>
   </template>
+  <template id="guest-nav-tabs">
+    <button type="button" id="explore-tab" data-tab="explore" data-icon="☕" data-i18n="tab_explore">Udforsk</button>
+    <button type="button" id="login-tab" data-tab="login" data-icon="🔑" data-i18n="login">Log ind</button>
+  </template>
   <template id="gear-kind-tabs">
     <button type="button" class="gear-tab" data-gear-kind="espresso_machine" data-i18n="gear_machine">Espresso</button>
     <button type="button" class="gear-tab" data-gear-kind="grinder" data-i18n="gear_grinder">Kværn</button>
@@ -109,6 +142,6 @@
   <input id="scan-input" type="file" accept="image/*" class="scan-file-input" tabindex="-1" aria-hidden="true">
   <input id="gear-admin-existing-photo" type="file" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
   <input id="bean-admin-photo" type="file" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
-  <script src="/static/js/app.js?v=1.0.5"></script>
+  <script src="/static/js/app.js?v=1.1.5"></script>
 </body>
 </html>

@@ -2,6 +2,41 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.5] - 2026-08-30
+
+- snapshot: fix - Fuldautomatisk translates to Fullautomatic, not Superautomatic
+- The brew-method suitability filter and bean tags now use Fullautomatic in English (Vollautomatisch / Entièrement automatique / Totalmente automática in the other languages).
+
+## [1.1.4] - 2026-08-30
+
+- snapshot: fix - remove the language switcher from the app header
+- The header only shows the BeanNote name. Guests still follow the device language; signed-in users change language from Profile, and the login screen keeps its switcher.
+
+## [1.1.3] - 2026-08-30
+
+- snapshot: feat - guests follow the device language, with English fallback
+- Guest UI uses the browser/system language when it is in the catalog. Unsupported languages fall back to English, the same as signed-in users. A saved language preference only applies after login.
+
+## [1.1.2] - 2026-08-30
+
+- snapshot: fix - hide version number from the app header
+- The header shows the app name (and the guest language switcher) without a version badge.
+
+## [1.1.1] - 2026-08-30
+
+- snapshot: fix - admin traffic is excluded from analytics
+- Page views, sessions, DAU/MAU, unique visitors, and API error rates ignore administrator activity so the dashboard reflects guests and members.
+
+## [1.1.0] - 2026-08-30
+
+- snapshot: feat - admin analytics dashboard at `/admin`
+- Admins get user growth, DAU/MAU, traffic, engagement, system error rates, and a searchable user table with block/unblock. `/admin` and `/api/admin/*` require an admin session; everyone else is sent to Explore or gets 403.
+
+## [1.0.6] - 2026-08-30
+
+- snapshot: feat - public Explore for guests, protected app routes
+- Guests can open `/explore` and `GET /api/explore` without a session. Favorites, scan, diary, profile, and other APIs return 401 or send the PWA to `/login`. Guest nav shows Explore, Log in, and Sign up; likes and ratings prompt for an account.
+
 ## [1.0.5] - 2026-08-30
 
 - snapshot: fix - hide Google login when Google OAuth is not configured

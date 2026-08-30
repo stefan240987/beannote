@@ -187,6 +187,31 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertEqual(config.status_code, 200)
         self.assertIn("strings", config.json())
 
+    def test_config_lang_follows_accept_language_then_query(self):
+        da = self.client.get("/api/config", headers={"Accept-Language": "da-DK,da;q=0.9,en;q=0.8"})
+        self.assertEqual(da.status_code, 200)
+        self.assertEqual(da.json()["lang"], "da")
+        unknown = self.client.get("/api/config", headers={"Accept-Language": "sv-SE,de;q=0.8"})
+        self.assertEqual(unknown.json()["lang"], "en")
+        query_wins = self.client.get("/api/config?lang=da", headers={"Accept-Language": "en-US"})
+        self.assertEqual(query_wins.json()["lang"], "da")
+
+    def test_explore_is_public_other_apis_require_auth(self):
+        explore = self.client.get("/api/explore")
+        self.assertEqual(explore.status_code, 200)
+        self.assertIsInstance(explore.json(), list)
+        spa = self.client.get("/explore")
+        self.assertEqual(spa.status_code, 200)
+        self.assertIn("guest-nav-tabs", spa.text)
+        login = self.client.get("/login")
+        self.assertEqual(login.status_code, 200)
+        self.assertIn("BeanNote", login.text)
+        self.assertEqual(self.client.get("/api/beans").status_code, 401)
+        self.assertEqual(self.client.get("/api/journal").status_code, 401)
+        self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
+        missing = self.client.get("/api/explore/999999")
+        self.assertEqual(missing.status_code, 404)
+
 
 class AppleCallbackTests(unittest.TestCase):
     """Apple form_post must not require the Lax state cookie."""
@@ -214,7 +239,7 @@ class AppleCallbackTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(res.status_code, 303)
-        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+        self.assertEqual(res.headers.get("location"), "/login?auth_error=oauth")
 
     def test_provider_error_uses_see_other(self):
         res = self.client.post(
@@ -223,7 +248,7 @@ class AppleCallbackTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(res.status_code, 303)
-        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+        self.assertEqual(res.headers.get("location"), "/login?auth_error=oauth")
 
     def test_success_without_state_cookie(self):
         user = {"id": 1, "email": "a@b.c", "username": "A", "is_admin": 0}
@@ -235,7 +260,7 @@ class AppleCallbackTests(unittest.TestCase):
                     follow_redirects=False,
                 )
         self.assertEqual(res.status_code, 303)
-        self.assertEqual(res.headers.get("location"), "/")
+        self.assertEqual(res.headers.get("location"), "/explore")
         self.assertIn("beannote_session", res.headers.get("set-cookie", "").lower())
 
     def test_mismatched_cookie_still_rejected(self):
@@ -246,7 +271,7 @@ class AppleCallbackTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(res.status_code, 303)
-        self.assertEqual(res.headers.get("location"), "/?auth_error=oauth")
+        self.assertEqual(res.headers.get("location"), "/login?auth_error=oauth")
 
 
 if __name__ == "__main__":

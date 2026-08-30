@@ -13,15 +13,27 @@ import jwt
 from fastapi import Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
-from db import ENVIRONMENT, RESET_DB_ON_START, get_user, is_local_dev, upsert_oauth_user
+from db import ENVIRONMENT, RESET_DB_ON_START, get_user, is_local_dev, touch_last_active, upsert_oauth_user
 from translations import ui_langs
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 COOKIE_NAME = "beannote_session"
 OAUTH_STATE_COOKIE = "beannote_oauth"
+VISITOR_COOKIE = "beannote_vid"
+SESSION_COOKIE = "beannote_sid"
 JWT_ALG = "HS256"
 TOKEN_DAYS = 14
+VISITOR_DAYS = 400
+SESSION_MINUTES = 30
+PUBLIC_API_EXACT = frozenset({
+    "/api/health",
+    "/api/config",
+    "/api/i18n",
+    "/api/explore",
+    "/api/analytics/pageview",
+})
+PUBLIC_API_PREFIXES = ("/api/i18n/", "/api/explore/")
 UI_LANGS = ui_langs()
 BREW_METHODS = [
     "V60",
@@ -132,6 +144,60 @@ def _clear_session(response: Response, request: Request | None = None) -> None:
     response.delete_cookie(OAUTH_STATE_COOKIE, path="/", httponly=True, samesite="lax", secure=secure)
 
 
+def analytics_ids(request: Request) -> tuple[str, str, bool, bool]:
+    """Return visitor_id, session_id, and whether each cookie needs to be set."""
+    visitor = (request.cookies.get(VISITOR_COOKIE) or "").strip()
+    session = (request.cookies.get(SESSION_COOKIE) or "").strip()
+    new_visitor = not visitor
+    new_session = not session
+    if new_visitor:
+        visitor = secrets.token_urlsafe(16)
+    if new_session:
+        session = secrets.token_urlsafe(16)
+    return visitor, session, new_visitor, new_session
+
+
+def attach_analytics_cookies(
+    response: Response,
+    request: Request,
+    visitor_id: str,
+    session_id: str,
+    new_visitor: bool,
+    new_session: bool,
+) -> None:
+    secure = _cookie_secure(request)
+    if new_visitor:
+        response.set_cookie(
+            key=VISITOR_COOKIE,
+            value=visitor_id,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            max_age=VISITOR_DAYS * 24 * 60 * 60,
+            path="/",
+        )
+    if new_session:
+        response.set_cookie(
+            key=SESSION_COOKIE,
+            value=session_id,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            max_age=SESSION_MINUTES * 60,
+            path="/",
+        )
+    elif session_id:
+        response.set_cookie(
+            key=SESSION_COOKIE,
+            value=session_id,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            max_age=SESSION_MINUTES * 60,
+            path="/",
+        )
+
+
 def _decode_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, _secret(), algorithms=[JWT_ALG])
 
@@ -141,6 +207,18 @@ def _token_from_request(request: Request) -> str:
     if header.lower().startswith("bearer "):
         return header.split(" ", 1)[1].strip()
     return (request.cookies.get(COOKIE_NAME) or "").strip()
+
+
+def is_public_api_path(path: str) -> bool:
+    """Explore catalog, i18n/config/health, and auth entrypoints (except /me) skip JWT."""
+    raw = (path or "").rstrip("/") or "/"
+    if raw in PUBLIC_API_EXACT:
+        return True
+    if any(raw.startswith(prefix) for prefix in PUBLIC_API_PREFIXES):
+        return True
+    if raw.startswith("/api/auth/"):
+        return raw != "/api/auth/me"
+    return False
 
 
 def current_user(request: Request) -> dict[str, Any]:
@@ -154,6 +232,9 @@ def current_user(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="auth_required") from None
     if not user:
         raise HTTPException(status_code=401, detail="auth_required")
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=403, detail="account_blocked")
+    touch_last_active(user.get("id"))
     return user
 
 
@@ -214,7 +295,12 @@ def _local_oauth_user(provider: str) -> dict[str, Any]:
 
 def _local_oauth_redirect(provider: str, request: Request | None = None) -> RedirectResponse:
     user = _local_oauth_user(provider)
-    dest = RedirectResponse("/")
+    if user.get("is_blocked"):
+        dest = RedirectResponse("/login?auth_error=account_blocked", status_code=303)
+        if request is not None:
+            _clear_session(dest, request)
+        return dest
+    dest = RedirectResponse("/explore", status_code=303)
     _set_session(dest, user, request)
     return dest
 
@@ -274,7 +360,11 @@ def _auth_error(code: str) -> HTTPException:
         "email_taken": 409,
         "invalid_credentials": 401,
         "oauth_unavailable": 503,
+        "not_found": 404,
         "forbidden": 403,
+        "account_blocked": 403,
+        "cannot_block_self": 400,
+        "cannot_block_admin": 400,
         "name_roaster_taken": 409,
     }
     return HTTPException(status_code=mapping.get(code, 400), detail=code)

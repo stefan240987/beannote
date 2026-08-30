@@ -7,15 +7,23 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from db import ENVIRONMENT, VERSION, get_images_dir, init_db, resolve_catalog_image, resolve_image_path
-from deps import STATIC
+from db import ENVIRONMENT, VERSION, get_images_dir, init_db, record_api_hit, resolve_catalog_image, resolve_image_path
+from deps import (
+    STATIC,
+    analytics_ids,
+    attach_analytics_cookies,
+    current_user,
+    is_public_api_path,
+    optional_user,
+)
 from ocr import ensure_local_env, load_local_env
+from routes.admin import router as admin_router
 from routes.auth import router as auth_router
-from routes.beans import router as beans_router
+from routes.beans import explore_router, router as beans_router
 from routes.brews import router as brews_router
 from routes.gear import router as gear_router
 from routes.jobs import router as jobs_router
@@ -76,6 +84,57 @@ app.add_middleware(
 )
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+
+@app.middleware("http")
+async def require_api_auth(request: Request, call_next):
+    """Reject unauthenticated /api requests except Explore, config, i18n, health, and auth."""
+    if request.method != "OPTIONS" and request.url.path.startswith("/api/"):
+        if not is_public_api_path(request.url.path):
+            try:
+                request.state.user = current_user(request)
+            except HTTPException as exc:
+                if exc.status_code in {401, 403}:
+                    detail = exc.detail if isinstance(exc.detail, str) else "auth_required"
+                    return JSONResponse(
+                        {
+                            "detail": detail,
+                            "message": t("da", detail) if detail in STRINGS["da"] else detail,
+                        },
+                        status_code=exc.status_code,
+                    )
+                raise
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def track_usage(request: Request, call_next):
+    """Attach visitor cookies and log API status codes for the admin dashboard."""
+    path = request.url.path or "/"
+    skip = (
+        path.startswith("/static")
+        or path.startswith("/media")
+        or path in {"/sw.js", "/manifest.webmanifest"}
+        or request.method == "OPTIONS"
+    )
+    visitor = session = ""
+    new_visitor = new_session = False
+    if not skip:
+        visitor, session, new_visitor, new_session = analytics_ids(request)
+    response = await call_next(request)
+    if skip:
+        return response
+    try:
+        attach_analytics_cookies(response, request, visitor, session, new_visitor, new_session)
+        user = getattr(request.state, "user", None)
+        if user is None:
+            user = optional_user(request)
+        is_admin = bool(user and user.get("is_admin"))
+        if path.startswith("/api/") and not is_admin:
+            record_api_hit(path, int(response.status_code))
+    except Exception:
+        pass
+    return response
+
 _CATALOG_MEDIA = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
@@ -107,7 +166,9 @@ def catalog_gear_image(name: str) -> FileResponse:
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+app.include_router(admin_router)
 app.include_router(auth_router)
+app.include_router(explore_router)
 app.include_router(beans_router)
 app.include_router(scan_router)
 app.include_router(jobs_router)
@@ -166,12 +227,41 @@ def service_worker() -> FileResponse:
     )
 
 
-@app.get("/")
-def index() -> FileResponse:
+def _spa_index() -> FileResponse:
     return FileResponse(
         STATIC / "index.html",
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@app.get("/")
+def index() -> FileResponse:
+    return _spa_index()
+
+
+@app.get("/admin")
+def admin_spa(request: Request):
+    try:
+        user = current_user(request)
+    except HTTPException:
+        return RedirectResponse("/login?next=/admin", status_code=303)
+    if not user.get("is_admin"):
+        return RedirectResponse("/explore", status_code=303)
+    return _spa_index()
+
+
+_SPA_PATHS = (
+    "/explore",
+    "/login",
+    "/register",
+    "/signup",
+    "/favorites",
+    "/scan",
+    "/diary",
+    "/profile",
+)
+for _spa_path in _SPA_PATHS:
+    app.add_api_route(_spa_path, _spa_index, methods=["GET"], include_in_schema=False)
 
 
 if __name__ == "__main__":

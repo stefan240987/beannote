@@ -375,7 +375,13 @@ SUITABLE_LOCALES: dict[str, dict[str, str]] = {
     "Filter": {"da": "Filter", "en": "Filter"},
     "Mælkedrikke": {"da": "Mælkedrikke", "en": "Milk drinks"},
     "Stempelkande": {"da": "Stempelkande", "en": "French Press"},
-    "Fuldautomatisk": {"da": "Fuldautomatisk", "en": "Superautomatic"},
+    "Fuldautomatisk": {
+        "da": "Fuldautomatisk",
+        "en": "Fullautomatic",
+        "de": "Vollautomatisch",
+        "fr": "Entièrement automatique",
+        "es": "Totalmente automática",
+    },
 }
 SUITABLE_ALIASES: dict[str, list[str]] = {
     "Espresso": [
@@ -402,10 +408,13 @@ SUITABLE_ALIASES: dict[str, list[str]] = {
     "Fuldautomatisk": [
         "fuldautomatisk",
         "fuldautomatiske",
+        "fullautomatic",
+        "full automatic",
+        "full-automatic",
+        "fully automatic",
         "superautomatic",
         "super-automatic",
         "super automatic",
-        "fully automatic",
         "bean to cup",
         "bean-to-cup",
     ],

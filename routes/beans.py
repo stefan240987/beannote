@@ -36,8 +36,48 @@ from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/beans", tags=["beans"])
 admin_router = APIRouter(prefix="/api/admin/beans", tags=["admin-beans"])
+explore_router = APIRouter(prefix="/api/explore", tags=["explore"])
 
 _STATIC_BEAN_PREFIX = "/static/img/beans/"
+
+
+def _public_explore_profile(bean_id: int) -> dict[str, Any]:
+    """Catalog bean for guests: community stats only, no personal ratings."""
+    profile = get_flavor_profile(bean_id, user_id=None)
+    if not profile:
+        raise HTTPException(status_code=404, detail="not_found")
+    notes = compare_flavor_notes(
+        (profile["bean"] or {}).get("roaster_notes") or "",
+        "",
+        (profile["bean"] or {}).get("flavor_tags") or {},
+    )
+    profile["notes"] = notes
+    matched = annotate_community_recipes(profile.get("community_history") or [], None)
+    profile["community_history"] = matched["recipes"]
+    profile["community_gear_fallback"] = matched["fallback"]
+    return profile
+
+
+@explore_router.get("")
+def explore_beans(
+    search: str = "",
+    origin: str = "",
+    roast_level: str = "",
+    min_rating: float = 0.0,
+) -> list[dict[str, Any]]:
+    return list_beans(
+        search=search,
+        origin=origin,
+        roast_level=roast_level,
+        min_rating=min_rating,
+        user_id=None,
+        favorites_only=False,
+    )
+
+
+@explore_router.get("/{bean_id}")
+def explore_bean(bean_id: int) -> dict[str, Any]:
+    return _public_explore_profile(bean_id)
 
 
 @router.get("")

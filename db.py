@@ -11,7 +11,8 @@ import re
 import sqlite3
 import unicodedata
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse, urlunparse
@@ -20,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.0.5"
+VERSION = "1.1.5"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -109,6 +110,19 @@ LOCAL_ADMIN_EMAILS = {
 }
 LOCAL_REGULAR_EMAILS = {
     "google_test_user@beannote.local",
+}
+ANALYTICS_TZ = ZoneInfo("Europe/Copenhagen")
+_SPA_PAGE_GROUPS = {
+    "/": "explore",
+    "/explore": "explore",
+    "/favorites": "internal",
+    "/scan": "internal",
+    "/diary": "internal",
+    "/profile": "internal",
+    "/login": "internal",
+    "/register": "internal",
+    "/signup": "internal",
+    "/admin": "admin",
 }
 
 
@@ -776,11 +790,13 @@ def init_db() -> None:
                 auth_provider TEXT NOT NULL DEFAULT 'email',
                 oauth_id TEXT DEFAULT '',
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                is_blocked INTEGER NOT NULL DEFAULT 0,
                 espresso_machine TEXT DEFAULT '',
                 grinder TEXT DEFAULT '',
                 brewer_types TEXT DEFAULT '[]',
                 gear_specs TEXT DEFAULT '[]',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                last_active_at TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS beans (
@@ -859,6 +875,7 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn)
+        _ensure_analytics_schema(conn)
         _migrate_localized_json(conn)
         from jobs import ensure_schema_on, sync_gemini_slots_on
 
@@ -905,6 +922,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     users = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
     if "is_admin" not in users:
         conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    if "is_blocked" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0")
+    if "last_active_at" not in users:
+        conn.execute("ALTER TABLE users ADD COLUMN last_active_at TEXT DEFAULT ''")
     if "espresso_machine" not in users:
         conn.execute("ALTER TABLE users ADD COLUMN espresso_machine TEXT DEFAULT ''")
     if "grinder" not in users:
@@ -927,6 +948,47 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for column in ("coffee_grams", "water_grams"):
         if column not in ratings:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} REAL")
+
+
+def _ensure_analytics_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS analytics_pageviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL DEFAULT '',
+            page_group TEXT NOT NULL DEFAULT 'other',
+            visitor_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            user_id INTEGER,
+            is_guest INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pv_created ON analytics_pageviews(created_at);
+        CREATE INDEX IF NOT EXISTS idx_pv_visitor ON analytics_pageviews(visitor_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_pv_group ON analytics_pageviews(page_group, created_at);
+        CREATE INDEX IF NOT EXISTS idx_pv_user ON analytics_pageviews(user_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS analytics_sessions (
+            session_id TEXT PRIMARY KEY,
+            visitor_id TEXT NOT NULL DEFAULT '',
+            user_id INTEGER,
+            is_guest INTEGER NOT NULL DEFAULT 1,
+            started_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            page_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_started ON analytics_sessions(started_at);
+
+        CREATE TABLE IF NOT EXISTS analytics_api (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status_code INTEGER NOT NULL,
+            path TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_created ON analytics_api(created_at);
+        CREATE INDEX IF NOT EXISTS idx_api_status ON analytics_api(status_code, created_at);
+        """
+    )
 
 
 def _migrate_localized_json(conn: sqlite3.Connection) -> None:
@@ -2380,6 +2442,7 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
             """,
             (bean_id,),
         ).fetchone()
+        latest = None
         if user_id is not None:
             latest = conn.execute(
                 """
@@ -2388,14 +2451,6 @@ def get_flavor_profile(bean_id: int, user_id: int | None = None) -> dict[str, An
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (bean_id, user_id),
-            ).fetchone()
-        else:
-            latest = conn.execute(
-                """
-                SELECT * FROM ratings WHERE bean_id = ?
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (bean_id,),
             ).fetchone()
 
     community = {
@@ -2616,7 +2671,10 @@ def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | N
     data = dict(row)
     data.pop("password_hash", None)
     data["is_admin"] = bool(data.get("is_admin"))
+    data["is_blocked"] = bool(data.get("is_blocked"))
+    data["last_active_at"] = str(data.get("last_active_at") or "").strip()
     data["role"] = "admin" if data["is_admin"] else "user"
+    data["status"] = "blocked" if data["is_blocked"] else "active"
     data["espresso_machine"] = str(data.get("espresso_machine") or "").strip()
     data["grinder"] = str(data.get("grinder") or "").strip()
     brew_types = [
@@ -2710,6 +2768,8 @@ def authenticate_email(email: str, password: str) -> dict[str, Any] | None:
         return None
     if not verify_password(password, row.get("password_hash") or ""):
         return None
+    if row.get("is_blocked"):
+        raise ValueError("account_blocked")
     return _public_user(row)
 
 
@@ -2808,3 +2868,503 @@ def update_user_gear(
     if not user:
         raise ValueError("not_found")
     return user
+
+
+def normalize_analytics_path(path: str) -> str:
+    raw = (path or "/").split("?", 1)[0].strip() or "/"
+    if not raw.startswith("/"):
+        raw = "/" + raw
+    if len(raw) > 1:
+        raw = raw.rstrip("/") or "/"
+    if raw.startswith("/static") or raw.startswith("/media"):
+        return ""
+    return raw[:160]
+
+
+def page_group_for(path: str) -> str:
+    raw = normalize_analytics_path(path)
+    if not raw:
+        return ""
+    if raw in _SPA_PAGE_GROUPS:
+        return _SPA_PAGE_GROUPS[raw]
+    if raw.startswith("/api/explore"):
+        return "explore"
+    if raw.startswith("/api/admin") or raw.startswith("/admin"):
+        return "admin"
+    if raw.startswith("/api/"):
+        return "internal"
+    return "other"
+
+
+def _parse_ts(raw: str) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def _growth_pct(current: int, previous: int) -> float:
+    if previous <= 0:
+        return 100.0 if current else 0.0
+    return round((current - previous) * 100.0 / previous, 1)
+
+
+def _count(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:
+    row = conn.execute(sql, params).fetchone()
+    return int(row[0] if row and row[0] is not None else 0)
+
+
+def touch_last_active(user_id: int | None) -> None:
+    if not user_id:
+        return
+    now = _now()
+    try:
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET last_active_at = ?
+                WHERE id = ?
+                  AND (last_active_at IS NULL OR last_active_at = '' OR last_active_at < ?)
+                """,
+                (now, int(user_id), now),
+            )
+    except sqlite3.Error:
+        return
+
+
+_EXCLUDE_ADMIN_ACTOR = """(
+    user_id IS NULL OR user_id NOT IN (
+        SELECT id FROM users WHERE COALESCE(is_admin, 0) = 1
+    )
+)"""
+
+
+def record_pageview(
+    path: str,
+    visitor_id: str = "",
+    session_id: str = "",
+    user_id: int | None = None,
+) -> None:
+    page = normalize_analytics_path(path)
+    group = page_group_for(page)
+    if not page or not group:
+        return
+    visitor = (visitor_id or "")[:64]
+    session = (session_id or "")[:64]
+    uid = int(user_id) if user_id else None
+    is_guest = 0 if uid else 1
+    now = _now()
+    try:
+        with connect() as conn:
+            if uid:
+                admin_row = conn.execute(
+                    "SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?",
+                    (uid,),
+                ).fetchone()
+                if admin_row and int(admin_row[0] or 0):
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET last_active_at = ?
+                        WHERE id = ?
+                          AND (last_active_at IS NULL OR last_active_at = '' OR last_active_at < ?)
+                        """,
+                        (now, uid, now),
+                    )
+                    return
+            conn.execute(
+                """
+                INSERT INTO analytics_pageviews (
+                    path, page_group, visitor_id, session_id, user_id, is_guest, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (page, group, visitor, session, uid, is_guest, now),
+            )
+            if session:
+                existing = conn.execute(
+                    "SELECT page_count FROM analytics_sessions WHERE session_id = ?",
+                    (session,),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE analytics_sessions
+                        SET last_seen_at = ?, page_count = page_count + 1,
+                            user_id = COALESCE(user_id, ?),
+                            is_guest = CASE WHEN ? IS NOT NULL THEN 0 ELSE is_guest END
+                        WHERE session_id = ?
+                        """,
+                        (now, uid, uid, session),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO analytics_sessions (
+                            session_id, visitor_id, user_id, is_guest,
+                            started_at, last_seen_at, page_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, 1)
+                        """,
+                        (session, visitor, uid, is_guest, now, now),
+                    )
+            if uid:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET last_active_at = ?
+                    WHERE id = ?
+                      AND (last_active_at IS NULL OR last_active_at = '' OR last_active_at < ?)
+                    """,
+                    (now, uid, now),
+                )
+    except sqlite3.Error:
+        return
+
+
+def record_api_hit(path: str, status_code: int, is_admin: bool = False) -> None:
+    if is_admin:
+        return
+    page = normalize_analytics_path(path)
+    if not page.startswith("/api/"):
+        return
+    if page in {"/api/health", "/api/analytics/pageview"} or page.startswith("/api/admin"):
+        return
+    try:
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO analytics_api (status_code, path, created_at) VALUES (?, ?, ?)",
+                (int(status_code), page[:160], _now()),
+            )
+    except sqlite3.Error:
+        return
+
+
+def _fill_daily_series(rows: list[sqlite3.Row], start: datetime, days: int) -> list[dict[str, Any]]:
+    counts = {str(row[0]): int(row[1] or 0) for row in rows}
+    series: list[dict[str, Any]] = []
+    local_start = start.astimezone(ANALYTICS_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    for offset in range(days):
+        day = local_start + timedelta(days=offset)
+        key = day.date().isoformat()
+        series.append({"date": key, "count": counts.get(key, 0)})
+    return series
+
+
+def admin_analytics(days: int = 30) -> dict[str, Any]:
+    window = 7 if days <= 7 else 90 if days >= 90 else 30
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=window)
+    start_iso = _iso_utc(start)
+    now_iso = _iso_utc(now)
+    day_start = now.astimezone(ANALYTICS_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    dau_since = _iso_utc(day_start)
+    week_ago = _iso_utc(now - timedelta(days=7))
+    week_prev = _iso_utc(now - timedelta(days=14))
+    month_ago = _iso_utc(now - timedelta(days=30))
+    month_prev = _iso_utc(now - timedelta(days=60))
+
+    with connect() as conn:
+        total_users = _count(conn, "SELECT COUNT(*) FROM users")
+        new_week = _count(conn, "SELECT COUNT(*) FROM users WHERE created_at >= ?", (week_ago,))
+        prev_week = _count(
+            conn,
+            "SELECT COUNT(*) FROM users WHERE created_at >= ? AND created_at < ?",
+            (week_prev, week_ago),
+        )
+        new_month = _count(conn, "SELECT COUNT(*) FROM users WHERE created_at >= ?", (month_ago,))
+        prev_month = _count(
+            conn,
+            "SELECT COUNT(*) FROM users WHERE created_at >= ? AND created_at < ?",
+            (month_prev, month_ago),
+        )
+        admins = _count(conn, "SELECT COUNT(*) FROM users WHERE COALESCE(is_admin, 0) = 1")
+        blocked = _count(conn, "SELECT COUNT(*) FROM users WHERE COALESCE(is_blocked, 0) = 1")
+        members = max(0, total_users - admins)
+
+        def _active_since(since: str) -> int:
+            return _count(
+                conn,
+                """
+                SELECT COUNT(DISTINCT uid) FROM (
+                    SELECT id AS uid FROM users
+                    WHERE last_active_at >= ?
+                      AND COALESCE(is_blocked, 0) = 0
+                      AND COALESCE(is_admin, 0) = 0
+                    UNION
+                    SELECT user_id AS uid FROM analytics_pageviews
+                    WHERE user_id IS NOT NULL AND created_at >= ?
+                      AND """ + _EXCLUDE_ADMIN_ACTOR + """
+                )
+                """,
+                (since, since),
+            )
+
+        dau = _active_since(dau_since)
+        mau = _active_since(_iso_utc(now - timedelta(days=30)))
+        signup_rows = conn.execute(
+            """
+            SELECT substr(created_at, 1, 10) AS day, COUNT(*)
+            FROM users
+            WHERE created_at >= ?
+            GROUP BY day
+            """,
+            (start_iso,),
+        ).fetchall()
+        guest_visitors = _count(
+            conn,
+            """
+            SELECT COUNT(DISTINCT visitor_id) FROM analytics_pageviews
+            WHERE created_at >= ? AND COALESCE(is_guest, 1) = 1 AND visitor_id != ''
+              AND """ + _EXCLUDE_ADMIN_ACTOR + """
+            """,
+            (start_iso,),
+        )
+        pageviews = _count(
+            conn,
+            "SELECT COUNT(*) FROM analytics_pageviews WHERE created_at >= ? AND "
+            + _EXCLUDE_ADMIN_ACTOR,
+            (start_iso,),
+        )
+        unique_visitors = _count(
+            conn,
+            """
+            SELECT COUNT(DISTINCT visitor_id) FROM analytics_pageviews
+            WHERE created_at >= ? AND visitor_id != ''
+              AND """ + _EXCLUDE_ADMIN_ACTOR + """
+            """,
+            (start_iso,),
+        )
+        top_pages = [
+            {
+                "path": str(row["path"] or ""),
+                "group": str(row["page_group"] or "other"),
+                "views": int(row["views"] or 0),
+            }
+            for row in conn.execute(
+                """
+                SELECT path, page_group, COUNT(*) AS views
+                FROM analytics_pageviews
+                WHERE created_at >= ? AND """ + _EXCLUDE_ADMIN_ACTOR + """
+                GROUP BY path, page_group
+                ORDER BY views DESC
+                LIMIT 8
+                """,
+                (start_iso,),
+            ).fetchall()
+        ]
+        group_rows = {
+            str(row["page_group"] or "other"): int(row["views"] or 0)
+            for row in conn.execute(
+                """
+                SELECT page_group, COUNT(*) AS views
+                FROM analytics_pageviews
+                WHERE created_at >= ? AND """ + _EXCLUDE_ADMIN_ACTOR + """
+                GROUP BY page_group
+                """,
+                (start_iso,),
+            ).fetchall()
+        }
+        hour_rows = conn.execute(
+            "SELECT created_at FROM analytics_pageviews WHERE created_at >= ? AND "
+            + _EXCLUDE_ADMIN_ACTOR,
+            (start_iso,),
+        ).fetchall()
+        session_rows = conn.execute(
+            """
+            SELECT started_at, last_seen_at, page_count
+            FROM analytics_sessions
+            WHERE started_at >= ? AND """ + _EXCLUDE_ADMIN_ACTOR + """
+            """,
+            (start_iso,),
+        ).fetchall()
+        api_total = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM analytics_api
+            WHERE created_at >= ? AND path NOT LIKE '/api/admin%'
+            """,
+            (start_iso,),
+        )
+        api_errors = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM analytics_api
+            WHERE created_at >= ? AND status_code >= 400 AND path NOT LIKE '/api/admin%'
+            """,
+            (start_iso,),
+        )
+        err_401 = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM analytics_api
+            WHERE created_at >= ? AND status_code = 401 AND path NOT LIKE '/api/admin%'
+            """,
+            (start_iso,),
+        )
+        err_403 = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM analytics_api
+            WHERE created_at >= ? AND status_code = 403 AND path NOT LIKE '/api/admin%'
+            """,
+            (start_iso,),
+        )
+        err_500 = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM analytics_api
+            WHERE created_at >= ? AND status_code >= 500 AND path NOT LIKE '/api/admin%'
+            """,
+            (start_iso,),
+        )
+        beans = _count(conn, "SELECT COUNT(*) FROM beans")
+        ratings = _count(conn, "SELECT COUNT(*) FROM ratings")
+        favorites = _count(conn, "SELECT COUNT(*) FROM favorites")
+        scans = 0
+        try:
+            scans = _count(conn, "SELECT COUNT(*) FROM jobs WHERE kind = 'scan'")
+        except sqlite3.Error:
+            scans = 0
+
+    hours = [0] * 24
+    weekdays = [0] * 7
+    for row in hour_rows:
+        dt = _parse_ts(row["created_at"])
+        if not dt:
+            continue
+        local = dt.astimezone(ANALYTICS_TZ)
+        hours[local.hour] += 1
+        weekdays[local.weekday()] += 1
+
+    sessions = 0
+    bounced = 0
+    duration_total = 0.0
+    for row in session_rows:
+        sessions += 1
+        if int(row["page_count"] or 0) <= 1:
+            bounced += 1
+        started = _parse_ts(row["started_at"])
+        ended = _parse_ts(row["last_seen_at"])
+        if started and ended and ended >= started:
+            duration_total += (ended - started).total_seconds() * 1000
+    avg_ms = duration_total / sessions if sessions else 0.0
+    error_rate = round((api_errors * 100.0 / api_total), 2) if api_total else 0.0
+
+    return {
+        "days": window,
+        "generated_at": now_iso,
+        "users": {
+            "total": total_users,
+            "growth_week_pct": _growth_pct(new_week, prev_week),
+            "growth_month_pct": _growth_pct(new_month, prev_month),
+            "new_week": new_week,
+            "new_month": new_month,
+            "dau": dau,
+            "mau": mau,
+            "signups": _fill_daily_series(signup_rows, start, window),
+            "distribution": {
+                "guest": guest_visitors,
+                "user": max(0, members - blocked),
+                "admin": admins,
+                "blocked": blocked,
+            },
+        },
+        "traffic": {
+            "pageviews": pageviews,
+            "unique_visitors": unique_visitors,
+            "top_pages": top_pages,
+            "groups": {
+                "explore": int(group_rows.get("explore") or 0),
+                "internal": int(group_rows.get("internal") or 0),
+                "admin": int(group_rows.get("admin") or 0),
+                "other": int(group_rows.get("other") or 0),
+            },
+            "hours": [{"hour": idx, "count": hours[idx]} for idx in range(24)],
+            "weekdays": [{"weekday": idx, "count": weekdays[idx]} for idx in range(7)],
+        },
+        "engagement": {
+            "avg_session_ms": int(avg_ms),
+            "bounce_rate": round((bounced * 100.0 / sessions), 1) if sessions else 0.0,
+            "sessions": sessions,
+        },
+        "content": {
+            "beans": beans,
+            "tastings": ratings,
+            "favorites": favorites,
+            "scans": scans,
+        },
+        "health": {
+            "api_total": api_total,
+            "errors": api_errors,
+            "error_rate": error_rate,
+            "status_401": err_401,
+            "status_403": err_403,
+            "status_500": err_500,
+        },
+    }
+
+
+def list_admin_users(query: str = "", page: int = 1, per_page: int = 10) -> dict[str, Any]:
+    needle = _normalize(query).lower()
+    size = min(max(int(per_page or 10), 1), 50)
+    current = max(int(page or 1), 1)
+    where = "1=1"
+    params: list[Any] = []
+    if needle:
+        where = "(lower(email) LIKE ? OR lower(COALESCE(username, '')) LIKE ?)"
+        like = f"%{needle}%"
+        params.extend([like, like])
+    with connect() as conn:
+        total = _count(conn, f"SELECT COUNT(*) FROM users WHERE {where}", tuple(params))
+        pages = max(1, (total + size - 1) // size) if total else 1
+        current = min(current, pages)
+        offset = (current - 1) * size
+        rows = conn.execute(
+            f"""
+            SELECT * FROM users
+            WHERE {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, size, offset),
+        ).fetchall()
+    items = [_public_user(row) for row in rows]
+    return {
+        "items": [item for item in items if item],
+        "page": current,
+        "per_page": size,
+        "pages": pages,
+        "total": total,
+        "q": query,
+    }
+
+
+def set_user_blocked(actor_id: int, target_id: int, blocked: bool) -> dict[str, Any]:
+    if int(actor_id) == int(target_id):
+        raise ValueError("cannot_block_self")
+    target = get_user(int(target_id))
+    if not target:
+        raise ValueError("not_found")
+    if target.get("is_admin"):
+        raise ValueError("cannot_block_admin")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE users SET is_blocked = ? WHERE id = ?",
+            (1 if blocked else 0, int(target_id)),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (int(target_id),)).fetchone()
+    user = _public_user(row)
+    if not user:
+        raise ValueError("not_found")
+    return user
+

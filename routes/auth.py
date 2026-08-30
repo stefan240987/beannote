@@ -30,7 +30,7 @@ from deps import (
 from schemas import EmailAuthIn
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-_OAUTH_FAIL = "/?auth_error=oauth"
+_OAUTH_FAIL = "/login?auth_error=oauth"
 
 
 def _oauth_failed() -> RedirectResponse:
@@ -39,7 +39,7 @@ def _oauth_failed() -> RedirectResponse:
 
 
 def _oauth_home() -> RedirectResponse:
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/explore", status_code=303)
 
 
 @router.post("/register")
@@ -54,7 +54,10 @@ def register(payload: EmailAuthIn, request: Request, response: Response) -> dict
 
 @router.post("/login")
 def login(payload: EmailAuthIn, request: Request, response: Response) -> dict[str, Any]:
-    user = authenticate_email(payload.email, payload.password)
+    try:
+        user = authenticate_email(payload.email, payload.password)
+    except ValueError as exc:
+        raise _auth_error(str(exc)) from exc
     if not user:
         raise _auth_error("invalid_credentials")
     token = _set_session(response, user, request)
@@ -76,6 +79,8 @@ def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
 def oauth_dev(provider: str, request: Request, response: Response) -> dict[str, Any]:
     """Instant local test sign-in. Production always uses real OAuth client IDs."""
     user = _local_oauth_user(provider)
+    if user.get("is_blocked"):
+        raise _auth_error("account_blocked")
     token = _set_session(response, user, request)
     return {"user": user, "token": token}
 
@@ -112,7 +117,7 @@ def google_start(request: Request) -> RedirectResponse:
 @router.get("/google/callback")
 def google_callback(request: Request) -> RedirectResponse:
     if request.query_params.get("error"):
-        return RedirectResponse("/?auth_error=oauth")
+        return RedirectResponse(_OAUTH_FAIL, status_code=303)
     state = request.query_params.get("state") or ""
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE) or ""
     if not state or state != cookie_state:
@@ -150,7 +155,11 @@ def google_callback(request: Request) -> RedirectResponse:
         provider="google",
         oauth_id=str(profile.get("sub") or ""),
     )
-    dest = RedirectResponse("/")
+    if user.get("is_blocked"):
+        dest = RedirectResponse("/login?auth_error=account_blocked", status_code=303)
+        _clear_session(dest, request)
+        return dest
+    dest = RedirectResponse("/explore", status_code=303)
     _set_session(dest, user, request)
     dest.delete_cookie(
         OAUTH_STATE_COOKIE,
@@ -231,6 +240,17 @@ def _apple_finish(request: Request, form: dict[str, str]) -> RedirectResponse:
         )
     except (HTTPException, ValueError):
         return _oauth_failed()
+    if user.get("is_blocked"):
+        dest = RedirectResponse("/login?auth_error=account_blocked", status_code=303)
+        _clear_session(dest, request)
+        dest.delete_cookie(
+            OAUTH_STATE_COOKIE,
+            path="/",
+            httponly=True,
+            samesite="lax",
+            secure=_cookie_secure(request),
+        )
+        return dest
     dest = _oauth_home()
     _set_session(dest, user, request)
     dest.delete_cookie(
