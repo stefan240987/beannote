@@ -35,6 +35,7 @@ from jobs import enqueue_job, public_job
 from ocr import assert_upload_size, compare_flavor_notes, encode_scan_jpeg, enrich_bean_from_web
 from routes.users import annotate_community_recipes
 from schemas import BeanImageIn, BeanIn
+from services.gemini import parse_bean_from_url
 from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/beans", tags=["beans"])
@@ -364,6 +365,45 @@ def approve_bean_image(
         raise HTTPException(status_code=404, detail="not_found")
     marked = _mark_professional(bean, bean.get("image_url") or "")
     return {"status": "approved", "bean": marked, "image_url": marked.get("image_url") or "", "is_professional_image": True}
+
+
+@admin_router.post("/from-url")
+async def create_bean_from_url(
+    request: Request,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    del _admin
+    try:
+        raw = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_json") from exc
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="invalid_json")
+    url = str(raw.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="invalid_url")
+    chosen = (request.query_params.get("lang") or "da").lower().strip()
+    if chosen not in SUPPORTED_LANGUAGES:
+        chosen = "da"
+    try:
+        draft = await asyncio.to_thread(parse_bean_from_url, url, chosen)
+    except ValueError as exc:
+        detail = str(exc) or "from_url_fail"
+        if detail == "invalid_url":
+            raise HTTPException(status_code=400, detail=detail) from exc
+        if detail == "required":
+            raise HTTPException(status_code=400, detail=detail) from exc
+        raise HTTPException(status_code=422, detail="from_url_fail") from exc
+    except RuntimeError as exc:
+        detail = str(exc) or "from_url_fail"
+        if detail == "ocr_missing":
+            raise HTTPException(status_code=503, detail=detail) from exc
+        if detail == "ocr_quota":
+            raise HTTPException(status_code=429, detail=detail) from exc
+        raise HTTPException(status_code=422, detail="from_url_fail") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="from_url_fail") from exc
+    return {"status": "draft", "scan": draft}
 
 
 @admin_router.get("/pending-images")

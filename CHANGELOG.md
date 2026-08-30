@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.10] - 2026-08-30
+
+- snapshot: feat - admin create bean from shop URL via Gemini web scraping and local image caching
+- Admins can paste a shop product link from Explore or the admin panel. Gemini extracts name, roaster, origin, roast, flavors, brew tags, story, and photo; the packshot is cached under `/static/img/beans/` and opened in the standard bean draft for review and **Gem bønne**.
+
 ## [1.1.9] - 2026-08-30
 
 - snapshot: refactor - professional desktop UI overhaul with dark sidebar, styled brand logo, and optimized card grid

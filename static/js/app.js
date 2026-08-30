@@ -212,6 +212,9 @@ const state = {
   adminRange: 30,
   adminData: null,
   adminUsers: { items: [], page: 1, pages: 1, total: 0, q: "" },
+  urlFromLinkOpen: false,
+  urlFromLinkValue: "",
+  urlFromLinkBusy: false,
   searchTimer: null,
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
@@ -993,6 +996,60 @@ function resetScanPreview() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function openFromUrlModal() {
+  if (!isAdmin()) return;
+  state.urlFromLinkOpen = true;
+  state.urlFromLinkBusy = false;
+  render();
+  requestAnimationFrame(() => $("#from-url-input")?.focus());
+}
+
+function closeFromUrlModal() {
+  if (state.urlFromLinkBusy) return;
+  state.urlFromLinkOpen = false;
+  state.urlFromLinkBusy = false;
+  render();
+}
+
+async function analyzeFromUrl(url) {
+  if (!isAdmin() || state.urlFromLinkBusy) return;
+  const clean = String(url || "").trim();
+  if (!clean) {
+    toast(t("invalid_url"));
+    return;
+  }
+  state.urlFromLinkValue = clean;
+  state.urlFromLinkBusy = true;
+  render();
+  try {
+    const result = await api(`/api/admin/beans/from-url?lang=${encodeURIComponent(activeLang())}`, {
+      method: "POST",
+      body: JSON.stringify({ url: clean }),
+    });
+    const scan = result?.scan || result;
+    state.urlFromLinkBusy = false;
+    state.urlFromLinkOpen = false;
+    const existing = existingScanMatch(scan);
+    if (existing?.id) {
+      state.scan = null;
+      state.editScan = false;
+      toast(t("bean_from_url_ok"));
+      await openBean(Number(existing.id));
+      return;
+    }
+    state.scan = scan;
+    state.editScan = true;
+    state.tab = "scan";
+    toast(t("bean_from_url_ok"));
+    syncPath();
+    render();
+  } catch (err) {
+    state.urlFromLinkBusy = false;
+    toast(t(err.detail || "from_url_fail"));
+    render();
+  }
+}
+
 async function openBean(id, tab = "explore") {
   state.selectedId = id;
   const path = state.user ? `/api/beans/${id}` : `/api/explore/${id}`;
@@ -1455,12 +1512,37 @@ function header() {
 
 function exploreToolbar() {
   const pills = suitabilityBar();
+  const fromLink = state.tab === "explore" ? createFromLinkButton() : "";
   return `<div class="explore-toolbar">
     <div class="explore-search-row">
       <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
       ${exploreSortSelect()}
     </div>
+    ${fromLink ? `<div class="mt-2">${fromLink}</div>` : ""}
     ${pills ? `<div class="explore-filter-bar">${pills}</div>` : ""}
+  </div>`;
+}
+
+function createFromLinkButton(extra = "") {
+  if (!isAdmin()) return "";
+  return `<button type="button" data-open-from-url class="flex min-h-11 w-full items-center justify-center rounded-xl bg-espresso text-sm font-semibold text-cream ${extra}" data-i18n="create_from_link">${esc(t("create_from_link"))}</button>`;
+}
+
+function fromUrlModal() {
+  if (!isAdmin() || !state.urlFromLinkOpen) return "";
+  const busy = state.urlFromLinkBusy;
+  const submit = busy
+    ? `<span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-cream border-t-transparent" aria-hidden="true"></span><span data-i18n="analyzing_webshop">${esc(t("analyzing_webshop"))}</span>`
+    : `<span data-i18n="analyze_with_gemini">${esc(t("analyze_with_gemini"))}</span>`;
+  return `<div id="from-url-modal" data-close-from-url class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-from-url-sheet>
+      <form id="from-url-form" class="space-y-3 p-5">
+        <h2 class="font-display text-xl font-bold" data-i18n="create_from_link">${esc(t("create_from_link"))}</h2>
+        <input id="from-url-input" type="url" inputmode="url" autocomplete="url" value="${esc(state.urlFromLinkValue)}" ${busy ? "disabled" : ""} class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="paste_product_link" placeholder="${esc(t("paste_product_link"))}">
+        <button type="submit" id="from-url-submit" ${busy ? "disabled" : ""} class="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-terracotta font-semibold text-cream">${submit}</button>
+        <button type="button" data-close-from-url ${busy ? "disabled" : ""} class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
+      </form>
+    </article>
   </div>`;
 }
 
@@ -1994,7 +2076,7 @@ function scanView() {
           <button data-rate-bean="${similar.id}" class="mt-2 min-h-11 w-full rounded-lg bg-espresso text-cream">${t("use_existing")}</button>
         </div>` : ""}
         <div class="flex flex-col gap-2">
-          <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="approve_save">${t("approve_save")}</button>
+          <button id="approve-bean" class="min-h-12 w-full rounded-xl bg-terracotta font-semibold text-cream" data-i18n="${scan.scan_source === "url" ? "save_bean" : "approve_save"}">${scan.scan_source === "url" ? t("save_bean") : t("approve_save")}</button>
           <button type="button" id="undo-scan" class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="undo_rescan">${t("undo_rescan")}</button>
         </div>`}
         ${canEdit ? `<button id="toggle-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
@@ -2771,6 +2853,7 @@ function adminView() {
       </div>
       <div class="flex gap-1">${rangeBtn(7, "admin_range_7")}${rangeBtn(30, "admin_range_30")}${rangeBtn(90, "admin_range_90")}</div>
     </div>
+    ${createFromLinkButton()}
     <div>
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_users_title"))}</h3>
       <div class="admin-stat-grid-4 grid grid-cols-2 gap-2">
@@ -3192,7 +3275,7 @@ function render() {
   const rootEl = $("#app");
   if (rootEl) rootEl.classList.toggle("is-admin", state.tab === "admin");
   const authScreen = isGuest() && AUTH_TABS.has(state.tab);
-  const modalOpen = !!(state.authPrompt || ((isBeanListTab() || state.tab === "admin") && state.profile?.bean) || (state.user && (state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
+  const modalOpen = !!(state.authPrompt || ((isBeanListTab() || state.tab === "admin") && state.profile?.bean) || (state.user && (state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId || state.urlFromLinkOpen)));
   document.body.classList.toggle("modal-open", modalOpen);
   const toast = state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : "";
   if (authScreen) {
@@ -3203,7 +3286,7 @@ function render() {
   }
   const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView, admin: adminView };
   const body = (views[state.tab] || exploreView)();
-  root.innerHTML = `${header()}${body}${tabbar()}${guestAuthModal()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${photoReplaceModal()}${toast}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${header()}${body}${tabbar()}${guestAuthModal()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${photoReplaceModal()}${fromUrlModal()}${toast}${coffeeLoaderOverlay()}`;
   bindApp();
   if (isGuest()) bindAuth();
   drawMaps();
@@ -3555,8 +3638,31 @@ function bindApp() {
   });
   $("#pick-scan")?.addEventListener("click", () => triggerScanPicker());
   $("#undo-scan")?.addEventListener("click", () => {
+    const fromUrl = state.scan?.scan_source === "url";
     resetScanPreview();
+    if (fromUrl) {
+      state.tab = "explore";
+      syncPath();
+      render();
+      return;
+    }
     triggerScanPicker();
+  });
+  document.querySelectorAll("[data-open-from-url]").forEach((btn) => {
+    btn.addEventListener("click", () => openFromUrlModal());
+  });
+  $("[data-from-url-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelectorAll("[data-close-from-url]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (event.currentTarget === event.target || el.tagName === "BUTTON") closeFromUrlModal();
+    });
+  });
+  $("#from-url-input")?.addEventListener("input", (event) => {
+    state.urlFromLinkValue = event.target.value;
+  });
+  $("#from-url-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    analyzeFromUrl($("#from-url-input")?.value || state.urlFromLinkValue);
   });
   $("#toggle-edit")?.addEventListener("click", () => {
     if (!isAdmin()) return;
