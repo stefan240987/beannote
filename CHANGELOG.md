@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.9] - 2026-08-30
+
+- snapshot: refactor - professional desktop UI overhaul with dark sidebar, styled brand logo, and optimized card grid
+- Widescreen hides the duplicate top header, styles the tab rail as a dark mocha sidebar with a BeanNote wordmark, constrains the feed to 1200px, and uses proportional 280–340px bean cards. Explore search/sort sit in one row with filter pills below.
+
 ## [1.1.8] - 2026-08-30
 
 - snapshot: feat - admin review queue for 70–85% near-match saves

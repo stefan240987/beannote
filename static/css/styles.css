@@ -941,61 +941,164 @@ button.gear-badge-locked {
     max-width: none;
     padding-left: var(--nav-rail);
   }
+  .header {
+    display: none;
+  }
+  .app-chrome {
+    max-width: 1200px;
+    margin-inline: auto;
+    padding: 24px 24px 0;
+    background: var(--bg-color);
+  }
+  .app-chrome:not(:has(.explore-toolbar)) {
+    display: none;
+  }
   .tabbar {
     inset: 0 auto 0 0;
     width: var(--nav-rail);
     max-width: none;
     margin: 0;
     border-top: 0;
-    border-right: 1px solid #e8d8c8;
-    padding: env(safe-area-inset-top, 0px) 0.75rem env(safe-area-inset-bottom, 0px) max(0.75rem, env(safe-area-inset-left, 0px));
+    border-right: 1px solid rgba(247, 239, 230, 0.08);
+    background: linear-gradient(180deg, #2D1B14 0%, #1F120D 100%);
+    color: #F7EFE6;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: env(safe-area-inset-top, 0px) 0.85rem env(safe-area-inset-bottom, 0px) max(0.85rem, env(safe-area-inset-left, 0px));
     display: flex;
     flex-direction: column;
   }
   .tabbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 1.4rem 0.55rem 1.15rem;
+    margin: 0 0 0.65rem;
+    border-bottom: 1px solid rgba(247, 239, 230, 0.12);
+  }
+  .tabbar-brand-mark {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.55rem;
+    background: #b85c38;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+  }
+  .tabbar-brand-mark svg {
     display: block;
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+  .tabbar-brand-name {
     font-family: Fraunces, Georgia, serif;
-    font-size: 1.15rem;
+    font-size: 1.28rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
-    color: #3c2a21;
-    padding: 1.1rem 0.7rem 0.85rem;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: #F7EFE6;
   }
   .tabbar-grid,
   .tabbar-grid-guest,
   .tabbar-grid-guest-solo {
     grid-template-columns: 1fr;
     align-content: start;
-    gap: 0.25rem;
+    gap: 0.35rem;
     min-height: 0;
   }
   .tabbar-item {
     flex-direction: row;
     justify-content: flex-start;
-    gap: 0.65rem;
-    min-height: 2.75rem;
-    padding: 0.45rem 0.7rem;
-    font-size: 0.85rem;
+    gap: 0.7rem;
+    min-height: 2.85rem;
+    margin: 0 0.1rem;
+    padding: 0.5rem 0.8rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #F7EFE6;
     border-radius: 0.75rem;
   }
-  .tabbar-item.is-active {
-    background: #fff;
-    color: #3c2a21;
+  .tabbar-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #FFF;
+  }
+  .tabbar-item.is-active,
+  .tabbar-item.is-active.is-scan {
+    background: rgba(255, 255, 255, 0.12);
+    color: #FFF;
+    font-weight: 600;
   }
   .tabbar-item.is-scan {
-    color: #b85c38;
+    color: #F7EFE6;
   }
   .tabbar-scan-icon {
     margin-top: 0;
     height: 2rem;
     width: 2rem;
     font-size: 1rem;
+    background: #b85c38;
+    color: #F7EFE6;
     box-shadow: none;
+  }
+  .explore-toolbar {
+    background: transparent;
+    border-bottom: 0;
+  }
+  .explore-search-row {
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0;
+    background: transparent;
+  }
+  .explore-search,
+  .explore-sort {
+    min-height: 2.85rem;
+    border: 1px solid rgba(60, 42, 33, 0.12);
+    background: #FFFDF9;
+    box-shadow: 0 1px 2px rgba(60, 42, 33, 0.05), 0 6px 16px -10px rgba(60, 42, 33, 0.18);
+  }
+  .explore-sort {
+    flex: 0 0 13.5rem;
+    width: 13.5rem;
+    max-width: none;
+    padding-left: 0.85rem;
+  }
+  .explore-filter-bar {
+    gap: 0.65rem;
+    margin-top: 0.9rem;
+    padding: 0 0 0.15rem;
+    background: transparent;
+  }
+  .explore-pills {
+    gap: 0.5rem;
+  }
+  .explore-pill {
+    padding: 0.35rem 0.8rem;
+    font-size: 0.72rem;
+  }
+  .explore-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 340px));
+    gap: 24px;
+    justify-content: start;
+  }
+  .bean-card-img-wrap,
+  .bean-card-photo {
+    height: 200px;
+    padding: 0;
+    border-radius: 0;
+  }
+  .bean-card-img-wrap img,
+  .bean-card-img {
+    object-fit: cover;
   }
   .app-page,
   .explore-list,
   .diary-view {
-    padding-bottom: 2rem;
+    width: 100%;
+    max-width: 1200px;
+    margin-inline: auto;
+    padding: 24px;
   }
   .profile-view {
     display: grid;
@@ -1011,16 +1114,6 @@ button.gear-badge-locked {
   }
   .admin-stat-grid-4 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1280px) {
-  .explore-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .bean-card-img-wrap,
-  .bean-card-photo {
-    height: 180px;
   }
 }
 

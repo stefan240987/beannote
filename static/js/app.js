@@ -2989,6 +2989,23 @@ function guestNavTabs() {
   ];
 }
 
+function tabbarBrand() {
+  const name = t("app_name");
+  const tpl = document.getElementById("tabbar-brand");
+  if (tpl) {
+    const node = tpl.content.cloneNode(true);
+    const label = node.querySelector(".tabbar-brand-name");
+    if (label) label.textContent = name;
+    const wrap = document.createElement("div");
+    wrap.appendChild(node);
+    return wrap.innerHTML;
+  }
+  return `<div class="tabbar-brand">
+    <span class="tabbar-brand-mark" aria-hidden="true"></span>
+    <span class="tabbar-brand-name">${esc(name)}</span>
+  </div>`;
+}
+
 function tabbar() {
   let tabs = state.user ? bottomNavTabs() : guestNavTabs();
   if (!state.user && (AUTH_TABS.has(state.tab) || state.authPrompt)) {
@@ -2998,7 +3015,7 @@ function tabbar() {
     ? "tabbar-grid"
     : `tabbar-grid tabbar-grid-guest${tabs.length === 1 ? " tabbar-grid-guest-solo" : ""}`;
   return `<nav class="tabbar" aria-label="BeanNote">
-    <p class="tabbar-brand">${esc(t("app_name"))}</p>
+    ${tabbarBrand()}
     <div class="${grid}">
       ${tabs.map(({ id, tab, icon, key, fallback }) => {
         const active = state.tab === tab;
