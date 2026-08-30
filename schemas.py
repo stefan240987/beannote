@@ -27,6 +27,8 @@ class BeanIn(BaseModel):
     suitable_for: list[str] = Field(default_factory=list)
     story: Any = ""
     image_url: str = ""
+    is_professional_image: bool = False
+    image_source: str = ""
     roaster_url: str = ""
     recommended_method: str = ""
     grind_size: str = ""
@@ -46,6 +48,10 @@ class BeanIn(BaseModel):
     roaster_body: Optional[int] = None
     roaster_roast_level: Optional[int] = None
     skip_fuzzy: bool = False
+
+
+class BeanImageIn(BaseModel):
+    image_url: str = ""
 
 
 class RatingIn(BaseModel):

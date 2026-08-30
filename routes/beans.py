@@ -2,28 +2,40 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from db import (
     apply_bean_enrichment,
     get_bean,
     get_flavor_profile,
+    get_images_dir,
     insert_bean,
     list_beans,
+    list_pending_image_beans,
+    resolve_image_path,
     toggle_favorite,
     update_bean,
+    update_bean_image,
 )
 from deps import _auth_error, current_user, require_admin
+from image_search import fetch_official_image_bytes
 from jobs import enqueue_job, public_job
-from ocr import compare_flavor_notes, enrich_bean_from_web
+from ocr import compare_flavor_notes, encode_scan_jpeg, enrich_bean_from_web
 from routes.users import annotate_community_recipes
-from schemas import BeanIn
+from schemas import BeanImageIn, BeanIn
 from translations import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/beans", tags=["beans"])
+admin_router = APIRouter(prefix="/api/admin/beans", tags=["admin-beans"])
+
+_STATIC_BEAN_PREFIX = "/static/img/beans/"
+_BEAN_IMG_DIR = Path(__file__).resolve().parent.parent / "static" / "img" / "beans"
 
 
 @router.get("")
@@ -198,3 +210,106 @@ def enrich_bean(
             raise HTTPException(status_code=503, detail=detail) from exc
         raise HTTPException(status_code=422, detail="enrich_fail") from exc
     return JSONResponse(status_code=202, content=public_job(job))
+
+
+def save_professional_bean_image(image_bytes: bytes, bean_id: int) -> str:
+    _BEAN_IMG_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _BEAN_IMG_DIR / f"{int(bean_id)}.jpg"
+    dest.write_bytes(image_bytes)
+    return f"{_STATIC_BEAN_PREFIX}{int(bean_id)}.jpg"
+
+
+def bust_bean_image_url(url: str) -> str:
+    raw = str(url or "").strip()
+    path = raw.split("?", 1)[0]
+    if not path.startswith(_STATIC_BEAN_PREFIX):
+        return raw
+    dest = _BEAN_IMG_DIR / path[len(_STATIC_BEAN_PREFIX) :]
+    try:
+        return f"{path}?v={int(dest.stat().st_mtime)}"
+    except OSError:
+        return path
+
+
+def _read_local_image(url: str) -> bytes:
+    raw = str(url or "").strip().split("?", 1)[0]
+    if raw.startswith(_STATIC_BEAN_PREFIX) and ".." not in raw:
+        name = Path(raw[len(_STATIC_BEAN_PREFIX) :]).name
+        dest = _BEAN_IMG_DIR / name
+        return dest.read_bytes() if dest.is_file() else b""
+    if raw.startswith("/media/"):
+        raw = f"images/{Path(raw).name}"
+    resolved = resolve_image_path(raw)
+    if resolved and resolved.is_file():
+        return resolved.read_bytes()
+    candidate = get_images_dir() / Path(raw).name
+    return candidate.read_bytes() if candidate.is_file() else b""
+
+
+async def _read_image_payload(request: Request) -> tuple[bytes, str]:
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="invalid_json")
+        payload = BeanImageIn.model_validate(raw)
+        return b"", (payload.image_url or "").strip()
+    form = await request.form()
+    upload = form.get("file") or form.get("image") or form.get("photo")
+    image_url = str(form.get("image_url") or "").strip()
+    raw_bytes = b""
+    if isinstance(upload, StarletteUploadFile):
+        raw_bytes = await upload.read()
+    return raw_bytes, image_url
+
+
+def _mark_professional(bean: dict[str, Any] | None, image_url: str) -> dict[str, Any]:
+    data = dict(bean or {})
+    data["image_url"] = bust_bean_image_url(image_url)
+    data["is_professional_image"] = True
+    data["image_source"] = "professional"
+    return data
+
+
+@router.post("/{bean_id}/image")
+async def replace_bean_image(
+    bean_id: int,
+    request: Request,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    del _admin
+    if not get_bean(bean_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    raw_bytes, image_url = await _read_image_payload(request)
+    jpeg = b""
+    source = raw_bytes
+    if not source and image_url:
+        source = _read_local_image(image_url)
+        if not source:
+            fetched = await asyncio.to_thread(fetch_official_image_bytes, image_url)
+            source = fetched or b""
+    if not source:
+        raise HTTPException(status_code=400, detail="image_replace_fail")
+    try:
+        jpeg = await asyncio.to_thread(encode_scan_jpeg, source)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="image_replace_fail") from exc
+    stored = await asyncio.to_thread(save_professional_bean_image, jpeg, bean_id)
+    update_bean_image(bean_id, stored, professional=True)
+    bean = _mark_professional(get_bean(bean_id), stored)
+    return {"status": "updated", "bean": bean, "image_url": bean["image_url"], "is_professional_image": True}
+
+
+@admin_router.get("/pending-images")
+def pending_bean_images(_admin: dict[str, Any] = Depends(require_admin)) -> list[dict[str, Any]]:
+    del _admin
+    return list_pending_image_beans()
+
+
+_combined = APIRouter()
+_combined.include_router(router)
+_combined.include_router(admin_router)
+router = _combined

@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.14] - 2026-08-30
+
+- snapshot: feat - admin bean image audit list and direct photo replacement
+- Admins see **Billed-tjek (Mangler pro foto)** on Profile, listing beans that still have a scan or placeholder image.
+- `POST /api/beans/{id}/image` saves a catalog photo to `/static/img/beans/` and marks `is_professional_image`, which drops the bean from the pending list.
+
 ## [6.8.13] - 2026-08-30
 
 - snapshot: feat - browse full gear catalog by type and replace admin catalog photos
@@ -12,6 +18,11 @@ All notable BeanNote changes are recorded here.
 
 - snapshot: chore - enabled 0.0.0.0 LAN server binding and network URL output
 - Local server binds to `0.0.0.0:8501` and prints Local (`http://localhost:8501`) and Network/Mobile (`http://<LAN_IP>:8501`) URLs at startup.
+
+## [6.8.12] - 2026-08-30
+
+- snapshot: fix - Google test account is a regular user; Apple test account stays admin
+- Local Google test login (`google_test_user@beannote.local`) no longer gets `is_admin`. Apple test login remains the bootstrap admin.
 
 ## [6.8.11] - 2026-08-30
 

@@ -183,6 +183,8 @@ const state = {
   gearAdminName: "",
   gearAdminPreview: "",
   gearAdminPhotoId: "",
+  pendingImages: [],
+  imageReplaceId: null,
   searchTimer: null,
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
@@ -615,6 +617,7 @@ async function boot() {
     if (state.user) {
       await loadBeans();
       await loadJournal();
+      if (isAdmin()) await loadPendingImages();
     }
   } catch {
     state.config = { lang, strings: {}, langs: { da: "Dansk", en: "English" }, supported_languages: i18nManager.SUPPORTED_LANGUAGES, fallback_lang: i18nManager.FALLBACK_LANG, providers: {}, brew_methods: [], flavor_notes: [] };
@@ -644,6 +647,50 @@ async function loadJournal() {
     state.journal = data?.entries || [];
   } catch {
     state.journal = [];
+  }
+}
+
+async function loadPendingImages() {
+  if (!isAdmin()) {
+    state.pendingImages = [];
+    return;
+  }
+  try {
+    const rows = await api("/api/admin/beans/pending-images");
+    state.pendingImages = Array.isArray(rows) ? rows : (rows?.beans || []);
+  } catch {
+    state.pendingImages = [];
+  }
+}
+
+function applyBeanPhoto(beanId, imageUrl, extra = {}) {
+  const id = Number(beanId);
+  const patch = { image_url: imageUrl, is_professional_image: true, image_source: "professional", ...extra };
+  state.beans = state.beans.map((bean) => bean.id === id ? { ...bean, ...patch } : bean);
+  if (state.profile?.bean?.id === id) state.profile.bean = { ...state.profile.bean, ...patch };
+  state.pendingImages = (state.pendingImages || []).filter((bean) => bean.id !== id);
+}
+
+async function submitBeanPhoto({ file, url } = {}) {
+  const id = state.imageReplaceId;
+  if (!id || !isAdmin()) return;
+  if (!file && !(url || "").trim()) return;
+  const body = new FormData();
+  if (file) body.append("file", file);
+  if (url) body.append("image_url", url.trim());
+  startBusy();
+  render();
+  try {
+    const result = await api(`/api/beans/${id}/image`, { method: "POST", body });
+    applyBeanPhoto(id, result.image_url || result.bean?.image_url || "", result.bean || {});
+    state.imageReplaceId = null;
+    stopBusy();
+    toast(t("photo_updated"));
+    render();
+  } catch (err) {
+    stopBusy();
+    toast(t(err.detail || "image_replace_fail"));
+    render();
   }
 }
 
@@ -1577,6 +1624,13 @@ function beanModal(profile) {
   const bean = profile.bean;
   const rating = state.rateOpen;
   const photo = photoImg(bean.image_url, bean.snapshot_url, "modal-cover-img", ' id="modalCoverImg"');
+  const coverInner = photo || bagFallback(rating ? "h-28" : "h-56");
+  const cover = isAdmin()
+    ? `<button type="button" class="modal-cover-photo-btn" data-replace-bean-photo="${bean.id}" data-i18n-aria="change_bag_photo" aria-label="${esc(t("change_bag_photo"))}">${coverInner}</button>`
+    : coverInner;
+  const changePhoto = isAdmin()
+    ? `<button type="button" class="modal-cover-change" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>`
+    : "";
   const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
   const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
   const flavorPills = pills(bean.flavor_tags);
@@ -1607,8 +1661,9 @@ function beanModal(profile) {
         <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
       <div class="modal-cover rounded-t-3xl sm:rounded-t-3xl">
-        ${photo || bagFallback(rating ? "h-28" : "h-56")}
+        ${cover}
         ${heartBtn(bean, "modal-cover-fav absolute left-3 top-3 z-10")}
+        ${changePhoto}
       </div>
       <div class="space-y-4 p-4 ${rating ? "pb-6" : "pb-8"}">
         <section class="space-y-3">
@@ -2335,6 +2390,51 @@ function diaryView() {
   </section>`;
 }
 
+function adminImageAuditCard() {
+  if (!isAdmin()) return "";
+  const beans = state.pendingImages || [];
+  const items = beans.map((bean) => {
+    const photo = photoImg(bean.image_url, bean.snapshot_url, "image-audit-img") || bagThumb();
+    return `<article class="image-audit-item">
+      <button type="button" class="image-audit-photo" data-replace-bean-photo="${bean.id}" data-i18n-aria="change_bag_photo" aria-label="${esc(t("change_bag_photo"))}">${photo}</button>
+      <div class="min-w-0 flex-1">
+        <button type="button" class="block w-full text-left" data-open-bean="${bean.id}">
+          <p class="truncate text-sm font-semibold">${esc(bean.name)}</p>
+          <p class="truncate text-xs text-muted">${esc(bean.roaster)}</p>
+        </button>
+        <button type="button" class="mt-1 text-xs font-semibold text-terracotta" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>
+      </div>
+    </article>`;
+  }).join("");
+  const empty = `<p class="text-sm text-muted" data-i18n="image_audit_empty">${esc(t("image_audit_empty"))}</p>`;
+  return `<div class="image-audit-card rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+    <h2 class="font-display text-lg font-bold">📷 ${esc(t("image_audit_title"))} <span class="text-sm font-semibold text-muted">(${esc(t("image_audit_missing"))})</span></h2>
+    <div class="image-audit-list mt-3">${items || empty}</div>
+  </div>`;
+}
+
+function photoReplaceModal() {
+  if (!isAdmin() || !state.imageReplaceId) return "";
+  const bean = (state.pendingImages || []).find((item) => item.id === state.imageReplaceId)
+    || (state.beans || []).find((item) => item.id === state.imageReplaceId)
+    || (state.profile?.bean?.id === state.imageReplaceId ? state.profile.bean : null);
+  const preview = photoImg(bean?.image_url, bean?.snapshot_url, "max-h-40 w-full object-contain bg-foam")
+    || bagFallback("h-28");
+  return `<div id="bean-photo-replace" data-close-photo-replace class="fixed inset-0 z-[70] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-photo-replace-sheet>
+      <form id="bean-photo-form" class="space-y-3 p-5">
+        <h2 class="font-display text-xl font-bold" data-i18n="change_bag_photo">${esc(t("change_bag_photo"))}</h2>
+        ${bean?.name ? `<p class="text-sm text-muted">${esc(bean.name)}${bean.roaster ? ` · ${esc(bean.roaster)}` : ""}</p>` : ""}
+        <div class="overflow-hidden rounded-2xl bg-foam ring-1 ring-latte">${preview}</div>
+        <button type="button" id="bean-photo-pick" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-foam text-sm font-semibold ring-1 ring-latte">📷 ${esc(t("change_bag_photo"))}</button>
+        <input id="bean-photo-url" class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="image_url_ph" placeholder="${esc(t("image_url_ph"))}">
+        <button type="submit" class="min-h-12 w-full rounded-xl bg-terracotta text-sm font-semibold text-cream" data-i18n="image_replace_save">${esc(t("image_replace_save"))}</button>
+        <button type="button" data-close-photo-replace class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
+      </form>
+    </article>
+  </div>`;
+}
+
 function profileView() {
   return `<section class="space-y-4 px-4 pb-28 pt-5">
     <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
@@ -2349,6 +2449,7 @@ function profileView() {
       </div>
     </div>
     ${gearSetup()}
+    ${adminImageAuditCard()}
     ${supportButton()}
     <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
   </section>`;
@@ -2534,7 +2635,7 @@ function render() {
     return;
   }
   document.documentElement.lang = state.config.lang || i18nManager.FALLBACK_LANG;
-  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen)));
+  document.body.classList.toggle("modal-open", !!(state.user && ((isBeanListTab() && state.profile?.bean) || state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
   if (!state.user) {
     root.innerHTML = authView();
     bindAuth();
@@ -2543,7 +2644,7 @@ function render() {
   }
   const views = { explore: exploreView, favorites: exploreView, scan: scanView, diary: diaryView, profile: profileView };
   const body = (views[state.tab] || exploreView)();
-  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
+  root.innerHTML = `${header()}${body}${tabbar()}${savedPromptModal()}${supportModal()}${gearPickerModal()}${gearCustomModal()}${gearAdminModal()}${journalModal()}${photoReplaceModal()}${state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : ""}${coffeeLoaderOverlay()}`;
   bindApp();
   drawMaps();
 }
@@ -2717,6 +2818,14 @@ function bindApp() {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
+    if (btn.dataset.tab === "profile") {
+      state.tab = "profile";
+      state.journalOpen = false;
+      if (isAdmin()) await loadPendingImages();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     state.journalOpen = false;
     state.tab = btn.dataset.tab;
     if (state.tab === "rate") {
@@ -2856,6 +2965,39 @@ function bindApp() {
     if (!isAdmin()) return;
     state.editBean = !state.editBean;
     render();
+  });
+  document.querySelectorAll("[data-replace-bean-photo]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isAdmin()) return;
+      state.imageReplaceId = Number(btn.dataset.replaceBeanPhoto);
+      render();
+    });
+  });
+  $("[data-photo-replace-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelectorAll("[data-close-photo-replace]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (event.currentTarget === event.target || el.tagName === "BUTTON") {
+        state.imageReplaceId = null;
+        render();
+      }
+    });
+  });
+  $("#bean-photo-pick")?.addEventListener("click", () => {
+    const input = $("#bean-admin-photo");
+    if (!input) return;
+    input.value = "";
+    input.click();
+  });
+  $("#bean-photo-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = ($("#bean-photo-url")?.value || "").trim();
+    if (!url) {
+      $("#bean-photo-pick")?.click();
+      return;
+    }
+    await submitBeanPhoto({ url });
   });
   $("#save-masterdata")?.addEventListener("click", async () => {
     if (!isAdmin() || !state.profile?.bean?.id) return;
@@ -3384,8 +3526,22 @@ function bindLanguageButtons() {
   });
 }
 
-  document.addEventListener("keydown", (event) => {
+function bindBeanPhotoInput() {
+  $("#bean-admin-photo")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !state.imageReplaceId || !isAdmin()) return;
+    await submitBeanPhoto({ file });
+  });
+}
+
+document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (state.imageReplaceId) {
+    state.imageReplaceId = null;
+    render();
+    return;
+  }
   if (state.journalOpen) {
     state.journalOpen = false;
     render();
@@ -3411,4 +3567,5 @@ function bindLanguageButtons() {
 });
 
 bindScanInput();
+bindBeanPhotoInput();
 boot();

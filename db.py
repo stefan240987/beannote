@@ -20,7 +20,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "6.8.13"
+VERSION = "6.8.14"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -105,8 +105,10 @@ RESET_DB_ON_START = os.getenv("RESET_DB_ON_START", "").strip().lower() in {
     "yes",
 }
 LOCAL_ADMIN_EMAILS = {
-    "google_test_user@beannote.local",
     "apple_test_user@beannote.local",
+}
+LOCAL_REGULAR_EMAILS = {
+    "google_test_user@beannote.local",
 }
 
 
@@ -793,6 +795,7 @@ def init_db() -> None:
                 suitable_for TEXT DEFAULT '[]',
                 story TEXT DEFAULT '{}',
                 image_url TEXT DEFAULT '',
+                is_professional_image INTEGER NOT NULL DEFAULT 0,
                 roaster_url TEXT DEFAULT '',
                 community_acidity REAL DEFAULT 3.4,
                 community_sweetness REAL DEFAULT 3.5,
@@ -870,6 +873,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     beans = {row[1] for row in conn.execute("PRAGMA table_info(beans)")}
     if "image_url" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN image_url TEXT DEFAULT ''")
+    if "is_professional_image" not in beans:
+        conn.execute("ALTER TABLE beans ADD COLUMN is_professional_image INTEGER NOT NULL DEFAULT 0")
     if "roaster_url" not in beans:
         conn.execute("ALTER TABLE beans ADD COLUMN roaster_url TEXT DEFAULT ''")
     if "story" not in beans:
@@ -907,6 +912,11 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN brewer_types TEXT DEFAULT '[]'")
     if "gear_specs" not in users:
         conn.execute("ALTER TABLE users ADD COLUMN gear_specs TEXT DEFAULT '[]'")
+    if "is_admin" in users:
+        conn.execute(
+            f"UPDATE users SET is_admin = 0 WHERE lower(email) IN ({','.join('?' * len(LOCAL_REGULAR_EMAILS))})",
+            tuple(LOCAL_REGULAR_EMAILS),
+        )
     ratings = {row[1] for row in conn.execute("PRAGMA table_info(ratings)")}
     if "user_id" not in ratings:
         conn.execute("ALTER TABLE ratings ADD COLUMN user_id INTEGER")
@@ -983,9 +993,29 @@ def resolve_image_path(image_url: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def update_bean_image(bean_id: int, image_url: str) -> None:
+def update_bean_image(bean_id: int, image_url: str, *, professional: bool | None = None) -> None:
     with connect() as conn:
-        conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
+        if professional is None:
+            conn.execute("UPDATE beans SET image_url = ? WHERE id = ?", (image_url, bean_id))
+            return
+        conn.execute(
+            "UPDATE beans SET image_url = ?, is_professional_image = ? WHERE id = ?",
+            (image_url, int(bool(professional)), bean_id),
+        )
+
+
+def list_pending_image_beans() -> list[dict[str, Any]]:
+    """Beans still using a scan, placeholder, or other non-catalog photo."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM beans
+            WHERE COALESCE(is_professional_image, 0) = 0
+              AND COALESCE(image_url, '') NOT LIKE '/static/img/beans/%'
+            ORDER BY created_at DESC, name ASC
+            """
+        ).fetchall()
+    return [_row_to_bean(r) for r in rows]
 
 
 def update_bean_roaster_url(bean_id: int, roaster_url: str) -> None:
@@ -1421,6 +1451,19 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     data["roaster_roast_level"] = scores["roast_level_score"]
     favorite = data.pop("is_favorite", None)
     data["is_favorite"] = bool(is_favorite if favorite is None else favorite)
+    image_url = (data.get("image_url") or "").strip()
+    professional = bool(data.get("is_professional_image")) or image_url.startswith("/static/img/beans/")
+    data["is_professional_image"] = professional
+    if professional:
+        data["image_source"] = "professional"
+    elif image_url.startswith("images/") or image_url.startswith("/media/"):
+        data["image_source"] = "scan"
+    elif image_url.startswith("http://") or image_url.startswith("https://"):
+        data["image_source"] = "url"
+    elif image_url:
+        data["image_source"] = "upload"
+    else:
+        data["image_source"] = ""
     return data
 
 
@@ -2433,11 +2476,21 @@ def matching_flavor_tags(roaster_notes: str, user_notes: str) -> dict[str, list[
     return {"roaster": roaster[:12], "user": user[:12], "overlap": overlap[:12]}
 
 
+def _normalized_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
 def _is_bootstrap_admin(email: str) -> bool:
-    return (email or "").strip().lower() in LOCAL_ADMIN_EMAILS
+    return _normalized_email(email) in LOCAL_ADMIN_EMAILS
+
+
+def _is_forced_regular(email: str) -> bool:
+    return _normalized_email(email) in LOCAL_REGULAR_EMAILS
 
 
 def _grant_admin(email: str) -> bool:
+    if _is_forced_regular(email):
+        return False
     if _is_bootstrap_admin(email):
         return True
     if ENVIRONMENT != "local":
@@ -2455,6 +2508,7 @@ def _public_user(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | N
     data = dict(row)
     data.pop("password_hash", None)
     data["is_admin"] = bool(data.get("is_admin"))
+    data["role"] = "admin" if data["is_admin"] else "user"
     data["espresso_machine"] = str(data.get("espresso_machine") or "").strip()
     data["grinder"] = str(data.get("grinder") or "").strip()
     brew_types = [
@@ -2575,13 +2629,18 @@ def upsert_oauth_user(
                 SET username = CASE WHEN username = '' THEN ? ELSE username END,
                     auth_provider = ?,
                     oauth_id = ?,
-                    is_admin = CASE WHEN ? = 1 THEN 1 ELSE is_admin END
+                    is_admin = CASE
+                        WHEN ? = 1 THEN 0
+                        WHEN ? = 1 THEN 1
+                        ELSE is_admin
+                    END
                 WHERE id = ?
                 """,
                 (
                     username,
                     provider,
                     oauth_id,
+                    int(_is_forced_regular(email)),
                     int(_is_bootstrap_admin(email)),
                     existing["id"],
                 ),
