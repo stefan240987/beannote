@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.11] - 2026-08-30
+
+- snapshot: fix - shop URL drafts fall back to JSON-LD when Gemini misses a Shopify page
+- Tracking-heavy links (Google Shopping, gclid) are cleaned before fetch. Product name, roaster, story, and photo come from the page's structured data if Gemini times out or returns empty.
+
 ## [1.1.10] - 2026-08-30
 
 - snapshot: feat - admin create bean from shop URL via Gemini web scraping and local image caching
