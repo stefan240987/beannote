@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.11] - 2026-08-30
+
+- snapshot: feat - admin catalog photos on existing gear without overwriting user uploads
+- Admins can add a product photo to a catalog model from search results or a saved setup card.
+- User-uploaded gear photos (`images/…`) stay on that user's setup when the catalog photo is added or when the setup is saved.
+
 ## [6.8.10] - 2026-08-30
 
 - snapshot: feat - dynamic admin gear creation endpoint and frontend modal

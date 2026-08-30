@@ -182,6 +182,7 @@ const state = {
   gearAdminBrand: "",
   gearAdminName: "",
   gearAdminPreview: "",
+  gearAdminPhotoId: "",
   searchTimer: null,
   rate: {
     brew_method: "V60", rating: 4, acidity: 3, sweetness: 3, body: 3, aftertaste: 3,
@@ -2002,6 +2003,31 @@ function gearImgFallback() {
   return ` onerror="this.onerror=null;this.src='/static/img/gear/placeholder.svg';"`;
 }
 
+function isUserGearImage(item) {
+  const url = String(item?.image_url || "").trim();
+  if (url.startsWith("images/") || url.startsWith("/media/")) return true;
+  return !!(item?.specs?.custom && url && !url.startsWith("/static/img/gear/"));
+}
+
+function applyCatalogPhoto(id, imageUrl) {
+  if (!id || !imageUrl) return;
+  state.gearCandidates = (state.gearCandidates || []).map((item) =>
+    item.id === id ? { ...item, image_url: imageUrl } : item
+  );
+  if (state.gearHit?.id === id) state.gearHit = { ...state.gearHit, image_url: imageUrl };
+  if (!state.user) return;
+  const specs = (state.user.gear_specs || []).map((item) => {
+    if (item.id !== id || isUserGearImage(item)) return item;
+    return { ...item, image_url: imageUrl };
+  });
+  state.user = { ...state.user, gear_specs: specs };
+}
+
+function adminPhotoButton(item) {
+  if (!isAdmin() || !item?.id) return "";
+  return `<button type="button" data-gear-admin-photo="${esc(item.id)}" class="text-xs font-semibold text-espresso" data-i18n="gear_admin_add_photo">${esc(t("gear_admin_add_photo"))}</button>`;
+}
+
 function gearThumb(item) {
   const src = item?.image_url || GEAR_IMG_FALLBACK;
   const img = photoImg(src, "", "h-full w-full object-contain", gearImgFallback());
@@ -2044,9 +2070,10 @@ function gearCard(item) {
       <h3 class="font-display text-lg font-bold leading-tight">${esc(name)}</h3>
       ${item.brand ? `<p class="text-xs text-muted">${esc(item.brand)}</p>` : ""}
       ${chips || custom ? `<div class="mt-2 flex flex-wrap gap-1">${chips}${custom}</div>` : ""}
-      <div class="mt-2 flex gap-3">
+      <div class="mt-2 flex flex-wrap gap-3">
         <button type="button" data-gear-edit="${esc(item.id)}" class="text-xs font-semibold text-terracotta" data-i18n="gear_edit">${esc(t("gear_edit"))}</button>
         <button type="button" data-gear-remove="${esc(item.id)}" class="text-xs font-semibold text-muted" data-i18n="gear_remove">${esc(t("gear_remove"))}</button>
+        ${adminPhotoButton(item)}
       </div>
     </div>
   </article>`;
@@ -2058,14 +2085,20 @@ function gearPickerCard(item) {
   const chips = gearSpecChips(item).slice(0, 4).map((chip) =>
     `<span class="rounded-full bg-foam px-1.5 py-0.5 text-[10px] font-semibold">${esc(chip)}</span>`
   ).join("");
-  return `<button type="button" data-gear-pick="${esc(item.id)}" class="rounded-2xl bg-white p-2.5 text-left shadow-sm ring-1 ring-latte">
-    <div class="gear-picker-photo">${gearThumb(item)}</div>
-    <p class="mt-2 text-[10px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(gearKindOf(item)))}</p>
-    <h3 class="font-display text-sm font-bold leading-tight">${esc(name)}</h3>
-    ${item.brand ? `<p class="text-[11px] text-muted">${esc(item.brand)}</p>` : ""}
-    ${chips ? `<div class="mt-1.5 flex flex-wrap gap-1">${chips}</div>` : ""}
-    <span class="mt-2 block text-xs font-semibold text-terracotta" data-i18n="gear_select">${esc(t("gear_select"))}</span>
-  </button>`;
+  const adminPhoto = isAdmin()
+    ? `<button type="button" data-gear-admin-photo="${esc(item.id)}" class="mt-2 flex min-h-10 w-full items-center justify-center rounded-xl bg-foam text-xs font-semibold ring-1 ring-latte" data-i18n="gear_admin_add_photo">${esc(t("gear_admin_add_photo"))}</button>`
+    : "";
+  return `<div class="rounded-2xl bg-white p-2.5 text-left shadow-sm ring-1 ring-latte">
+    <button type="button" data-gear-pick="${esc(item.id)}" class="block w-full text-left">
+      <div class="gear-picker-photo">${gearThumb(item)}</div>
+      <p class="mt-2 text-[10px] font-semibold uppercase tracking-wider text-muted">${esc(gearKindLabel(gearKindOf(item)))}</p>
+      <h3 class="font-display text-sm font-bold leading-tight">${esc(name)}</h3>
+      ${item.brand ? `<p class="text-[11px] text-muted">${esc(item.brand)}</p>` : ""}
+      ${chips ? `<div class="mt-1.5 flex flex-wrap gap-1">${chips}</div>` : ""}
+      <span class="mt-2 block text-xs font-semibold text-terracotta" data-i18n="gear_select">${esc(t("gear_select"))}</span>
+    </button>
+    ${adminPhoto}
+  </div>`;
 }
 
 function gearPickerModal() {
@@ -3095,6 +3128,52 @@ function bindApp() {
       render();
     }
   });
+  const pickAdminCatalogPhoto = (id) => {
+    if (!isAdmin() || !id) return;
+    const input = $("#gear-admin-existing-photo");
+    if (!input) return;
+    state.gearAdminPhotoId = id;
+    input.value = "";
+    input.click();
+  };
+  document.querySelectorAll("[data-gear-admin-photo]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pickAdminCatalogPhoto(btn.dataset.gearAdminPhoto || "");
+    });
+  });
+  const existingPhoto = $("#gear-admin-existing-photo");
+  if (existingPhoto) {
+    const fresh = existingPhoto.cloneNode(true);
+    existingPhoto.replaceWith(fresh);
+    fresh.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    const id = state.gearAdminPhotoId;
+    event.target.value = "";
+    if (!file || !id || !isAdmin()) return;
+    const pickerWasOpen = state.gearPickerOpen;
+    startBusy();
+    render();
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const result = await api(`/api/gear/${encodeURIComponent(id)}/photo`, { method: "POST", body });
+      const created = result.gear || result.item || {};
+      applyCatalogPhoto(created.id || id, created.image_url || result.image_url || "");
+      state.gearAdminPhotoId = "";
+      state.gearPickerOpen = pickerWasOpen;
+      stopBusy();
+      toast(t("gear_admin_photo_saved"));
+      render();
+    } catch (err) {
+      stopBusy();
+      state.gearPickerOpen = pickerWasOpen;
+      toast(t(err.detail || "gear_admin_fail"));
+      render();
+    }
+    });
+  }
   document.querySelectorAll("[data-gear-pick]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.gearPick;

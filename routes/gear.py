@@ -184,6 +184,83 @@ def _unique_gear_slug(
     return candidate
 
 
+def _find_catalog_item(gear_id: str) -> dict[str, Any] | None:
+    gid = str(gear_id or "").strip()
+    if not gid:
+        return None
+    folded = db_mod._fold_gear_text(gid)
+    for raw in _all_catalog():
+        if str(raw.get("id") or "").strip() == gid:
+            return raw
+    if not folded:
+        return None
+    for raw in _all_catalog():
+        if db_mod._fold_gear_text(str(raw.get("name") or "")) == folded:
+            return raw
+    return None
+
+
+def _catalog_photo_slug(item: dict[str, Any]) -> str:
+    existing = local_gear_image_url(str(item.get("image_url") or ""))
+    if existing:
+        return Path(existing).stem
+    gid = re.sub(r"[^a-z0-9-]+", "", str(item.get("id") or "").lower()).strip("-")
+    if gid:
+        return gid
+    return _safe_gear_slug(str(item.get("brand") or ""), str(item.get("name") or item.get("model_name") or ""))
+
+
+def _upsert_gear_row(item: dict[str, Any], image_url: str) -> dict[str, Any]:
+    gid = str(item.get("id") or "").strip() or _catalog_photo_slug(item)
+    name = str(item.get("name") or item.get("model_name") or "").strip()
+    brand = str(item.get("brand") or "").strip()
+    slot = item_gear_kind(item) or "other"
+    highlights = item.get("highlights") if isinstance(item.get("highlights"), list) else []
+    specs = item.get("specs") if isinstance(item.get("specs"), dict) else {}
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with connect() as conn:
+        _ensure_gear_table(conn)
+        twin = conn.execute(
+            "SELECT id FROM gear WHERE id = ? OR (lower(name) = lower(?) AND lower(brand) = lower(?))",
+            (gid, name, brand),
+        ).fetchone()
+        if twin:
+            gid = str(twin["id"])
+        conn.execute(
+            """
+            INSERT INTO gear (id, brand, name, type, kind, highlights, specs, image_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                brand = excluded.brand,
+                name = excluded.name,
+                type = excluded.type,
+                kind = excluded.kind,
+                highlights = excluded.highlights,
+                specs = excluded.specs,
+                image_url = excluded.image_url
+            """,
+            (
+                gid,
+                brand,
+                name,
+                slot,
+                slot,
+                json.dumps(highlights, ensure_ascii=False),
+                json.dumps(specs, ensure_ascii=False),
+                image_url,
+                now,
+            ),
+        )
+        row = conn.execute("SELECT * FROM gear WHERE id = ?", (gid,)).fetchone()
+    card = normalize_gear_item(_row_to_catalog(row))
+    if not card:
+        raise HTTPException(status_code=422, detail="gear_admin_fail")
+    card["kind"] = slot
+    card["type"] = slot
+    card["image_url"] = local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    return card
+
+
 def save_gear_catalog_image(image_bytes: bytes, slug: str) -> str:
     safe = re.sub(r"[^a-z0-9-]+", "", (slug or "").lower()).strip("-") or "gear"
     if ".." in safe or "/" in safe:
@@ -192,6 +269,19 @@ def save_gear_catalog_image(image_bytes: bytes, slug: str) -> str:
     dest = _GEAR_IMG_DIR / f"{safe}.jpg"
     dest.write_bytes(image_bytes)
     return f"{_STATIC_GEAR_PREFIX}{safe}.jpg"
+
+
+def is_user_owned_gear_image(url: str, item: dict[str, Any] | None = None) -> bool:
+    """User uploads live under images/ — never replace those with catalog photos."""
+    raw = str(url or "").strip()
+    if raw.startswith("images/") and ".." not in raw and "/" not in raw[7:]:
+        return True
+    if raw.startswith("/media/") and ".." not in raw:
+        return True
+    specs = item.get("specs") if isinstance(item, dict) else None
+    if isinstance(specs, dict) and specs.get("custom") and raw and not local_gear_image_url(raw):
+        return True
+    return False
 
 
 def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -210,17 +300,29 @@ def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         gid = str(item.get("id") or "").strip()
         key = str(item.get("name") or item.get("model_name") or "").strip().lower()
         raw = by_id.get(gid) or by_name.get(key)
-        current = local_gear_image_url(str(item.get("image_url") or ""))
-        if current:
-            item["image_url"] = current
-        elif raw:
-            item["image_url"] = local_gear_image_url(str(raw.get("image_url") or ""))
+        user_url = str(item.get("image_url") or "").strip()
+        if is_user_owned_gear_image(user_url, item):
+            item["image_url"] = _orig_sanitize_gear_image_url(user_url) or user_url
+        else:
+            current = local_gear_image_url(user_url)
+            catalog_img = local_gear_image_url(str(raw.get("image_url") or "")) if raw else ""
+            item["image_url"] = current or catalog_img
         if raw:
             item["id"] = str(raw.get("id") or item.get("id") or "")
             item["kind"] = raw.get("kind") or raw.get("type") or item.get("kind")
             item["type"] = raw.get("type") or item.get("type") or item.get("kind")
         restored.append(item)
     return restored
+
+
+_orig_normalize_gear_specs = db_mod.normalize_gear_specs
+
+
+def _normalize_gear_specs_with_catalog(raw: Any) -> list[dict[str, Any]]:
+    return restore_catalog_images(_orig_normalize_gear_specs(raw))
+
+
+db_mod.normalize_gear_specs = _normalize_gear_specs_with_catalog
 
 
 def filter_gear_by_kind(cards: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
@@ -333,6 +435,29 @@ async def gear_photo(
         raise HTTPException(status_code=422, detail="gear_photo_required") from exc
     image_url = await asyncio.to_thread(save_bean_image, jpeg, "gear.jpg")
     return {"image_url": image_url}
+
+
+@router.post("/{gear_id}/photo")
+async def admin_catalog_photo(
+    gear_id: str,
+    file: UploadFile = File(...),
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    del _admin
+    item = _find_catalog_item(gear_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="not_found")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty_image")
+    slug = _catalog_photo_slug(item)
+    try:
+        jpeg = await asyncio.to_thread(encode_scan_jpeg, raw)
+        image_url = await asyncio.to_thread(save_gear_catalog_image, jpeg, slug)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="gear_photo_required") from exc
+    card = _upsert_gear_row({**item, "image_url": image_url}, image_url)
+    return {"gear": card, "item": card, "image_url": card.get("image_url") or image_url}
 
 
 async def _read_create_payload(request: Request) -> tuple[GearCreateIn, bytes, str]:
