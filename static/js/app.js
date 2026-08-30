@@ -1538,7 +1538,7 @@ function fromUrlModal() {
     <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-from-url-sheet>
       <form id="from-url-form" class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="create_from_link">${esc(t("create_from_link"))}</h2>
-        <input id="from-url-input" type="url" inputmode="url" autocomplete="url" value="${esc(state.urlFromLinkValue)}" ${busy ? "disabled" : ""} class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="paste_product_link" placeholder="${esc(t("paste_product_link"))}">
+        <input id="from-url-input" type="text" inputmode="url" autocomplete="url" value="${esc(state.urlFromLinkValue)}" ${busy ? "disabled" : ""} class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="paste_product_link" placeholder="${esc(t("paste_product_link"))}">
         <button type="submit" id="from-url-submit" ${busy ? "disabled" : ""} class="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-terracotta font-semibold text-cream">${submit}</button>
         <button type="button" data-close-from-url ${busy ? "disabled" : ""} class="min-h-11 w-full text-sm font-semibold text-muted" data-i18n="close_detail">${esc(t("close_detail"))}</button>
       </form>

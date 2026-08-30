@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.12] - 2026-08-30
+
+- snapshot: fix - create-from-link uses Shopify JSON-LD immediately and skips a slow Gemini call
+- Shop pages that already publish name and roaster no longer wait on Gemini. Tracking URLs still work, the URL field accepts Google Shopping links, and the PWA cache is bumped so the new script loads.
+
 ## [1.1.11] - 2026-08-30
 
 - snapshot: fix - shop URL drafts fall back to JSON-LD when Gemini misses a Shopify page

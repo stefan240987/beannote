@@ -72,14 +72,22 @@ def parse_bean_from_url(url: str, lang: str = "da") -> dict[str, Any]:
     chosen = normalize_lang(lang)
     facts = _page_facts(html, page_url)
     candidates = _page_image_candidates(html, page_url, facts)
-    brief = _page_brief(facts, page_text or html, page_url)
     raw: dict[str, Any] = {}
-    try:
-        raw = _gemini_generate_json(get_gemini_api_key(), _from_url_prompt(brief, page_url, candidates, chosen), 20_000, tools=None)
-    except Exception:
-        raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
+    have_facts = bool((facts.get("name") or "").strip() and (facts.get("roaster") or "").strip())
+    if not have_facts:
+        brief = _page_brief(facts, page_text or html, page_url)
+        try:
+            raw = _gemini_generate_json(
+                get_gemini_api_key(),
+                _from_url_prompt(brief, page_url, candidates, chosen),
+                20_000,
+                tools=None,
+            )
+        except Exception as exc:
+            print(f"from-url gemini skipped: {type(exc).__name__}: {exc}")
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
 
     mapped = _merge_facts(_map_url_fields(raw, page_url, candidates), facts, page_url)
     if not (mapped.get("name") or "").strip() or not (mapped.get("roaster") or "").strip():
@@ -91,7 +99,11 @@ def parse_bean_from_url(url: str, lang: str = "da") -> dict[str, Any]:
     parsed["roaster_url"] = parsed.get("roaster_url") or page_url
     parsed["product_page_url"] = page_url
 
-    local_image = _cache_product_image(mapped.get("image_url") or "")
+    try:
+        local_image = _cache_product_image(mapped.get("image_url") or "")
+    except Exception as exc:
+        print(f"from-url image cache skipped: {type(exc).__name__}: {exc}")
+        local_image = ""
     if local_image:
         parsed["image_url"] = local_image
         parsed["official_image_url"] = local_image
@@ -99,7 +111,12 @@ def parse_bean_from_url(url: str, lang: str = "da") -> dict[str, Any]:
         parsed["snapshot_url"] = local_image
         parsed["preview"] = local_image
         parsed["image_candidates"] = [local_image]
-    return _with_scan_matches(parsed)
+    try:
+        return _with_scan_matches(parsed)
+    except Exception as exc:
+        print(f"from-url match attach skipped: {type(exc).__name__}: {exc}")
+        parsed.setdefault("similar", [])
+        return parsed
 
 
 def _public_product_url(url: str) -> str:

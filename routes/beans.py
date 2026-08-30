@@ -389,6 +389,7 @@ async def create_bean_from_url(
         draft = await asyncio.to_thread(parse_bean_from_url, url, chosen)
     except ValueError as exc:
         detail = str(exc) or "from_url_fail"
+        print(f"from-url value error: {detail} url={url[:180]}")
         if detail == "invalid_url":
             raise HTTPException(status_code=400, detail=detail) from exc
         if detail == "required":
@@ -396,12 +397,14 @@ async def create_bean_from_url(
         raise HTTPException(status_code=422, detail="from_url_fail") from exc
     except RuntimeError as exc:
         detail = str(exc) or "from_url_fail"
+        print(f"from-url runtime error: {detail} url={url[:180]}")
         if detail == "ocr_missing":
             raise HTTPException(status_code=503, detail=detail) from exc
         if detail == "ocr_quota":
             raise HTTPException(status_code=429, detail=detail) from exc
         raise HTTPException(status_code=422, detail="from_url_fail") from exc
     except Exception as exc:
+        print(f"from-url failed: {type(exc).__name__}: {exc} url={url[:180]}")
         raise HTTPException(status_code=422, detail="from_url_fail") from exc
     return {"status": "draft", "scan": draft}
 
