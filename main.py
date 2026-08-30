@@ -42,8 +42,8 @@ def _lan_ipv4() -> str:
 
 def _print_lan_banner() -> None:
     ip = _lan_ipv4()
-    url = f"http://{ip}:8501"
-    local_line = "Local:          http://localhost:8501"
+    url = f"http://{ip}:8502"
+    local_line = "Local:          http://localhost:8502"
     net_line = f"Network/Mobile: {url}"
     width = max(56, len(local_line) + 8, len(net_line) + 8)
     bar = "─" * width
@@ -180,6 +180,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8501,
+        port=8502,
         reload=ENVIRONMENT != "production",
     )

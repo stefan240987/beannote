@@ -48,10 +48,10 @@ fi
 
 echo
 echo "┌──────────────────────────────────────────────────────────┐"
-echo "│  BeanNote local server (0.0.0.0:8501)                    │"
-echo "│  Local:          http://localhost:8501"
-echo "│  Network/Mobile: http://${LAN_IP}:8501"
-echo "│  Host 0.0.0.0:8501 · CORS * · DB kept across reloads     │"
+echo "│  BeanNote local server (0.0.0.0:8502)                    │"
+echo "│  Local:          http://localhost:8502"
+echo "│  Network/Mobile: http://${LAN_IP}:8502"
+echo "│  Host 0.0.0.0:8502 · CORS * · DB kept across reloads     │"
 echo "│  Support modal uses local test URLs when ENV is empty    │"
 echo "└──────────────────────────────────────────────────────────┘"
 echo "Tesseract: ${TESSERACT_CMD:-not found}"
@@ -60,11 +60,11 @@ python - <<PY
 try:
     import qrcode
     qr = qrcode.QRCode(border=1)
-    qr.add_data("http://${LAN_IP}:8501")
+    qr.add_data("http://${LAN_IP}:8502")
     qr.make(fit=True)
     qr.print_ascii(invert=True)
 except Exception:
     pass
 PY
 echo
-exec uvicorn main:app --host 0.0.0.0 --port 8501 --reload
+exec uvicorn main:app --host 0.0.0.0 --port 8502 --reload

@@ -35,11 +35,11 @@ start_job_workers() {
 }
 
 if [ "$JOB_WORKERS" -le 0 ]; then
-  exec uvicorn main:app --host 0.0.0.0 --port 8501 --workers "$WEB_WORKERS" \
+  exec uvicorn main:app --host 0.0.0.0 --port 8502 --workers "$WEB_WORKERS" \
     --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS"
 fi
 
-uvicorn main:app --host 0.0.0.0 --port 8501 --workers "$WEB_WORKERS" \
+uvicorn main:app --host 0.0.0.0 --port 8502 --workers "$WEB_WORKERS" \
   --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS" &
 UVICORN_PID=$!
 sleep 2

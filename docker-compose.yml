@@ -5,7 +5,7 @@ services:
     container_name: beannote
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8502:8502"
     environment:
       ENVIRONMENT: production
       PUID: "99"
@@ -34,10 +34,10 @@ services:
       - /mnt/user/appdata/beannote/data:/app/data
     labels:
       net.unraid.docker.managed: dockerman
-      net.unraid.docker.webui: "http://[IP]:[PORT:8501]"
+      net.unraid.docker.webui: "http://[IP]:[PORT:8502]"
       net.unraid.docker.icon: "https://raw.githubusercontent.com/stefan240987/beannote/main/.github/icon.png"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8502/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

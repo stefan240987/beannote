@@ -83,6 +83,30 @@ class CatalogPathTests(unittest.TestCase):
         self.assertTrue(found.is_file())
 
 
+class UnraidTemplateTests(unittest.TestCase):
+    def test_edit_form_keeps_user_secrets(self):
+        import xml.etree.ElementTree as ET
+
+        root = ET.parse(Path(__file__).resolve().parent / "unraid" / "beannote.xml").getroot()
+        self.assertEqual((root.findtext("TemplateURL") or "").strip(), "false")
+        secrets = {
+            "JWT_SECRET",
+            "ADMIN_EMAIL",
+            "ADMIN_PASSWORD",
+            "GEMINI_API_KEY",
+            "PUBLIC_BASE_URL",
+            "GOOGLE_CLIENT_SECRET",
+            "APPLE_PRIVATE_KEY",
+        }
+        found = set()
+        for cfg in root.findall("Config"):
+            target = cfg.get("Target")
+            if target in secrets:
+                found.add(target)
+                self.assertEqual(cfg.get("Mask"), "false", target)
+        self.assertEqual(found, secrets)
+
+
 class ProductionEnvWriteTests(unittest.TestCase):
     def test_production_does_not_write_dotenv(self):
         import ocr

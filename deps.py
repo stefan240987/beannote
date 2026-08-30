@@ -81,7 +81,7 @@ def _public_base(request: Request | None = None) -> str:
         return configured
     if request is not None:
         return str(request.base_url).rstrip("/")
-    return "http://127.0.0.1:8501"
+    return "http://127.0.0.1:8502"
 
 
 def _cookie_secure(request: Request | None = None) -> bool:

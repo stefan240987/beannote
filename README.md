@@ -2,9 +2,9 @@
 
 Personlig kaffe-journal og rating-PWA. Scan poser, gem smagninger, og kør den som ét Docker-image på Unraid.
 
-**Version:** 1.0.0  
+**Version:** 1.0.2  
 **Image:** `ghcr.io/stefan240987/beannote:1.0.0` eller `:latest`  
-**Port:** `8501`  
+**Port:** `8502`  
 **Data:** `/app/data` (SQLite, brugerfotos, katalog-uploads)
 
 ---
@@ -37,13 +37,13 @@ Alternativt: **Apps** → ⚙️ → **Template Repositories** → tilføj
 | Felt | Variabel | Værdi |
 |---|---|---|
 | Appdata | — | Host: `/mnt/cache/appdata/beannote/data` → Container: `/app/data` |
-| WebUI | — | `8501` |
+| WebUI | — | `8502` |
 | Environment | `ENVIRONMENT` | `production` |
 | Timezone | `TZ` | `Europe/Copenhagen` |
 | PUID / PGID | `PUID` / `PGID` | `99` / `100` |
-| JWT Secret | `JWT_SECRET` | output fra `openssl rand -hex 32` (maskeret) |
+| JWT Secret | `JWT_SECRET` | output fra `openssl rand -hex 32` |
 | Admin Email | `ADMIN_EMAIL` | din e-mail |
-| Admin Password | `ADMIN_PASSWORD` | mindst 8 tegn (maskeret) |
+| Admin Password | `ADMIN_PASSWORD` | mindst 8 tegn |
 | Reset DB on start | `RESET_DB_ON_START` | `false` |
 
 **Apply.** Containeren opretter admin-kontoen ved start. Log ind med præcis den e-mail og det password.
@@ -62,8 +62,8 @@ Lad **Web Workers** stå på `1` og **Job Workers** på `0`.
 ### 5. Tjek at den kører
 
 - Docker-fanen: container **healthy**
-- WebUI, eller `http://TOWER-IP:8501` — du skal se login-skærmen
-- `curl -fsS http://TOWER-IP:8501/api/health` skal give `"ok": true`, `"environment": "production"`, `"auto_flush": false`
+- WebUI, eller `http://TOWER-IP:8502` — du skal se login-skærmen
+- `curl -fsS http://TOWER-IP:8502/api/health` skal give `"ok": true`, `"environment": "production"`, `"auto_flush": false`
 
 Loop-restart i loggen betyder næsten altid at `JWT_SECRET` mangler.
 
@@ -82,7 +82,7 @@ Brug den færdige nginx-fil: [`unraid/swag/beannote.subdomain.conf`](unraid/swag
 4. I BeanNote: `PUBLIC_BASE_URL=https://beannote.ditdomæne.dk`
 5. Genstart SWAG og BeanNote.
 
-Proxyen rammer container-navnet `beannote` på port `8501`, tillader 16 MB uploads og 5 min timeout til scan. Luk host-port 8501 udefra; SWAG er indgangen.
+Proxyen rammer container-navnet `beannote` på port `8502`, tillader 16 MB uploads og 5 min timeout til scan. Luk host-port 8502 udefra; SWAG er indgangen.
 
 Åbn appen på telefonen via **HTTPS**, og tilføj til hjemmeskærm (PWA). Kamera til Scan kræver HTTPS.
 
@@ -111,7 +111,7 @@ Map **ikke** `/app/static`. Katalogfotos du selv uploader ligger i volume under 
 - Sæt ikke `ENVIRONMENT=local` — det tømmer databasen ved start
 - Sæt ikke `RESET_DB_ON_START=true`
 - Læg ikke SQLite på `/mnt/user/...` (FUSE/shfs) — brug cache-disk
-- Åbn ikke port 8501 direkte til internettet
+- Åbn ikke port 8502 direkte til internettet
 
 ---
 

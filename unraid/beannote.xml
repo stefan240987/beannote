@@ -13,35 +13,35 @@
 &#xD;
 Put appdata on a cache-only share. JWT_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD are required for a working Unraid install. Keep ENVIRONMENT=production and RESET_DB_ON_START=false.</Overview>
   <Category>Productivity:</Category>
-  <WebUI>http://[IP]:[PORT:8501]</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/stefan240987/beannote/main/unraid/beannote.xml</TemplateURL>
+  <WebUI>http://[IP]:[PORT:8502]</WebUI>
+  <TemplateURL>false</TemplateURL>
   <Icon>https://raw.githubusercontent.com/stefan240987/beannote/main/.github/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <Requires></Requires>
-  <Config Name="WebUI" Target="8501" Default="8501" Mode="tcp" Description="BeanNote web UI" Type="Port" Display="always" Required="true" Mask="false">8501</Config>
+  <Config Name="WebUI" Target="8502" Default="8502" Mode="tcp" Description="BeanNote web UI" Type="Port" Display="always" Required="true" Mask="false">8502</Config>
   <Config Name="Appdata" Target="/app/data" Default="/mnt/cache/appdata/beannote/data" Mode="rw" Description="SQLite, user photos, and catalog uploads. Prefer a cache-only share, not /mnt/user." Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/beannote/data</Config>
   <Config Name="ENVIRONMENT" Target="ENVIRONMENT" Default="production" Mode="" Description="Must stay production on Unraid. local wipes the database on start." Type="Variable" Display="always" Required="true" Mask="false">production</Config>
   <Config Name="TZ" Target="TZ" Default="Europe/Copenhagen" Mode="" Description="Timezone" Type="Variable" Display="always" Required="true" Mask="false">Europe/Copenhagen</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Unraid nobody" Type="Variable" Display="always" Required="true" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Unraid users" Type="Variable" Display="always" Required="true" Mask="false">100</Config>
-  <Config Name="JWT Secret" Target="JWT_SECRET" Default="" Mode="" Description="Required. Generate with: openssl rand -hex 32" Type="Variable" Display="always" Required="true" Mask="true"/>
-  <Config Name="Admin Email" Target="ADMIN_EMAIL" Default="" Mode="" Description="Creates or promotes this account as admin on start" Type="Variable" Display="always" Required="true" Mask="false"/>
-  <Config Name="Admin Password" Target="ADMIN_PASSWORD" Default="" Mode="" Description="At least 8 characters. Applied on every container start." Type="Variable" Display="always" Required="true" Mask="true"/>
-  <Config Name="Gemini API Key" Target="GEMINI_API_KEY" Default="" Mode="" Description="Optional. Enables bag OCR via Gemini. Tesseract remains the offline fallback." Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="Public Base URL" Target="PUBLIC_BASE_URL" Default="" Mode="" Description="Public HTTPS origin, no trailing slash. Example: https://beannote.example.com. Required for Google/Apple OAuth." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="JWT Secret" Target="JWT_SECRET" Default="" Mode="" Description="Required. Generate with: openssl rand -hex 32. Shown in Edit so Unraid keeps it in the template." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Admin Email" Target="ADMIN_EMAIL" Default="" Mode="" Description="Creates or promotes this account as admin on start. Shown in Edit so Unraid keeps it in the template." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Admin Password" Target="ADMIN_PASSWORD" Default="" Mode="" Description="At least 8 characters. Applied on every container start. Shown in Edit so Unraid keeps it in the template." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Gemini API Key" Target="GEMINI_API_KEY" Default="" Mode="" Description="Optional. Enables bag OCR via Gemini. Tesseract remains the offline fallback." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Public Base URL" Target="PUBLIC_BASE_URL" Default="" Mode="" Description="Public HTTPS origin, no trailing slash. Example: https://beannote.example.com. Required for Google/Apple OAuth." Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="Reset DB on start" Target="RESET_DB_ON_START" Default="false" Mode="" Description="Keep false. true is only for local test wipes." Type="Variable" Display="always" Required="true" Mask="false">false</Config>
-  <Config Name="Google Client ID" Target="GOOGLE_CLIENT_ID" Default="" Mode="" Description="Optional Google OAuth client ID" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Google Client Secret" Target="GOOGLE_CLIENT_SECRET" Default="" Mode="" Description="Optional Google OAuth client secret" Type="Variable" Display="advanced" Required="false" Mask="true"/>
-  <Config Name="Apple Client ID" Target="APPLE_CLIENT_ID" Default="" Mode="" Description="Optional Sign in with Apple Services ID" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Apple Team ID" Target="APPLE_TEAM_ID" Default="" Mode="" Description="Optional Apple Team ID" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Apple Key ID" Target="APPLE_KEY_ID" Default="" Mode="" Description="Optional Apple Key ID" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Apple Private Key" Target="APPLE_PRIVATE_KEY" Default="" Mode="" Description="Optional Apple .p8 key. Paste as one line with \n for newlines." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="Google Client ID" Target="GOOGLE_CLIENT_ID" Default="" Mode="" Description="Optional Google OAuth client ID" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Google Client Secret" Target="GOOGLE_CLIENT_SECRET" Default="" Mode="" Description="Optional Google OAuth client secret" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Apple Client ID" Target="APPLE_CLIENT_ID" Default="" Mode="" Description="Optional Sign in with Apple Services ID" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Apple Team ID" Target="APPLE_TEAM_ID" Default="" Mode="" Description="Optional Apple Team ID" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Apple Key ID" Target="APPLE_KEY_ID" Default="" Mode="" Description="Optional Apple Key ID" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Apple Private Key" Target="APPLE_PRIVATE_KEY" Default="" Mode="" Description="Optional Apple .p8 key. Paste as one line with \n for newlines." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Web Workers" Target="WEB_WORKERS" Default="1" Mode="" Description="Keep 1 on Unraid/SQLite" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
   <Config Name="Job Workers" Target="JOB_WORKERS" Default="0" Mode="" Description="0 keeps the scan worker inside the web process" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
   <Config Name="OCR Max Concurrent" Target="OCR_MAX_CONCURRENT" Default="2" Mode="" Description="Max simultaneous Gemini/OCR jobs" Type="Variable" Display="advanced" Required="false" Mask="false">2</Config>
   <Config Name="Scan Rate Per Minute" Target="SCAN_RATE_PER_MINUTE" Default="8" Mode="" Description="Bag scan rate limit" Type="Variable" Display="advanced" Required="false" Mask="false">8</Config>
   <Config Name="Enrich Rate Per Minute" Target="ENRICH_RATE_PER_MINUTE" Default="4" Mode="" Description="Bean enrich rate limit" Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
-  <Config Name="MobilePay URL" Target="SUPPORT_MOBILEPAY_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="Buy Me a Coffee URL" Target="SUPPORT_BUYMEACOFFEE_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="MobilePay URL" Target="SUPPORT_MOBILEPAY_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Buy Me a Coffee URL" Target="SUPPORT_BUYMEACOFFEE_URL" Default="" Mode="" Description="Optional https:// support link" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

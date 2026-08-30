@@ -2,6 +2,16 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.0.2] - 2026-08-30
+
+- snapshot: chore - bind BeanNote to port 8502 instead of 8501
+- Local Uvicorn, Docker/Unraid WebUI, healthchecks, and the SWAG upstream now use `8502`.
+
+## [1.0.1] - 2026-08-30
+
+- snapshot: fix - Unraid Edit keeps JWT, admin, Gemini, and OAuth values in the template
+- Secret fields are no longer password-masked, so Apply writes them back into `my-beannote.xml`. TemplateURL is `false` so CA does not re-merge empty defaults over saved values.
+
 ## [1.0.0] - 2026-08-30
 
 - First public GitHub release.
