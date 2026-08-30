@@ -274,5 +274,15 @@ class AppleCallbackTests(unittest.TestCase):
         self.assertEqual(res.headers.get("location"), "/login?auth_error=oauth")
 
 
+class DockerfileCopyTests(unittest.TestCase):
+    def test_first_party_packages_are_copied(self):
+        root = Path(__file__).resolve().parent
+        dockerfile = (root / "Dockerfile").read_text()
+        self.assertIn("COPY services ./services", dockerfile)
+        self.assertIn("COPY routes ./routes", dockerfile)
+        self.assertTrue((root / "services" / "__init__.py").is_file())
+        self.assertTrue((root / "services" / "gemini.py").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

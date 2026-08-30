@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.22] - 2026-08-30
+
+- snapshot: fix - include the services package in the Unraid/Docker image
+- Production import of `services.gemini` no longer crashes uvicorn. The image now copies `services/` (with `__init__.py`) next to `routes/`.
+
 ## [1.1.21] - 2026-08-30
 
 - snapshot: feat - add prepared Swedish and Norwegian UI catalogs without activating them
