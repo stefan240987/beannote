@@ -21,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.1.13"
+VERSION = "1.1.14"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -96,6 +96,7 @@ _GENERIC_NAME_TOKENS = {
 }
 _VARIETAL_SKIP = {"arabica", "robusta", "blend", "100"}
 _FIELD_SPLIT = re.compile(r"[\s,/:;&()\[\]{}+]+")
+_PACK_SIZE_TOKEN = re.compile(r"^\d+(?:[.,]\d+)?(?:g|kg|gr|grams?)$")
 _COUNTRY_TOKENS = set(_ORIGIN_FOLD.keys()) | set(_ORIGIN_FOLD.values())
 BCRYPT_ROUNDS = 12
 
@@ -1734,12 +1735,52 @@ def _place_tokens(value: str) -> set[str]:
 
 
 def origins_conflict(left: str, right: str) -> bool:
-    """True when both sides name countries and they do not overlap."""
+    """True when both sides name countries that cannot be the same SKU."""
     left_tokens = _field_tokens(left) & _COUNTRY_TOKENS
     right_tokens = _field_tokens(right) & _COUNTRY_TOKENS
     if not left_tokens or not right_tokens:
         return False
+    if left_tokens == right_tokens:
+        return False
+    if left_tokens.isdisjoint(right_tokens):
+        return True
+    # Colombia & India vs Brazil & India share a blend component, not an identity.
+    return len(left_tokens) > 1 and len(right_tokens) > 1
+
+
+def _name_match_tokens(name: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw in _fold(name).split():
+        token = raw.strip(".-'\"")
+        if len(token) < 3 or token in {"and", "og", "the"}:
+            continue
+        if _PACK_SIZE_TOKEN.match(token):
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _distinctive_name_tokens(name: str) -> set[str]:
+    return {token for token in _name_match_tokens(name) if token not in _GENERIC_NAME_TOKENS}
+
+
+def names_conflict(left: str, right: str) -> bool:
+    """True when both titles carry different SKU words (Crema vs Brasil)."""
+    left_tokens = _distinctive_name_tokens(left)
+    right_tokens = _distinctive_name_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
     return left_tokens.isdisjoint(right_tokens)
+
+
+def _fold_sku(name: str) -> str:
+    """Fold a title for similarity, ignoring pack size (250g / 500g / 1kg)."""
+    kept = [
+        token
+        for token in _fold(name).split()
+        if not _PACK_SIZE_TOKEN.match(token.strip(".-'\""))
+    ]
+    return " ".join(kept)
 
 
 def regions_conflict(left: str, right: str) -> bool:
@@ -1849,10 +1890,12 @@ def _bean_similarity(
     bean: dict[str, Any],
 ) -> float:
     """Score a candidate against one archive bean. Generic titles need origin agreement."""
-    query = _fold(f"{name} - {roaster}".strip(" -"))
-    label = _fold(_bean_label(bean))
-    folded_name = _fold(name)
-    bean_name = _fold(bean.get("name") or "")
+    if names_conflict(name, str(bean.get("name") or "")):
+        return 0.0
+    query = _fold(f"{_fold_sku(name)} - {roaster}".strip(" -"))
+    label = _fold(f"{_fold_sku(str(bean.get('name') or ''))} - {bean.get('roaster') or ''}".strip(" -"))
+    folded_name = _fold_sku(name)
+    bean_name = _fold_sku(str(bean.get("name") or ""))
     label_score = difflib.SequenceMatcher(None, query, label).ratio()
     name_score = difflib.SequenceMatcher(None, folded_name, bean_name).ratio()
     incoming_generic = is_generic_bean_name(name)

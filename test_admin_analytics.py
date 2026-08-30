@@ -155,7 +155,7 @@ class AdminAnalyticsTests(unittest.TestCase):
         from db import insert_bean
 
         insert_bean("Uno", "Risteriet Coffee")
-        created = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        created = insert_bean("Uno Espresso", "Risteriet Coffee", skip_fuzzy=True)
         self.assertEqual(created["status"], "created")
         self._login("member@beannote.test")
         denied = self.client.get("/api/admin/beans/near-matches")

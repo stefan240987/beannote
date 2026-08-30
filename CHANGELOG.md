@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.14] - 2026-08-30
+
+- snapshot: fix - Dinluksus Crema and Brasil shop URLs are not the same bean
+- Template titles like "Espresso Crema hele bønner 500g" vs "Espresso Brasil hele bønner 500g" no longer auto-open each other. Distinctive SKU words and different multi-origin blends (Colombia & India vs Brazil & India) block the match.
+
 ## [1.1.13] - 2026-08-30
 
 - snapshot: fix - concise Gemini story summaries and UI description text truncation

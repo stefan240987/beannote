@@ -17,6 +17,7 @@ from db import (
     insert_bean,
     is_generic_bean_name,
     list_pending_near_reviews,
+    names_conflict,
     origins_conflict,
     qualify_generic_bean_name,
     regions_conflict,
@@ -70,6 +71,13 @@ class GenericNameTests(unittest.TestCase):
         self.assertFalse(origins_conflict("Brazil", "Brasilien"))
         self.assertTrue(origins_conflict("Brasilien", "Colombia"))
         self.assertFalse(origins_conflict("Brasilien", ""))
+        self.assertFalse(origins_conflict("Brazil & India", "Brasilien & Indien"))
+        self.assertFalse(origins_conflict("Brazil", "Brazil & India"))
+        self.assertTrue(origins_conflict("Colombia & India", "Brazil & India"))
+
+    def test_crema_and_brasil_titles_conflict(self):
+        self.assertTrue(names_conflict("Espresso Crema hele bønner 500g", "Espresso Brasil hele bønner 500g"))
+        self.assertFalse(names_conflict("Espresso Brasil hele bønner 500g", "Espresso Brasil hele bønner 250g"))
 
     def test_cerrado_and_sul_de_minas_conflict(self):
         self.assertTrue(regions_conflict("Cerrado Mineiro", "Sul de Minas"))
@@ -136,6 +144,19 @@ class ScanMatchTests(unittest.TestCase):
             hits = find_similar_beans("Uno", "Risteriet")
         self.assertEqual(len(hits), 1)
         self.assertEqual(scan_destination(hits), "rate")
+
+    def test_dinluksus_crema_is_not_brasil(self):
+        archive = [
+            _bean(10, "Espresso Brasil hele bønner 500g", "Dinluksus", origin="Brazil & India"),
+        ]
+        with patch("db.list_beans", return_value=archive):
+            hits = find_similar_beans(
+                "Espresso Crema hele bønner 500g",
+                "Dinluksus",
+                origin="Colombia & India",
+            )
+        self.assertEqual(hits, [])
+        self.assertEqual(scan_destination(hits), "add")
 
     def test_filter_does_not_match_espresso_same_origin(self):
         archive = [_bean(3, "Espresso", "Copenhagen Roaster", origin="Brasilien")]
@@ -228,15 +249,15 @@ class NearMatchSkipFuzzyTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_near_match_blocks_without_skip(self):
-        result = insert_bean("Daily Espresso", "Risteriet Coffee")
+        result = insert_bean("Uno Espresso", "Risteriet Coffee")
         self.assertEqual(result["status"], "fuzzy")
         self.assertEqual(result["similar"][0]["name"], "Uno")
         self.assertLess(result["similar"][0]["confidence"], SCAN_MATCH_CUTOFF)
 
     def test_near_match_saves_with_skip(self):
-        result = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        result = insert_bean("Uno Espresso", "Risteriet Coffee", skip_fuzzy=True)
         self.assertEqual(result["status"], "created")
-        self.assertEqual(result["bean"]["name"], "Daily Espresso")
+        self.assertEqual(result["bean"]["name"], "Uno Espresso")
         self.assertNotEqual(result["bean"]["id"], 1)
         queue = list_pending_near_reviews()
         self.assertEqual(len(queue), 1)
@@ -246,7 +267,7 @@ class NearMatchSkipFuzzyTests(unittest.TestCase):
         self.assertGreaterEqual(queue[0]["confidence"], 0.70)
 
     def test_keep_and_delete_near_review(self):
-        created = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        created = insert_bean("Uno Espresso", "Risteriet Coffee", skip_fuzzy=True)
         review = list_pending_near_reviews()[0]
         self.assertTrue(dismiss_near_review(review["id"]))
         self.assertEqual(list_pending_near_reviews(), [])
