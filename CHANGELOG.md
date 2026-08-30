@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.16] - 2026-08-30
+
+- snapshot: fix - desktop modal viewport centering, image clipping prevention, and full-width toolbar layout
+- Desktop modals are flex-centered at 85vh with a scrollable 20px-radius card so the bag photo stays inside the sheet. Explore search, Create from Link, and Sort sit on one full-width row with filter pills left-aligned below. Modal backdrops cover the sidebar and header without leftover grey bars.
+
 ## [1.1.15] - 2026-08-30
 
 - snapshot: fix - Fetch AI uses a live shop URL and is admin-only

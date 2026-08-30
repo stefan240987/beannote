@@ -1512,13 +1512,13 @@ function header() {
 
 function exploreToolbar() {
   const pills = suitabilityBar();
-  const fromLink = state.tab === "explore" ? createFromLinkButton() : "";
+  const fromLink = state.tab === "explore" ? createFromLinkButton("explore-from-link") : "";
   return `<div class="explore-toolbar">
     <div class="explore-search-row">
       <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+      ${fromLink}
       ${exploreSortSelect()}
     </div>
-    ${fromLink ? `<div class="mt-2">${fromLink}</div>` : ""}
     ${pills ? `<div class="explore-filter-bar">${pills}</div>` : ""}
   </div>`;
 }
@@ -1534,8 +1534,8 @@ function fromUrlModal() {
   const submit = busy
     ? `<span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-cream border-t-transparent" aria-hidden="true"></span><span data-i18n="analyzing_webshop">${esc(t("analyzing_webshop"))}</span>`
     : `<span data-i18n="analyze_with_gemini">${esc(t("analyze_with_gemini"))}</span>`;
-  return `<div id="from-url-modal" data-close-from-url class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-from-url-sheet>
+  return `<div id="from-url-modal" data-close-from-url class="modal-overlay fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-from-url-sheet>
       <form id="from-url-form" class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="create_from_link">${esc(t("create_from_link"))}</h2>
         <input id="from-url-input" type="text" inputmode="url" autocomplete="url" value="${esc(state.urlFromLinkValue)}" ${busy ? "disabled" : ""} class="min-h-12 w-full rounded-xl border border-latte bg-white px-3 text-sm" data-i18n-placeholder="paste_product_link" placeholder="${esc(t("paste_product_link"))}">
@@ -1626,8 +1626,8 @@ function supportModal() {
   const coffee = state.config.buymeacoffee_url
     ? `<a href="${esc(state.config.buymeacoffee_url)}" target="_blank" rel="noopener noreferrer" class="flex min-h-12 items-center justify-center rounded-xl bg-espresso font-semibold text-cream" data-i18n="support_buymeacoffee">${esc(t("support_buymeacoffee"))}</a>`
     : "";
-  return `<div id="support-modal" data-close-support class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-support-sheet>
+  return `<div id="support-modal" data-close-support class="modal-overlay fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-support-sheet>
       <div class="coffee-pattern px-5 py-6 text-cream">
         <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-cream/70">BeanNote</p>
         <h2 class="font-display mt-1 text-2xl font-bold" data-i18n="support_title">${esc(t("support_title"))}</h2>
@@ -2010,8 +2010,8 @@ function beanModal(profile) {
         ${editor}
         ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
         ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}`;
-  return `<div id="bean-modal" data-close-modal class="fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
-    <article class="relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+  return `<div id="bean-modal" data-close-modal class="modal-overlay fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
+    <article class="modal-card bean-modal-content relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
       <div class="modal-close-bar">
         <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
@@ -2532,8 +2532,8 @@ function gearPickerCard(item) {
 function gearPickerModal() {
   if (!state.gearPickerOpen) return "";
   const cards = filterGearByKind(state.gearCandidates, state.gearKind).map(gearPickerCard).join("");
-  return `<div id="gear-picker" data-close-gear-picker class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
-    <article class="relative mb-0 max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:mb-0 sm:rounded-3xl" data-gear-picker-sheet>
+  return `<div id="gear-picker" data-close-gear-picker class="modal-overlay fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4">
+    <article class="modal-card relative mb-0 max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:mb-0 sm:rounded-3xl" data-gear-picker-sheet>
       <div class="modal-close-bar">
         <button type="button" data-close-gear-picker class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
@@ -2559,8 +2559,8 @@ function gearAdminModal() {
   const preview = state.gearAdminPreview
     ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearAdminPreview, "", "h-full w-full object-contain", gearImgFallback())}</div>`
     : `<p class="text-center text-sm text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</p>`;
-  return `<div id="gear-admin" data-close-gear-admin class="fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-admin-sheet>
+  return `<div id="gear-admin" data-close-gear-admin class="modal-overlay fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-admin-sheet>
       <form id="gear-admin-form" class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="gear_admin_title">${esc(t("gear_admin_title"))}</h2>
         ${preview}
@@ -2584,8 +2584,8 @@ function gearCustomModal() {
   const preview = state.gearCustomImage
     ? `<div class="gear-picker-photo mx-auto w-40">${photoImg(state.gearCustomImage, "", "h-full w-full object-contain", gearImgFallback())}</div>`
     : `<p class="text-center text-sm text-muted" data-i18n="gear_no_image">${esc(t("gear_no_image"))}</p>`;
-  return `<div id="gear-custom" data-close-gear-custom class="fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-custom-sheet>
+  return `<div id="gear-custom" data-close-gear-custom class="modal-overlay fixed inset-0 z-[60] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-gear-custom-sheet>
       <div class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="gear_custom_title">${esc(t("gear_custom_title"))}</h2>
         ${preview}
@@ -2714,8 +2714,8 @@ function journalModal() {
   const list = groups.length
     ? groups.map((group) => journalBeanCard(group)).join("")
     : `<p class="rounded-2xl bg-white px-3 py-3 text-sm text-muted shadow-sm ring-1 ring-latte" data-i18n="journal_empty">${esc(t("journal_empty"))}</p>`;
-  return `<div id="journal-modal" data-close-journal class="journal-modal">
-    <article class="journal-modal-sheet" data-journal-sheet>
+  return `<div id="journal-modal" data-close-journal class="journal-modal modal-overlay">
+    <article class="journal-modal-sheet modal-card" data-journal-sheet>
       <div class="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
         <div class="min-w-0">
           <h2 class="font-display text-xl font-bold" data-i18n="journal_title">${esc(t("journal_title"))}</h2>
@@ -2994,8 +2994,8 @@ function photoReplaceModal() {
     || (state.profile?.bean?.id === state.imageReplaceId ? state.profile.bean : null);
   const preview = photoImg(bean?.image_url, bean?.snapshot_url, "max-h-40 w-full object-contain bg-foam")
     || bagFallback("h-28");
-  return `<div id="bean-photo-replace" data-close-photo-replace class="fixed inset-0 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-photo-replace-sheet>
+  return `<div id="bean-photo-replace" data-close-photo-replace class="modal-overlay fixed inset-0 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm overflow-hidden rounded-3xl bg-cream shadow-2xl sm:mb-0" data-photo-replace-sheet>
       <form id="bean-photo-form" class="space-y-3 p-5">
         <h2 class="font-display text-xl font-bold" data-i18n="change_bag_photo">${esc(t("change_bag_photo"))}</h2>
         ${bean?.name ? `<p class="text-sm text-muted">${esc(bean.name)}${bean.roaster ? ` · ${esc(bean.roaster)}` : ""}</p>` : ""}
@@ -3177,8 +3177,8 @@ function drawMaps() {
 function savedPromptModal() {
   const prompt = state.savedPrompt;
   if (!prompt) return "";
-  return `<div id="saved-prompt" class="fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0">
+  return `<div id="saved-prompt" class="modal-overlay fixed inset-0 z-50 flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0">
       <h2 class="font-display text-2xl font-bold">${esc(t("saved_prompt_title"))}</h2>
       <p class="mt-2 text-sm text-muted">${esc(t("saved_prompt_sub"))}</p>
       <div class="mt-5 grid gap-2">
@@ -3251,8 +3251,8 @@ function beanPayload(source) {
 
 function guestAuthModal() {
   if (!state.authPrompt || state.user) return "";
-  return `<div id="guest-auth-modal" data-close-guest-auth class="fixed inset-0 z-[140] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
-    <article class="mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0" data-guest-auth-sheet>
+  return `<div id="guest-auth-modal" data-close-guest-auth class="modal-overlay fixed inset-0 z-[140] flex items-end justify-center bg-espresso/50 px-4 sm:items-center">
+    <article class="modal-card mb-20 w-full max-w-sm rounded-3xl bg-cream p-5 shadow-2xl sm:mb-0" data-guest-auth-sheet>
       <h2 class="font-display text-2xl font-bold">${esc(t("guest_signin_title"))}</h2>
       <p class="mt-2 text-sm text-muted">${esc(t("guest_signin_sub"))}</p>
       <div class="mt-5 grid gap-2">
