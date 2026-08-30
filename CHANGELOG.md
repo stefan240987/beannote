@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [Unreleased]
+
+- snapshot: chore - enabled 0.0.0.0 LAN server binding and network URL output
+- Local server binds to `0.0.0.0:8501` and prints Local (`http://localhost:8501`) and Network/Mobile (`http://<LAN_IP>:8501`) URLs at startup.
+
 ## [6.8.11] - 2026-08-30
 
 - snapshot: feat - admin catalog photos on existing gear without overwriting user uploads

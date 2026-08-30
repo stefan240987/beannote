@@ -41,13 +41,15 @@ def _lan_ipv4() -> str:
 def _print_lan_banner() -> None:
     ip = _lan_ipv4()
     url = f"http://{ip}:8501"
-    width = max(56, len(url) + 8)
+    local_line = "Local:          http://localhost:8501"
+    net_line = f"Network/Mobile: {url}"
+    width = max(56, len(local_line) + 8, len(net_line) + 8)
     bar = "─" * width
     print()
     print(f"┌{bar}┐")
     print(f"│  BeanNote on your phone{' ' * (width - 24)}│")
-    print(f"│  {url}{' ' * (width - len(url) - 2)}│")
-    print(f"│  http://127.0.0.1:8501{' ' * (width - 24)}│")
+    print(f"│  {local_line}{' ' * (width - len(local_line) - 2)}│")
+    print(f"│  {net_line}{' ' * (width - len(net_line) - 2)}│")
     print(f"│  Scan the QR code, or open the LAN URL{' ' * (width - 40)}│")
     print(f"└{bar}┘")
     try:

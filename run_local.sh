@@ -48,9 +48,9 @@ fi
 
 echo
 echo "┌──────────────────────────────────────────────────────────┐"
-echo "│  BeanNote local · scan to open on your phone             │"
-echo "│  http://${LAN_IP}:8501"
-echo "│  http://127.0.0.1:8501"
+echo "│  BeanNote local server (0.0.0.0:8501)                    │"
+echo "│  Local:          http://localhost:8501"
+echo "│  Network/Mobile: http://${LAN_IP}:8501"
 echo "│  Host 0.0.0.0:8501 · CORS * · DB kept across reloads     │"
 echo "│  Support modal uses local test URLs when ENV is empty    │"
 echo "└──────────────────────────────────────────────────────────┘"
