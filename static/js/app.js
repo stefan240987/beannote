@@ -1615,6 +1615,41 @@ function supportButton(extra = "") {
   return `<button type="button" data-open-support class="flex min-h-12 w-full items-center justify-center rounded-xl bg-white font-semibold text-espresso ring-1 ring-latte ${extra}" data-i18n="support_app">${esc(t("support_app"))}</button>`;
 }
 
+function supportCardTitle() {
+  return String(t("support_title") || "").replace(/^☕\s*/u, "").trim();
+}
+
+function tabbarSupport() {
+  if (!supportEnabled()) return "";
+  const title = supportCardTitle();
+  const lang = activeLang();
+  const tpl = document.getElementById("tabbar-support");
+  if (tpl) {
+    const node = tpl.content.cloneNode(true);
+    const titleEl = node.querySelector(".tabbar-support-title");
+    if (titleEl) titleEl.textContent = title;
+    const subEl = node.querySelector(".tabbar-support-sub");
+    if (subEl) {
+      const localized = subEl.getAttribute(`data-lang-${lang}`) || subEl.getAttribute("data-lang-en");
+      if (localized) subEl.textContent = localized;
+    }
+    const btn = node.querySelector("[data-open-support]");
+    if (btn) btn.setAttribute("aria-label", title);
+    const wrap = document.createElement("div");
+    wrap.appendChild(node);
+    return wrap.innerHTML;
+  }
+  return `<div class="tabbar-support">
+    <button type="button" class="tabbar-support-card" data-open-support aria-label="${esc(title)}">
+      <span class="tabbar-support-icon" aria-hidden="true">☕</span>
+      <span class="tabbar-support-copy">
+        <span class="tabbar-support-title">${esc(title)}</span>
+        <span class="tabbar-support-sub">${esc(lang === "da" ? "Hjælp med at holde appen kørende" : "Help keep the app running")}</span>
+      </span>
+    </button>
+  </div>`;
+}
+
 function supportModal() {
   if (!state.supportOpen || !supportEnabled()) return "";
   const testNote = state.config?.support_test_mode
@@ -1663,7 +1698,7 @@ function exploreView() {
   }).join("");
   return `<section class="explore-list">
     <div class="explore-grid">${cards || `<p class="text-sm text-muted">${empty}</p>`}</div>
-    ${supportEnabled() ? `<div class="mt-5">${supportButton()}</div>` : ""}
+    ${supportEnabled() ? `<div class="support-inline mt-5">${supportButton()}</div>` : ""}
     ${state.profile?.bean ? beanModal(state.profile) : ""}
   </section>`;
 }
@@ -3039,7 +3074,7 @@ function profileView() {
     </div>
     <div class="profile-actions">
       ${isAdmin() ? `<button type="button" id="open-admin" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${esc(t("admin_dash_open"))}</button>` : ""}
-      ${supportButton()}
+      ${supportEnabled() ? `<div class="support-inline">${supportButton()}</div>` : ""}
       <button id="logout" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream" data-i18n="logout">${t("logout")}</button>
     </div>
   </section>`;
@@ -3123,6 +3158,7 @@ function tabbar() {
         </button>`;
       }).join("")}
     </div>
+    ${tabbarSupport()}
   </nav>`;
 }
 

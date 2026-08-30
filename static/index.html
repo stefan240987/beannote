@@ -64,7 +64,7 @@
   </script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/css/styles.css?v=1.1.17">
+  <link rel="stylesheet" href="/static/css/styles.css?v=1.1.18">
   <style>
     .journal-bean-chevron {
       display: grid;
@@ -118,6 +118,17 @@
       <span class="tabbar-brand-name" data-i18n="app_name">BeanNote</span>
     </div>
   </template>
+  <template id="tabbar-support">
+    <div class="tabbar-support">
+      <button type="button" class="tabbar-support-card" data-open-support>
+        <span class="tabbar-support-icon" aria-hidden="true">☕</span>
+        <span class="tabbar-support-copy">
+          <span class="tabbar-support-title">Støt BeanNote</span>
+          <span class="tabbar-support-sub" data-lang-da="Hjælp med at holde appen kørende" data-lang-en="Help keep the app running">Hjælp med at holde appen kørende</span>
+        </span>
+      </button>
+    </div>
+  </template>
   <template id="bottom-nav-tabs">
     <button type="button" id="explore-tab" data-tab="explore" data-icon="☕" data-i18n="tab_explore">Udforsk</button>
     <button type="button" id="favorites-tab" data-tab="favorites" data-icon="❤️" data-i18n="tab_favorites">Favoritter</button>
@@ -166,6 +177,6 @@
   <input id="scan-input" type="file" accept="image/*" class="scan-file-input" tabindex="-1" aria-hidden="true">
   <input id="gear-admin-existing-photo" type="file" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
   <input id="bean-admin-photo" type="file" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
-  <script src="/static/js/app.js?v=1.1.17"></script>
+  <script src="/static/js/app.js?v=1.1.18"></script>
 </body>
 </html>

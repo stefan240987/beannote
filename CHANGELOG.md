@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.18] - 2026-08-30
+
+- snapshot: feat - moved support app widget to desktop sidebar footer with eye-catching terracotta card design
+- Desktop hides the inline explore/profile support bar and pins a compact ☕ Støt BeanNote card to the sidebar footer.
+
 ## [1.1.17] - 2026-08-30
 
 - snapshot: refactor - 2-column widescreen desktop bean modal layout eliminating vertical scroll
