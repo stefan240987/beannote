@@ -10,10 +10,13 @@ from unittest.mock import patch
 
 from db import (
     SCAN_MATCH_CUTOFF,
+    delete_bean,
+    dismiss_near_review,
     find_similar_beans,
     init_db,
     insert_bean,
     is_generic_bean_name,
+    list_pending_near_reviews,
     origins_conflict,
     qualify_generic_bean_name,
     regions_conflict,
@@ -235,6 +238,19 @@ class NearMatchSkipFuzzyTests(unittest.TestCase):
         self.assertEqual(result["status"], "created")
         self.assertEqual(result["bean"]["name"], "Daily Espresso")
         self.assertNotEqual(result["bean"]["id"], 1)
+        queue = list_pending_near_reviews()
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["bean_id"], result["bean"]["id"])
+        self.assertEqual(queue[0]["similar_name"], "Uno")
+        self.assertLess(queue[0]["confidence"], SCAN_MATCH_CUTOFF)
+        self.assertGreaterEqual(queue[0]["confidence"], 0.70)
+
+    def test_keep_and_delete_near_review(self):
+        created = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        review = list_pending_near_reviews()[0]
+        self.assertTrue(dismiss_near_review(review["id"]))
+        self.assertEqual(list_pending_near_reviews(), [])
+        self.assertTrue(delete_bean(created["bean"]["id"]))
 
 
 if __name__ == "__main__":

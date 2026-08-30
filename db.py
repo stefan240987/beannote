@@ -21,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -875,6 +875,7 @@ def init_db() -> None:
             """
         )
         _ensure_columns(conn)
+        _ensure_near_review_schema(conn)
         _ensure_analytics_schema(conn)
         _migrate_localized_json(conn)
         from jobs import ensure_schema_on, sync_gemini_slots_on
@@ -948,6 +949,128 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     for column in ("coffee_grams", "water_grams"):
         if column not in ratings:
             conn.execute(f"ALTER TABLE ratings ADD COLUMN {column} REAL")
+
+
+def _ensure_near_review_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS bean_near_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bean_id INTEGER NOT NULL,
+            similar_bean_id INTEGER,
+            similar_name TEXT NOT NULL DEFAULT '',
+            similar_roaster TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT DEFAULT '',
+            FOREIGN KEY (bean_id) REFERENCES beans(id) ON DELETE CASCADE,
+            FOREIGN KEY (similar_bean_id) REFERENCES beans(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_near_reviews_pending
+            ON bean_near_reviews(reviewed_at, created_at);
+        """
+    )
+
+
+def _pending_near_review_clause() -> str:
+    return "(reviewed_at IS NULL OR reviewed_at = '')"
+
+
+def _insert_near_review(
+    conn: sqlite3.Connection,
+    bean_id: int,
+    similar: list[dict[str, Any]],
+    created_by: int | None = None,
+) -> None:
+    hits = [
+        row
+        for row in similar
+        if NEAR_MATCH_CUTOFF <= float(row.get("confidence") or 0) < SCAN_MATCH_CUTOFF
+        and int(row.get("id") or 0) != int(bean_id)
+    ]
+    if not hits:
+        return
+    top = hits[0]
+    similar_id = int(top.get("id") or 0) or None
+    conn.execute(
+        """
+        INSERT INTO bean_near_reviews (
+            bean_id, similar_bean_id, similar_name, similar_roaster,
+            confidence, created_by, created_at, reviewed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
+        """,
+        (
+            int(bean_id),
+            similar_id,
+            str(top.get("name") or ""),
+            str(top.get("roaster") or ""),
+            round(float(top.get("confidence") or 0), 3),
+            int(created_by) if created_by else None,
+            _now(),
+        ),
+    )
+
+
+def _row_to_near_review(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "bean_id": row["bean_id"],
+        "similar_bean_id": row["similar_bean_id"],
+        "similar_name": row["similar_name"] or "",
+        "similar_roaster": row["similar_roaster"] or "",
+        "confidence": float(row["confidence"] or 0),
+        "created_at": row["created_at"] or "",
+        "created_by": row["created_by"],
+        "name": row["name"] or "",
+        "roaster": row["roaster"] or "",
+        "image_url": row["image_url"] or "",
+        "roast_level": row["roast_level"] or "",
+    }
+
+
+def list_pending_near_reviews() -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT r.id, r.bean_id, r.similar_bean_id, r.similar_name, r.similar_roaster,
+                   r.confidence, r.created_at, r.created_by,
+                   b.name, b.roaster, b.image_url, b.roast_level
+            FROM bean_near_reviews r
+            JOIN beans b ON b.id = r.bean_id
+            WHERE {_pending_near_review_clause()}
+            ORDER BY r.created_at DESC, r.id DESC
+            """
+        ).fetchall()
+    return [_row_to_near_review(row) for row in rows]
+
+
+def count_pending_near_reviews() -> int:
+    with connect() as conn:
+        return _count(
+            conn,
+            f"SELECT COUNT(*) FROM bean_near_reviews WHERE {_pending_near_review_clause()}",
+        )
+
+
+def dismiss_near_review(review_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE bean_near_reviews
+            SET reviewed_at = ?
+            WHERE id = ? AND {_pending_near_review_clause()}
+            """,
+            (_now(), int(review_id)),
+        )
+        return cur.rowcount > 0
+
+
+def delete_bean(bean_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM beans WHERE id = ?", (int(bean_id),))
+        return cur.rowcount > 0
 
 
 def _ensure_analytics_schema(conn: sqlite3.Connection) -> None:
@@ -1820,6 +1943,7 @@ def insert_bean(
     roaster_acidity: Any = None,
     roaster_body: Any = None,
     roaster_roast_level: Any = None,
+    created_by: int | None = None,
 ) -> dict[str, Any]:
     name = _normalize(name)
     roaster = _normalize(roaster)
@@ -1980,7 +2104,10 @@ def insert_bean(
         bean = conn.execute(
             "SELECT * FROM beans WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
-        return {"status": "created", "bean": _row_to_bean(bean)}
+        created = _row_to_bean(bean)
+        if skip_fuzzy:
+            _insert_near_review(conn, created["id"], similar, created_by)
+        return {"status": "created", "bean": created}
 
 
 def update_bean(
@@ -3235,6 +3362,14 @@ def admin_analytics(days: int = 30) -> dict[str, Any]:
             scans = _count(conn, "SELECT COUNT(*) FROM jobs WHERE kind = 'scan'")
         except sqlite3.Error:
             scans = 0
+        near_reviews = 0
+        try:
+            near_reviews = _count(
+                conn,
+                f"SELECT COUNT(*) FROM bean_near_reviews WHERE {_pending_near_review_clause()}",
+            )
+        except sqlite3.Error:
+            near_reviews = 0
 
     hours = [0] * 24
     weekdays = [0] * 7
@@ -3302,6 +3437,7 @@ def admin_analytics(days: int = 30) -> dict[str, Any]:
             "tastings": ratings,
             "favorites": favorites,
             "scans": scans,
+            "near_reviews": near_reviews,
         },
         "health": {
             "api_total": api_total,

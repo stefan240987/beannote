@@ -12,6 +12,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from db import (
     apply_bean_enrichment,
+    delete_bean,
+    dismiss_near_review,
     get_bean,
     get_catalog_dir,
     get_flavor_profile,
@@ -19,6 +21,7 @@ from db import (
     insert_bean,
     list_beans,
     list_pending_image_beans,
+    list_pending_near_reviews,
     set_bean_professional_image,
     resolve_catalog_image,
     resolve_image_path,
@@ -149,6 +152,7 @@ def create_bean(payload: BeanIn, _user: dict[str, Any] = Depends(current_user)) 
             roaster_acidity=payload.roaster_acidity,
             roaster_body=payload.roaster_body,
             roaster_roast_level=payload.roaster_roast_level,
+            created_by=int(_user["id"]) if _user else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -366,6 +370,28 @@ def approve_bean_image(
 def pending_bean_images(_admin: dict[str, Any] = Depends(require_admin)) -> list[dict[str, Any]]:
     del _admin
     return list_pending_image_beans()
+
+
+@admin_router.get("/near-matches")
+def pending_near_matches(_admin: dict[str, Any] = Depends(require_admin)) -> list[dict[str, Any]]:
+    del _admin
+    return list_pending_near_reviews()
+
+
+@admin_router.post("/near-matches/{review_id}/keep")
+def keep_near_match(review_id: int, _admin: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    del _admin
+    if not dismiss_near_review(review_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"status": "kept"}
+
+
+@admin_router.delete("/{bean_id}")
+def remove_bean(bean_id: int, _admin: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    del _admin
+    if not delete_bean(bean_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"status": "deleted", "id": bean_id}
 
 
 _combined = APIRouter()

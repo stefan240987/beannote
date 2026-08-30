@@ -151,6 +151,34 @@ class AdminAnalyticsTests(unittest.TestCase):
         grown = admin_analytics(30)
         self.assertEqual(grown["traffic"]["pageviews"], before["traffic"]["pageviews"] + 1)
 
+    def test_admin_near_match_queue_keep_and_delete(self):
+        from db import insert_bean
+
+        insert_bean("Uno", "Risteriet Coffee")
+        created = insert_bean("Daily Espresso", "Risteriet Coffee", skip_fuzzy=True)
+        self.assertEqual(created["status"], "created")
+        self._login("member@beannote.test")
+        denied = self.client.get("/api/admin/beans/near-matches")
+        self.assertEqual(denied.status_code, 403)
+        self.client.cookies.clear()
+        self._login("admin@beannote.test")
+        queued = self.client.get("/api/admin/beans/near-matches")
+        self.assertEqual(queued.status_code, 200)
+        rows = queued.json()
+        self.assertTrue(any(row["bean_id"] == created["bean"]["id"] for row in rows))
+        review_id = next(row["id"] for row in rows if row["bean_id"] == created["bean"]["id"])
+        stats = self.client.get("/api/admin/analytics?days=30").json()
+        self.assertGreaterEqual(stats["content"]["near_reviews"], 1)
+        kept = self.client.post(f"/api/admin/beans/near-matches/{review_id}/keep")
+        self.assertEqual(kept.status_code, 200)
+        after_keep = self.client.get("/api/admin/beans/near-matches").json()
+        self.assertFalse(any(row["bean_id"] == created["bean"]["id"] for row in after_keep))
+        deleted = self.client.delete(f"/api/admin/beans/{created['bean']['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        missing = self.client.delete(f"/api/admin/beans/{created['bean']['id']}")
+        self.assertEqual(missing.status_code, 404)
+        self.client.cookies.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

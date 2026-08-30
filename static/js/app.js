@@ -207,6 +207,7 @@ const state = {
   gearAdminPreview: "",
   gearAdminPhotoId: "",
   pendingImages: [],
+  nearReviews: [],
   imageReplaceId: null,
   adminRange: 30,
   adminData: null,
@@ -746,10 +747,26 @@ async function loadAdmin() {
   try {
     state.adminData = await api(`/api/admin/analytics?days=${days}`);
     await loadAdminUsers();
+    await loadNearReviews();
   } catch (err) {
     state.adminData = null;
     toast(t(err.detail || "admin_load_fail"));
   }
+}
+
+async function loadNearReviews() {
+  if (!isAdmin()) return;
+  try {
+    const rows = await api("/api/admin/beans/near-matches");
+    state.nearReviews = Array.isArray(rows) ? rows : [];
+  } catch {
+    state.nearReviews = [];
+  }
+}
+
+function beanNearReview(beanId) {
+  const id = Number(beanId);
+  return (state.nearReviews || []).find((row) => Number(row.bean_id) === id) || null;
 }
 
 async function loadAdminUsers() {
@@ -1010,6 +1027,8 @@ async function openBean(id, tab = "explore") {
   if (tab === "favorites" || (tab === "rate" && state.tab === "favorites")) {
     state.tab = "favorites";
     state.beanFilter = "favorites";
+  } else if (tab === "admin") {
+    state.tab = "admin";
   } else {
     state.tab = "explore";
   }
@@ -1876,6 +1895,16 @@ function beanModal(profile) {
       </div>`
     : "";
   const info = [bean.roaster, bean.origin, bean.process, bean.roast_level].filter(Boolean).join(" · ");
+  const review = isAdmin() ? beanNearReview(bean.id) : null;
+  const reviewBox = review ? `<div class="rounded-xl bg-[#f4ebd9] p-3 text-sm ring-1 ring-latte">
+          <p class="font-semibold">${esc(t("admin_near_banner", { pct: Math.round((review.confidence || 0) * 100), name: review.similar_name || review.similar_roaster }))}</p>
+          <p class="mt-1 text-muted">${esc(review.similar_name)} · ${esc(review.similar_roaster)}</p>
+          <div class="mt-2 grid gap-2">
+            ${review.similar_bean_id ? `<button type="button" data-open-bean="${esc(review.similar_bean_id)}" class="min-h-11 w-full rounded-lg bg-foam text-sm font-semibold ring-1 ring-latte">${esc(t("admin_near_open_match"))}</button>` : ""}
+            <button type="button" data-near-keep="${esc(review.id)}" class="min-h-11 w-full rounded-lg bg-espresso text-sm font-semibold text-cream">${esc(t("admin_near_keep"))}</button>
+            <button type="button" data-near-delete="${esc(bean.id)}" class="min-h-11 w-full rounded-lg bg-foam text-sm font-semibold text-terracotta ring-1 ring-latte">${esc(t("admin_near_delete"))}</button>
+          </div>
+        </div>` : "";
   const editor = isAdmin() && state.editBean ? scanEditor(bean) : "";
   const flavorPills = pills(bean.flavor_tags);
   let suitableFor = [];
@@ -1913,6 +1942,7 @@ function beanModal(profile) {
         <section class="space-y-3">
           <h2 class="font-display text-2xl font-bold">${esc(bean.name)}</h2>
           <p class="text-sm text-muted">${esc(info)}</p>
+          ${reviewBox}
           ${rating ? "" : `<button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>`}
           ${rating ? rateForm() : ""}
           ${extras}
@@ -2796,8 +2826,10 @@ function adminView() {
         ${adminStat("admin_tastings", content.tastings ?? 0)}
         ${adminStat("admin_favorites", content.favorites ?? 0)}
         ${adminStat("admin_scans", content.scans ?? 0)}
+        ${adminStat("admin_near_stat", content.near_reviews ?? (state.nearReviews || []).length)}
       </div>
     </div>
+    ${adminNearReviewCard()}
     <div>
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">${esc(t("admin_health"))}</h3>
       <div class="grid grid-cols-2 gap-2">
@@ -2815,7 +2847,35 @@ function adminView() {
         <button type="button" id="admin-users-next" class="min-h-9 rounded-xl bg-foam px-3 font-semibold" ${(table.page || 1) >= (table.pages || 1) ? "disabled" : ""}>${esc(t("admin_next"))}</button>
       </div>
     </div>
+    ${state.profile?.bean ? beanModal(state.profile) : ""}
   </section>`;
+}
+
+function adminNearReviewCard() {
+  const rows = state.nearReviews || [];
+  const items = rows.map((row) => {
+    const pct = Math.round((Number(row.confidence) || 0) * 100);
+    const photo = photoImg(row.image_url, "", "image-audit-img") || bagThumb();
+    return `<article class="image-audit-item">
+      <button type="button" class="image-audit-photo" data-open-bean="${esc(row.bean_id)}">${photo}</button>
+      <div class="min-w-0 flex-1">
+        <button type="button" class="block w-full text-left" data-open-bean="${esc(row.bean_id)}">
+          <p class="truncate text-sm font-semibold">${esc(row.name)}</p>
+          <p class="truncate text-xs text-muted">${esc(row.roaster)}</p>
+        </button>
+        <p class="mt-0.5 text-xs text-muted">${esc(t("admin_near_matched", { name: row.similar_name || row.similar_roaster, pct }))}</p>
+        <div class="image-audit-actions">
+          <button type="button" class="text-xs font-semibold text-espresso" data-near-keep="${esc(row.id)}">${esc(t("admin_near_keep"))}</button>
+          <button type="button" class="text-xs font-semibold text-terracotta" data-near-delete="${esc(row.bean_id)}">${esc(t("admin_near_delete"))}</button>
+        </div>
+      </div>
+    </article>`;
+  }).join("");
+  const empty = `<p class="text-sm text-muted">${esc(t("admin_near_empty"))}</p>`;
+  return `<div class="image-audit-card rounded-2xl bg-white p-4 shadow-sm ring-1 ring-latte">
+    <h2 class="font-display text-lg font-bold">${esc(t("admin_near_title"))} <span class="text-sm font-semibold text-muted">(${rows.length})</span></h2>
+    <div class="image-audit-list mt-3">${items || empty}</div>
+  </div>`;
 }
 
 function adminImageAuditCard() {
@@ -3115,7 +3175,7 @@ function render() {
   const rootEl = $("#app");
   if (rootEl) rootEl.classList.toggle("is-admin", state.tab === "admin");
   const authScreen = isGuest() && AUTH_TABS.has(state.tab);
-  const modalOpen = !!(state.authPrompt || (isBeanListTab() && state.profile?.bean) || (state.user && (state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
+  const modalOpen = !!(state.authPrompt || ((isBeanListTab() || state.tab === "admin") && state.profile?.bean) || (state.user && (state.savedPrompt || state.supportOpen || state.gearPickerOpen || state.gearCustomOpen || state.gearAdminOpen || state.journalOpen || state.imageReplaceId)));
   document.body.classList.toggle("modal-open", modalOpen);
   const toast = state.toast ? `<div class="bn-toast fixed inset-x-4 top-4 rounded-xl bg-espresso px-4 py-3 text-sm text-cream shadow-lg">${esc(state.toast)}</div>` : "";
   if (authScreen) {
@@ -3412,7 +3472,8 @@ function bindApp() {
     }
   }));
   document.querySelectorAll("[data-open-bean]").forEach((btn) => btn.addEventListener("click", () => {
-    openBean(Number(btn.dataset.openBean), state.tab === "favorites" ? "favorites" : "explore");
+    const dest = state.tab === "favorites" ? "favorites" : state.tab === "admin" ? "admin" : "explore";
+    openBean(Number(btn.dataset.openBean), dest);
   }));
   document.querySelectorAll("[data-rate-bean]").forEach((btn) => btn.addEventListener("click", () => {
     if (!state.user) { promptAuth(); return; }
@@ -3551,6 +3612,46 @@ function bindApp() {
     } catch (err) {
       toast(t(err.detail || "forbidden"));
     }
+  });
+  document.querySelectorAll("[data-near-keep]").forEach((btn) => {
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isAdmin()) return;
+      try {
+        await api(`/api/admin/beans/near-matches/${btn.dataset.nearKeep}/keep`, { method: "POST", body: "{}" });
+        toast(t("admin_near_kept"));
+        if (state.tab === "admin") await loadAdmin();
+        else await loadNearReviews();
+        render();
+      } catch (err) {
+        toast(t(err.detail || "admin_load_fail"));
+      }
+    });
+  });
+  document.querySelectorAll("[data-near-delete]").forEach((btn) => {
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isAdmin()) return;
+      if (!window.confirm(t("admin_near_confirm_delete"))) return;
+      const beanId = Number(btn.dataset.nearDelete);
+      try {
+        await api(`/api/admin/beans/${beanId}`, { method: "DELETE" });
+        toast(t("admin_near_deleted"));
+        state.beans = (state.beans || []).filter((bean) => bean.id !== beanId);
+        if (state.profile?.bean?.id === beanId) {
+          state.profile = null;
+          state.selectedId = null;
+          state.editBean = false;
+        }
+        if (state.tab === "admin") await loadAdmin();
+        else await loadNearReviews();
+        render();
+      } catch (err) {
+        toast(t(err.detail || "admin_load_fail"));
+      }
+    });
   });
   document.querySelectorAll("[data-cover-url]").forEach((btn) => {
     btn.addEventListener("click", () => selectScanCover(btn.dataset.coverUrl));

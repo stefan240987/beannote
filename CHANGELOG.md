@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.8] - 2026-08-30
+
+- snapshot: feat - admin review queue for 70–85% near-match saves
+- Approving a near match now lands on the admin dashboard. Admins can open the bean, keep it, edit masterdata, or delete it.
+
 ## [1.1.7] - 2026-08-30
 
 - snapshot: fix - Approve & Save creates a new bean on 70–85% near matches
