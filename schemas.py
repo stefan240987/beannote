@@ -72,7 +72,7 @@ class RatingIn(BaseModel):
 
 
 class GearLookupIn(BaseModel):
-    query: str = Field(min_length=2, max_length=120)
+    query: str = Field(default="", max_length=120)
     kind: str = ""
     lang: str = ""
 

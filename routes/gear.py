@@ -29,7 +29,7 @@ _GEAR_IMG_DIR = Path(__file__).resolve().parent.parent / "static" / "img" / "gea
 
 def local_gear_image_url(url: str) -> str:
     """Keep curated /static/img/gear/ photos that the generic URL sanitizer would drop."""
-    raw = str(url or "").strip()
+    raw = str(url or "").strip().split("?", 1)[0]
     if not raw.startswith(_STATIC_GEAR_PREFIX) or ".." in raw:
         return ""
     name = raw[len(_STATIC_GEAR_PREFIX) :]
@@ -217,6 +217,7 @@ def _upsert_gear_row(item: dict[str, Any], image_url: str) -> dict[str, Any]:
     slot = item_gear_kind(item) or "other"
     highlights = item.get("highlights") if isinstance(item.get("highlights"), list) else []
     specs = item.get("specs") if isinstance(item.get("specs"), dict) else {}
+    image_url = local_gear_image_url(image_url) or str(image_url or "").split("?", 1)[0]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with connect() as conn:
         _ensure_gear_table(conn)
@@ -257,7 +258,9 @@ def _upsert_gear_row(item: dict[str, Any], image_url: str) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="gear_admin_fail")
     card["kind"] = slot
     card["type"] = slot
-    card["image_url"] = local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    card["image_url"] = bust_gear_image_url(
+        local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    )
     return card
 
 
@@ -269,6 +272,20 @@ def save_gear_catalog_image(image_bytes: bytes, slug: str) -> str:
     dest = _GEAR_IMG_DIR / f"{safe}.jpg"
     dest.write_bytes(image_bytes)
     return f"{_STATIC_GEAR_PREFIX}{safe}.jpg"
+
+
+def bust_gear_image_url(url: str) -> str:
+    """Append file mtime so replaced catalog photos beat browser/SW cache."""
+    raw = str(url or "").strip()
+    path = raw.split("?", 1)[0]
+    local = local_gear_image_url(path)
+    if not local:
+        return raw
+    dest = _GEAR_IMG_DIR / local[len(_STATIC_GEAR_PREFIX) :]
+    try:
+        return f"{local}?v={int(dest.stat().st_mtime)}"
+    except OSError:
+        return local
 
 
 def is_user_owned_gear_image(url: str, item: dict[str, Any] | None = None) -> bool:
@@ -306,7 +323,7 @@ def restore_catalog_images(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             current = local_gear_image_url(user_url)
             catalog_img = local_gear_image_url(str(raw.get("image_url") or "")) if raw else ""
-            item["image_url"] = current or catalog_img
+            item["image_url"] = bust_gear_image_url(current or catalog_img)
         if raw:
             item["id"] = str(raw.get("id") or item.get("id") or "")
             item["kind"] = raw.get("kind") or raw.get("type") or item.get("kind")
@@ -333,9 +350,42 @@ def filter_gear_by_kind(cards: list[dict[str, Any]], kind: str) -> list[dict[str
     return [item for item in cards if item_gear_kind(item) == slot]
 
 
+def _catalog_card(raw: dict[str, Any]) -> dict[str, Any] | None:
+    card = normalize_gear_item(raw)
+    if not card:
+        return None
+    card["kind"] = item_gear_kind(raw)
+    card["type"] = raw.get("type") or card["kind"]
+    return card
+
+
+def list_catalog_by_kind(kind: str) -> list[dict[str, Any]]:
+    """Full catalog for one setup tab, sorted by brand then model name."""
+    slot = _canonical_gear_kind(kind) if kind else ""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in _all_catalog():
+        if slot and item_gear_kind(raw) != slot:
+            continue
+        card = _catalog_card(raw)
+        if not card or card["id"] in seen:
+            continue
+        seen.add(card["id"])
+        out.append(card)
+    out.sort(
+        key=lambda item: (
+            db_mod._fold_gear_text(str(item.get("brand") or "")),
+            db_mod._fold_gear_text(str(item.get("name") or "")),
+        )
+    )
+    return restore_catalog_images(out)
+
+
 def search_catalog(query: str, kind: str) -> list[dict[str, Any]]:
     """Score catalog models and keep only the active tab type."""
     q = db_mod._fold_gear_text(query)
+    if not q:
+        return list_catalog_by_kind(kind)
     if len(q) < 2:
         return []
     slot = _canonical_gear_kind(kind) if kind else ""
@@ -373,15 +423,10 @@ def search_catalog(query: str, kind: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for _score, raw in ranked:
-        card = normalize_gear_item(raw)
-        if not card:
+        card = _catalog_card(raw)
+        if not card or card["id"] in seen:
             continue
-        card["kind"] = item_gear_kind(raw)
-        card["type"] = raw.get("type") or card["kind"]
-        key = card["id"]
-        if key in seen:
-            continue
-        seen.add(key)
+        seen.add(card["id"])
         out.append(card)
         if len(out) >= 8:
             break
@@ -399,11 +444,17 @@ def gear_lookup(
     if chosen not in SUPPORTED_LANGUAGES:
         chosen = "da"
     slot = payload.kind
-    local = filter_gear_by_kind(search_catalog(payload.query, kind=slot), slot)
+    query = (payload.query or "").strip()
+    if not query:
+        local = filter_gear_by_kind(list_catalog_by_kind(slot), slot)
+        return {"gear_candidates": local, "specs": local[0] if local else None}
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="gear_query_required")
+    local = filter_gear_by_kind(search_catalog(query, kind=slot), slot)
     if local:
         return {"gear_candidates": local, "specs": local[0]}
     try:
-        candidates = lookup_gear_catalog(payload.query, kind=slot, lang=chosen)
+        candidates = lookup_gear_catalog(query, kind=slot, lang=chosen)
     except ValueError as exc:
         code = str(exc)
         if code == "gear_query_required":
@@ -578,7 +629,9 @@ async def create_gear(
         raise HTTPException(status_code=422, detail="gear_admin_fail")
     card["kind"] = kind
     card["type"] = slot
-    card["image_url"] = local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    card["image_url"] = bust_gear_image_url(
+        local_gear_image_url(str(card.get("image_url") or image_url)) or image_url
+    )
     return {"gear": card, "item": card}
 
 

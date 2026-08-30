@@ -650,7 +650,7 @@ async function loadJournal() {
 async function refreshGearSearch(query, kind, options = {}) {
   const q = (query || "").trim();
   const slot = kind || state.gearKind;
-  if (q.length < 2) {
+  if (q.length === 1) {
     state.gearCandidates = [];
     state.gearHit = null;
     return [];
@@ -2011,21 +2011,37 @@ function isUserGearImage(item) {
 
 function applyCatalogPhoto(id, imageUrl) {
   if (!id || !imageUrl) return;
+  const url = withGearPhotoBust(imageUrl);
   state.gearCandidates = (state.gearCandidates || []).map((item) =>
-    item.id === id ? { ...item, image_url: imageUrl } : item
+    item.id === id ? { ...item, image_url: url } : item
   );
-  if (state.gearHit?.id === id) state.gearHit = { ...state.gearHit, image_url: imageUrl };
+  if (state.gearHit?.id === id) state.gearHit = { ...state.gearHit, image_url: url };
   if (!state.user) return;
   const specs = (state.user.gear_specs || []).map((item) => {
     if (item.id !== id || isUserGearImage(item)) return item;
-    return { ...item, image_url: imageUrl };
+    return { ...item, image_url: url };
   });
   state.user = { ...state.user, gear_specs: specs };
 }
 
-function adminPhotoButton(item) {
+function gearHasCatalogPhoto(item) {
+  const url = String(item?.image_url || "").trim().split("?")[0];
+  return url.startsWith("/static/img/gear/") && !url.endsWith("placeholder.svg");
+}
+
+function withGearPhotoBust(url) {
+  const raw = String(url || "").trim();
+  if (!raw.startsWith("/static/img/gear/")) return raw;
+  if (/[?&]v=/.test(raw)) return raw;
+  const [path] = raw.split("?");
+  return `${path}?v=${Date.now()}`;
+}
+
+function adminPhotoButton(item, className) {
   if (!isAdmin() || !item?.id) return "";
-  return `<button type="button" data-gear-admin-photo="${esc(item.id)}" class="text-xs font-semibold text-espresso" data-i18n="gear_admin_add_photo">${esc(t("gear_admin_add_photo"))}</button>`;
+  const key = gearHasCatalogPhoto(item) ? "gear_admin_change_photo" : "gear_admin_add_photo";
+  const cls = className || "text-xs font-semibold text-espresso";
+  return `<button type="button" data-gear-admin-photo="${esc(item.id)}" class="${cls}" data-i18n="${key}">${esc(t(key))}</button>`;
 }
 
 function gearThumb(item) {
@@ -2085,9 +2101,10 @@ function gearPickerCard(item) {
   const chips = gearSpecChips(item).slice(0, 4).map((chip) =>
     `<span class="rounded-full bg-foam px-1.5 py-0.5 text-[10px] font-semibold">${esc(chip)}</span>`
   ).join("");
-  const adminPhoto = isAdmin()
-    ? `<button type="button" data-gear-admin-photo="${esc(item.id)}" class="mt-2 flex min-h-10 w-full items-center justify-center rounded-xl bg-foam text-xs font-semibold ring-1 ring-latte" data-i18n="gear_admin_add_photo">${esc(t("gear_admin_add_photo"))}</button>`
-    : "";
+  const adminPhoto = adminPhotoButton(
+    item,
+    "mt-2 flex min-h-10 w-full items-center justify-center rounded-xl bg-foam text-xs font-semibold ring-1 ring-latte"
+  );
   return `<div class="rounded-2xl bg-white p-2.5 text-left shadow-sm ring-1 ring-latte">
     <button type="button" data-gear-pick="${esc(item.id)}" class="block w-full text-left">
       <div class="gear-picker-photo">${gearThumb(item)}</div>
@@ -2996,8 +3013,26 @@ function bindApp() {
     });
   });
   document.querySelectorAll("[data-gear-kind]").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       state.gearKind = btn.dataset.gearKind || "espresso_machine";
+      const query = (state.gearQuery || "").trim();
+      if (state.gearPickerOpen && query.length !== 1) {
+        startBusy();
+        render();
+        try {
+          const hits = await refreshGearSearch(query, state.gearKind);
+          state.gearPickerOpen = hits.length > 0;
+          stopBusy();
+          if (!hits.length) toast(t("gear_lookup_fail"));
+        } catch (err) {
+          stopBusy();
+          state.gearCandidates = [];
+          state.gearPickerOpen = false;
+          toast(t(err.detail || "gear_lookup_fail"));
+        }
+        render();
+        return;
+      }
       state.gearCandidates = filterGearByKind(state.gearCandidates, state.gearKind);
       if (!state.gearCandidates.length) state.gearPickerOpen = false;
       render();
@@ -3015,7 +3050,7 @@ function bindApp() {
   $("#gear-lookup")?.addEventListener("click", async () => {
     const query = (state.gearQuery || $("#gear-query")?.value || "").trim();
     state.gearQuery = query;
-    if (query.length < 2) return toast(t("gear_query_required"));
+    if (query.length === 1) return toast(t("gear_query_required"));
     startBusy();
     render();
     const ctrl = new AbortController();

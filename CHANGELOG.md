@@ -2,6 +2,12 @@
 
 All notable BeanNote changes are recorded here.
 
+## [6.8.13] - 2026-08-30
+
+- snapshot: feat - browse full gear catalog by type and replace admin catalog photos
+- Empty model search lists every catalog item for the selected tab (espresso, grinder, brewer, scale & kettle), sorted by brand.
+- Admins can add or replace a catalog photo on existing gear; the new file overwrites the old one and cache-busts so the updated image shows immediately.
+
 ## [Unreleased]
 
 - snapshot: chore - enabled 0.0.0.0 LAN server binding and network URL output
