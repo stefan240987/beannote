@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.26] - 2026-09-22
+
+- snapshot: fix - hide the mobile bean-modal close X now that pull-to-dismiss is available
+- Coffee profile on phones uses the drag handle and pull-down gesture only. Desktop still shows the ✕.
+
 ## [1.1.25] - 2026-09-22
 
 - snapshot: feat - mobile pull-to-dismiss, desktop edit scroll, search clear, auto story i18n

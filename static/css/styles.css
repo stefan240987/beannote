@@ -437,6 +437,9 @@ body.modal-open { overflow: hidden; }
   pointer-events: auto;
   margin: 0.75rem 0.75rem 0 0;
 }
+#bean-modal .modal-close-bar button {
+  display: none;
+}
 .modal-drag-handle {
   position: absolute;
   left: 50%;
@@ -840,6 +843,7 @@ body.modal-open .tabbar {
   .journal-modal { align-items: center; }
   .journal-modal-sheet { margin-bottom: 0; }
   .modal-drag-handle { display: none; }
+  #bean-modal .modal-close-bar button { display: grid; }
 }
 #bean-modal.rating-focus .modal-cover {
   min-height: 6.5rem;
