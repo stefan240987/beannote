@@ -452,8 +452,22 @@ body.modal-open { overflow: hidden; }
   pointer-events: none;
 }
 [data-modal-sheet] {
-  overscroll-behavior: contain;
-  touch-action: pan-y;
+  overscroll-behavior: none;
+}
+@media (max-width: 1023px) {
+  #bean-modal > [data-modal-sheet] {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #bean-modal [data-modal-scroll] {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: none;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 .bean-modal-grid {
   display: flex;
@@ -1052,6 +1066,7 @@ button.gear-badge-locked {
 }
 
 @media (min-width: 1024px) {
+  #bean-modal [data-modal-scroll] { display: contents; }
   #app,
   #app.is-admin {
     max-width: none;

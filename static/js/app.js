@@ -2077,11 +2077,12 @@ function beanModal(profile) {
           ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
         </div>`;
   return `<div id="bean-modal" data-close-modal class="modal-overlay fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
-    <article class="modal-card bean-modal-content bean-modal-container relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
+    <article class="modal-card bean-modal-content bean-modal-container relative max-h-[92dvh] w-full max-w-lg rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
       <div class="modal-close-bar">
         <span class="modal-drag-handle" aria-hidden="true"></span>
         <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
+      <div class="bean-modal-scroll" data-modal-scroll>
       <div class="bean-modal-grid">
         <div class="bean-modal-col-left">
           <div class="modal-cover bean-modal-cover rounded-t-3xl sm:rounded-t-3xl">
@@ -2101,6 +2102,7 @@ function beanModal(profile) {
           </section>
           ${rightBody}
         </div>
+      </div>
       </div>
     </article>
   </div>`;
@@ -3293,64 +3295,108 @@ function bindBeanSheetDismiss() {
   const mobile = window.matchMedia("(max-width: 639px)").matches;
   const coarse = window.matchMedia("(pointer: coarse)").matches;
   if (!mobile && !coarse) return;
+  const scroller = sheet.querySelector("[data-modal-scroll]") || sheet;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let startY = 0;
   let startX = 0;
-  let pulling = false;
+  let tracking = false;
   let dragging = false;
+  let offset = 0;
+  let frame = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let velocity = 0;
   const atPullOrigin = (target) => {
-    if (target && target.closest && target.closest("input, textarea, select")) return false;
+    if (target && target.closest && target.closest("input, textarea, select, .leaflet-container")) return false;
     let node = target;
     while (node && node !== sheet) {
       if (node.scrollHeight > node.clientHeight + 4 && node.scrollTop > 0) return false;
       node = node.parentElement;
     }
-    return sheet.scrollTop <= 0;
+    return scroller.scrollTop <= 0;
+  };
+  const paint = () => {
+    frame = 0;
+    sheet.style.transform = offset > 0 ? `translate3d(0, ${offset}px, 0)` : "";
+  };
+  const setOffset = (y) => {
+    offset = y;
+    if (reduce || frame) return;
+    frame = requestAnimationFrame(paint);
   };
   const reset = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    const y = offset;
+    tracking = false;
     dragging = false;
-    pulling = false;
-    if (reduce) return;
-    sheet.style.transition = "transform 0.2s ease";
+    offset = 0;
+    velocity = 0;
+    sheet.style.willChange = "";
+    if (reduce || y <= 0) {
+      sheet.style.transform = "";
+      return;
+    }
+    sheet.style.transition = "none";
+    sheet.style.transform = `translate3d(0, ${y}px, 0)`;
+    sheet.getBoundingClientRect();
+    sheet.style.transition = "transform 0.22s ease";
     sheet.style.transform = "";
   };
   sheet.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) return;
     const touch = event.touches[0];
-    if (!touch) return;
-    startY = touch.clientY;
+    startY = lastY = touch.clientY;
     startX = touch.clientX;
-    pulling = atPullOrigin(event.target);
+    lastT = event.timeStamp;
+    velocity = 0;
+    offset = 0;
     dragging = false;
+    tracking = atPullOrigin(event.target);
   }, { passive: true });
   sheet.addEventListener("touchmove", (event) => {
-    if (!pulling) return;
+    if (!tracking) return;
     const touch = event.touches[0];
     if (!touch) return;
     const dy = touch.clientY - startY;
     const dx = touch.clientX - startX;
-    if (!dragging && dy < 10) return;
-    if (Math.abs(dx) > dy) {
-      pulling = false;
-      return;
+    if (!dragging) {
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) {
+        tracking = false;
+        return;
+      }
+      dragging = true;
+      if (!reduce) {
+        sheet.style.transition = "none";
+        sheet.style.willChange = "transform";
+      }
     }
-    dragging = true;
-    event.preventDefault();
-    if (!reduce) {
-      sheet.style.transition = "none";
-      sheet.style.transform = `translateY(${Math.max(0, dy)}px)`;
-    }
+    if (event.cancelable) event.preventDefault();
+    const dt = event.timeStamp - lastT;
+    if (dt > 0) velocity = (touch.clientY - lastY) / dt;
+    lastY = touch.clientY;
+    lastT = event.timeStamp;
+    setOffset(Math.max(0, Math.round(dy)));
   }, { passive: false });
   sheet.addEventListener("touchend", (event) => {
     if (!dragging) {
-      pulling = false;
+      tracking = false;
       return;
     }
     const touch = event.changedTouches[0];
-    const dy = touch ? touch.clientY - startY : 0;
-    if (dy > 96) {
+    const dy = touch ? touch.clientY - startY : offset;
+    const flung = dy > 48 && velocity > 0.45;
+    if (dy > 96 || flung) {
       closeBean();
       return;
     }
+    const swallowClick = (clickEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      sheet.removeEventListener("click", swallowClick, true);
+    };
+    sheet.addEventListener("click", swallowClick, true);
+    setTimeout(() => sheet.removeEventListener("click", swallowClick, true), 400);
     reset();
   });
   sheet.addEventListener("touchcancel", reset);
@@ -4061,11 +4107,11 @@ function bindApp() {
   });
   document.querySelectorAll("[data-recipe-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const sheet = $("[data-modal-sheet]");
-      const top = sheet ? sheet.scrollTop : 0;
+      const scroller = $("[data-modal-scroll]");
+      const top = scroller ? scroller.scrollTop : 0;
       state.recipeTab = btn.dataset.recipeTab === "community" ? "community" : "mine";
       render();
-      const next = $("[data-modal-sheet]");
+      const next = $("[data-modal-scroll]");
       if (next) next.scrollTop = top;
     });
   });

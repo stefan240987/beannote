@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.30] - 2026-09-22
+
+- snapshot: fix - make mobile pull-to-dismiss follow the finger
+- The bean sheet was both the scroller and the element being dragged, and the first part of the pull was left to the browser. The sheet now moves on its own layer from the first downward pixel, while the content inside still scrolls.
+
 ## [1.1.29] - 2026-09-22
 
 - snapshot: fix - show the full bean photo on desktop cards
