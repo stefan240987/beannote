@@ -21,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.1.24"
+VERSION = "1.1.25"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -692,6 +692,122 @@ def merge_text_map(
     return merged
 
 
+_DA_STORY_CHAR = re.compile(r"[æøåÆØÅ]")
+_DA_STORY_WORD = re.compile(
+    r"\b(og|ikke|fra|med|denne|dette|høstet|ristet|bønner|bønnen|smagen|kaffen|gården|højde|småbønder)\b",
+    re.I,
+)
+_EN_STORY_WORD = re.compile(
+    r"\b(the|and|with|from|harvested|roasted|beans|flavor|flavour|coffee|farm|smallholders)\b",
+    re.I,
+)
+
+
+def story_texts_equivalent(left: Any, right: Any) -> bool:
+    a = re.sub(r"\s+", " ", str(left or "").strip().lower())
+    b = re.sub(r"\s+", " ", str(right or "").strip().lower())
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.92
+
+
+def detect_story_lang(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return FALLBACK_LANG
+    da_hits = 1 if _DA_STORY_CHAR.search(raw) else 0
+    da_hits += len(_DA_STORY_WORD.findall(raw))
+    en_hits = len(_EN_STORY_WORD.findall(raw))
+    if da_hits >= 2 and da_hits > en_hits:
+        return "da"
+    if en_hits >= 2 and en_hits > da_hits:
+        return "en"
+    if da_hits and not en_hits:
+        return "da"
+    return FALLBACK_LANG
+
+
+def coerce_story_map(value: Any, lang: str | None = None) -> dict[str, str]:
+    parsed = coerce_text_map(value, lang)
+    if len(parsed) != 1:
+        return parsed
+    stored, text = next(iter(parsed.items()))
+    actual = detect_story_lang(text)
+    if actual != stored:
+        return {actual: text}
+    return parsed
+
+
+def story_translation_plan(story: Any) -> dict[str, Any] | None:
+    """Describe how to fill a missing DA/EN story without inventing facts."""
+    filled = {
+        code: text
+        for code, text in coerce_text_map(story).items()
+        if str(text or "").strip()
+    }
+    if not filled:
+        return None
+    source_lang = ""
+    source_text = ""
+    for code, text in filled.items():
+        if detect_story_lang(text) == code:
+            source_lang, source_text = code, text
+            break
+    if not source_text:
+        code, text = max(filled.items(), key=lambda item: len(item[1]))
+        source_lang, source_text = detect_story_lang(text), text
+    if not source_text:
+        return None
+    targets = [code for code in SUPPORTED_LANGUAGES if code != source_lang]
+    if not targets:
+        return None
+    for target in targets:
+        existing = str(filled.get(target) or "").strip()
+        if not existing:
+            return {
+                "source_lang": source_lang,
+                "target_lang": target,
+                "source_text": source_text,
+                "overwrite_target": False,
+            }
+        if story_texts_equivalent(existing, source_text):
+            return {
+                "source_lang": source_lang,
+                "target_lang": target,
+                "source_text": source_text,
+                "overwrite_target": True,
+            }
+    return None
+
+
+def apply_story_translation_result(
+    existing: Any,
+    plan: dict[str, Any],
+    translated: str,
+) -> dict[str, str]:
+    text = str(translated or "").strip()
+    if not text or not plan:
+        return coerce_story_map(existing)
+    out: dict[str, str] = {}
+    source_lang = str(plan.get("source_lang") or "")
+    target_lang = str(plan.get("target_lang") or "")
+    source_text = str(plan.get("source_text") or "").strip()
+    if source_lang and source_text:
+        out[source_lang] = source_text
+    if target_lang:
+        out[target_lang] = text
+    for code, value in coerce_text_map(existing).items():
+        clean = str(value or "").strip()
+        if not clean or code in out:
+            continue
+        if story_texts_equivalent(clean, source_text):
+            continue
+        out[code] = clean
+    return {code: out[code] for code in out if str(out.get(code) or "").strip()}
+
+
 def merge_list_map(existing: Any, incoming: Any, lang: str | None = None) -> dict[str, list[str]]:
     current = coerce_list_map(existing, lang)
     extra = coerce_list_map(incoming, lang)
@@ -1125,7 +1241,7 @@ def _migrate_localized_json(conn: sqlite3.Connection) -> None:
         """
     ).fetchall()
     for row in rows:
-        story_map = coerce_text_map(row["story"])
+        story_map = coerce_story_map(row["story"])
         flavor_map = coerce_list_map(row["flavor_tags"])
         brew_map = coerce_brew_map(
             row["brew_recommendation"],
@@ -1263,6 +1379,41 @@ def update_bean_story(bean_id: int, story: Any, lang: str | None = None) -> None
             "UPDATE beans SET story = ? WHERE id = ?",
             (_dump_lang_map(merged), bean_id),
         )
+
+
+def replace_bean_story_map(bean_id: int, story_map: dict[str, str]) -> None:
+    cleaned = {
+        str(code).lower().strip(): str(text or "").strip()
+        for code, text in (story_map or {}).items()
+        if str(text or "").strip()
+    }
+    with connect() as conn:
+        conn.execute(
+            "UPDATE beans SET story = ? WHERE id = ?",
+            (_dump_lang_map(cleaned), bean_id),
+        )
+
+
+def list_beans_needing_story_translation(limit: int = 8) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    with connect() as conn:
+        rows = conn.execute("SELECT id, name, roaster, story FROM beans ORDER BY id").fetchall()
+    for row in rows:
+        plan = story_translation_plan(row["story"])
+        if not plan:
+            continue
+        out.append(
+            {
+                "id": int(row["id"]),
+                "name": row["name"],
+                "roaster": row["roaster"],
+                "story": coerce_text_map(row["story"]),
+                "plan": plan,
+            }
+        )
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
 
 
 ORIGIN_COORDS: dict[str, tuple[float, float, str]] = {
@@ -1626,7 +1777,7 @@ def _row_to_bean(row: sqlite3.Row | None, is_favorite: bool = False) -> dict[str
     flavor_map = coerce_list_map(data.get("flavor_tags"))
     data["flavor_tags"] = flavor_map
     data["suitable_for"] = _parse_json_list(data.get("suitable_for"))
-    story_map = coerce_text_map(data.get("story"))
+    story_map = coerce_story_map(data.get("story"))
     data["story"] = story_map
     brew_map = coerce_brew_map(
         data.get("brew_recommendation"),

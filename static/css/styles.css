@@ -134,6 +134,12 @@ body { padding-bottom: env(safe-area-inset-bottom); }
   padding: 0.28rem 0.75rem;
   background: #F5EFE6;
 }
+.explore-search-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .explore-from-link,
 .explore-search-row [data-open-from-url] {
   flex: 1 1 100%;
@@ -148,8 +154,25 @@ body { padding-bottom: env(safe-area-inset-bottom); }
   border-radius: 0.65rem;
   border: 1px solid rgba(60, 42, 33, 0.1);
   background: #FFFDF9;
-  padding: 0 0.75rem;
+  padding: 0 2.2rem 0 0.75rem;
   color: #3c2a21;
+}
+.explore-search-clear {
+  position: absolute;
+  right: 0.15rem;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #8c7a6b;
+  font-size: 0.85rem;
+  line-height: 1;
 }
 .explore-search:focus,
 .explore-sort:focus {
@@ -413,6 +436,21 @@ body.modal-open { overflow: hidden; }
 .modal-close-bar button {
   pointer-events: auto;
   margin: 0.75rem 0.75rem 0 0;
+}
+.modal-drag-handle {
+  position: absolute;
+  left: 50%;
+  top: 0.5rem;
+  width: 2.55rem;
+  height: 0.3rem;
+  margin-left: -1.275rem;
+  border-radius: 999px;
+  background: rgba(60, 42, 33, 0.22);
+  pointer-events: none;
+}
+[data-modal-sheet] {
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 .bean-modal-grid {
   display: flex;
@@ -801,6 +839,7 @@ body.modal-open .tabbar {
 @media (min-width: 640px) {
   .journal-modal { align-items: center; }
   .journal-modal-sheet { margin-bottom: 0; }
+  .modal-drag-handle { display: none; }
 }
 #bean-modal.rating-focus .modal-cover {
   min-height: 6.5rem;
@@ -1026,6 +1065,8 @@ button.gear-badge-locked {
     margin-inline: 0;
     padding: 24px 24px 0;
     background: var(--bg-color);
+    box-sizing: border-box;
+    align-self: stretch;
   }
   .app-chrome:not(:has(.explore-toolbar)) {
     display: none;
@@ -1190,6 +1231,11 @@ button.gear-badge-locked {
     width: 100%;
     max-width: none;
   }
+  .explore-search-wrap {
+    flex: 1 1 0%;
+    width: 100%;
+    min-width: 0;
+  }
   .explore-search,
   .explore-sort {
     min-height: 2.85rem;
@@ -1200,7 +1246,7 @@ button.gear-badge-locked {
   .explore-search {
     flex: 1 1 auto;
     min-width: 0;
-    width: auto;
+    width: 100%;
     max-width: none;
   }
   .explore-from-link,
@@ -1497,6 +1543,25 @@ button.gear-badge-locked {
   #bean-modal:has(#scan-edit) .bean-modal-col-right,
   #bean-modal:has(#rate-form) .bean-modal-col-right {
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-body {
+    flex: 0 0 auto;
+    overflow: visible;
+    min-height: 0;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-recipes {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  #bean-modal:has(#scan-edit) #save-masterdata {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: #faf6f0;
+    padding-top: 0.55rem;
+    padding-bottom: 0.35rem;
   }
 }
 

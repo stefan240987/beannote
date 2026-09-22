@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.25] - 2026-09-22
+
+- snapshot: feat - mobile pull-to-dismiss, desktop edit scroll, search clear, auto story i18n
+- Bean detail on phones closes when you pull the sheet down from the top. Desktop Explore search spans the content pane and has a clear button. Edit details scrolls so Save stays reachable. Existing Unraid stories are translated in the background on boot (missing DA/EN only; unique copy is never overwritten).
+
 ## [1.1.24] - 2026-08-30
 
 - snapshot: fix - keep the desktop sidebar support card pinned and bust stale PWA caches

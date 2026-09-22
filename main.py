@@ -185,8 +185,10 @@ def _startup() -> None:
     load_local_env()
     init_db()
     from worker import start_embedded_worker
+    from services.story_i18n import start_story_backfill
 
     start_embedded_worker()
+    start_story_backfill()
     if ENVIRONMENT == "local":
         _print_lan_banner()
 

@@ -255,6 +255,14 @@ def process_enrich_job(payload: dict[str, Any], user_id: int) -> dict[str, Any]:
     if isinstance(result, dict):
         result = dict(result)
         result["story"] = clean_story_field(result.get("story"))
+        try:
+            from services.story_i18n import complete_story_map
+
+            filled = complete_story_map(result.get("story"), lang=lang)
+            if filled:
+                result["story"] = filled
+        except Exception:
+            pass
         result["official_notes"] = clean_story_text(result.get("official_notes"))
         result["roaster_notes"] = clean_story_text(result.get("roaster_notes"))
     updated = apply_bean_enrichment(bean_id, result, lang=lang)

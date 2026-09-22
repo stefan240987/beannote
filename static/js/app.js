@@ -1537,7 +1537,10 @@ function exploreToolbar() {
   const fromLink = state.tab === "explore" ? createFromLinkButton("explore-from-link") : "";
   return `<div class="explore-toolbar">
     <div class="explore-search-row">
-      <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+      <div class="explore-search-wrap">
+        <input id="search" value="${esc(state.search)}" class="explore-search" data-i18n-placeholder="search" placeholder="${esc(t("search"))}">
+        ${state.search ? `<button type="button" class="explore-search-clear" data-clear-search data-i18n-aria="clear_search" aria-label="${esc(t("clear_search"))}">✕</button>` : ""}
+      </div>
       ${fromLink}
       ${exploreSortSelect()}
     </div>
@@ -2076,6 +2079,7 @@ function beanModal(profile) {
   return `<div id="bean-modal" data-close-modal class="modal-overlay fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
     <article class="modal-card bean-modal-content bean-modal-container relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
       <div class="modal-close-bar">
+        <span class="modal-drag-handle" aria-hidden="true"></span>
         <button type="button" data-close-modal class="grid h-10 w-10 place-items-center rounded-full bg-cream/95 text-lg font-semibold shadow" data-i18n-aria="close_detail" aria-label="${esc(t("close_detail"))}">✕</button>
       </div>
       <div class="bean-modal-grid">
@@ -3283,6 +3287,75 @@ function closeBean() {
   render();
 }
 
+function bindBeanSheetDismiss() {
+  const sheet = $("[data-modal-sheet]");
+  if (!sheet) return;
+  const mobile = window.matchMedia("(max-width: 639px)").matches;
+  const coarse = window.matchMedia("(pointer: coarse)").matches;
+  if (!mobile && !coarse) return;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let startY = 0;
+  let startX = 0;
+  let pulling = false;
+  let dragging = false;
+  const atPullOrigin = (target) => {
+    if (target && target.closest && target.closest("input, textarea, select")) return false;
+    let node = target;
+    while (node && node !== sheet) {
+      if (node.scrollHeight > node.clientHeight + 4 && node.scrollTop > 0) return false;
+      node = node.parentElement;
+    }
+    return sheet.scrollTop <= 0;
+  };
+  const reset = () => {
+    dragging = false;
+    pulling = false;
+    if (reduce) return;
+    sheet.style.transition = "transform 0.2s ease";
+    sheet.style.transform = "";
+  };
+  sheet.addEventListener("touchstart", (event) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    startY = touch.clientY;
+    startX = touch.clientX;
+    pulling = atPullOrigin(event.target);
+    dragging = false;
+  }, { passive: true });
+  sheet.addEventListener("touchmove", (event) => {
+    if (!pulling) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const dy = touch.clientY - startY;
+    const dx = touch.clientX - startX;
+    if (!dragging && dy < 10) return;
+    if (Math.abs(dx) > dy) {
+      pulling = false;
+      return;
+    }
+    dragging = true;
+    event.preventDefault();
+    if (!reduce) {
+      sheet.style.transition = "none";
+      sheet.style.transform = `translateY(${Math.max(0, dy)}px)`;
+    }
+  }, { passive: false });
+  sheet.addEventListener("touchend", (event) => {
+    if (!dragging) {
+      pulling = false;
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const dy = touch ? touch.clientY - startY : 0;
+    if (dy > 96) {
+      closeBean();
+      return;
+    }
+    reset();
+  });
+  sheet.addEventListener("touchcancel", reset);
+}
+
 function beanPayload(source) {
   return {
     name: source.name,
@@ -3613,6 +3686,23 @@ function bindApp() {
     clearTimeout(state.searchTimer);
     await runSearch();
   });
+  $("#search")?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Escape" || !state.search) return;
+    event.preventDefault();
+    state.search = "";
+    event.target.value = "";
+    clearTimeout(state.searchTimer);
+    await runSearch();
+  });
+  $("[data-clear-search]")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    state.search = "";
+    const box = $("#search");
+    if (box) box.value = "";
+    clearTimeout(state.searchTimer);
+    await runSearch();
+    requestAnimationFrame(() => $("#search")?.focus());
+  });
   document.querySelectorAll("[data-filter]").forEach((btn) => btn.addEventListener("click", async () => {
     state.beanFilter = btn.dataset.filter;
     state.selectedId = null;
@@ -3684,6 +3774,7 @@ function bindApp() {
     }
   }));
   $("[data-modal-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  bindBeanSheetDismiss();
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", (event) => {
       if (event.currentTarget === event.target) closeBean();
