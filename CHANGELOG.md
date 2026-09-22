@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.31] - 2026-09-22
+
+- snapshot: feat - zoom the bean photo and glide the sheet closed
+- A tap on the bag photo opens a viewer with pinch, double-tap, and wheel zoom. Pulling the bean sheet down fades the page in behind it and finishes the slide before the list is shown again.
+
 ## [1.1.30] - 2026-09-22
 
 - snapshot: fix - make mobile pull-to-dismiss follow the finger

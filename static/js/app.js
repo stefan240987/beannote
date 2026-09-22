@@ -2026,10 +2026,9 @@ function beanModal(profile) {
   const bean = profile.bean;
   const rating = state.rateOpen && !isGuest();
   const photo = photoImg(bean.image_url, bean.snapshot_url, "modal-cover-img", ' id="modalCoverImg"');
-  const coverInner = photo || bagFallback(rating ? "h-28" : "h-56");
-  const cover = isAdmin()
-    ? `<button type="button" class="modal-cover-photo-btn" data-replace-bean-photo="${bean.id}" data-i18n-aria="change_bag_photo" aria-label="${esc(t("change_bag_photo"))}">${coverInner}</button>`
-    : coverInner;
+  const cover = photo
+    ? `<button type="button" class="modal-cover-zoom" data-zoom-photo data-i18n-aria="zoom_photo" aria-label="${esc(t("zoom_photo"))}">${photo}</button>`
+    : bagFallback(rating ? "h-28" : "h-56");
   const changePhoto = isAdmin()
     ? `<div class="modal-cover-actions">
         <button type="button" class="modal-cover-change" data-replace-bean-photo="${bean.id}" data-i18n="change_bag_photo">📷 ${esc(t("change_bag_photo"))}</button>
@@ -3280,13 +3279,249 @@ async function resetExplore() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function closeBean() {
+function closePhotoZoom(immediate) {
+  const root = document.getElementById("photo-zoom");
+  if (!root) return;
+  const opener = document.querySelector("[data-zoom-photo]");
+  const restore = () => {
+    if (!immediate && opener?.isConnected) opener.focus({ preventScroll: true });
+  };
+  if (immediate || root.dataset.closing === "1") {
+    root.remove();
+    restore();
+    return;
+  }
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    root.remove();
+    restore();
+    return;
+  }
+  root.dataset.closing = "1";
+  root.style.transition = "opacity 0.2s ease";
+  root.style.opacity = "0";
+  window.setTimeout(() => {
+    root.remove();
+    restore();
+  }, 210);
+}
+
+function openPhotoZoom(src) {
+  if (!src) return;
+  closePhotoZoom(true);
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const root = document.createElement("div");
+  root.id = "photo-zoom";
+  root.className = "photo-zoom";
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-label", t("zoom_photo"));
+  root.innerHTML = `<button type="button" class="photo-zoom-close" data-i18n-aria="close_zoom" aria-label="${esc(t("close_zoom"))}">✕</button>
+    <div class="photo-zoom-stage" data-zoom-stage>
+      <img src="${esc(src)}" alt="" class="photo-zoom-img" draggable="false">
+    </div>`;
+  document.body.appendChild(root);
+  const stage = root.querySelector("[data-zoom-stage]");
+  const img = root.querySelector(".photo-zoom-img");
+  const closer = root.querySelector(".photo-zoom-close");
+  let scale = 1;
+  let tx = 0;
+  let ty = 0;
+  const pointers = new Map();
+  let pinch = null;
+  let pan = null;
+  let moved = false;
+  let lastTap = 0;
+  let tapTimer = 0;
+  const apply = (animate) => {
+    img.classList.toggle("is-anim", !!animate && !reduce);
+    img.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+  };
+  const clamp = () => {
+    scale = Math.min(4, Math.max(1, scale));
+    if (scale <= 1.001) {
+      scale = 1;
+      tx = 0;
+      ty = 0;
+      return;
+    }
+    const maxX = Math.max(0, (img.offsetWidth * scale - stage.clientWidth) / 2);
+    const maxY = Math.max(0, (img.offsetHeight * scale - stage.clientHeight) / 2);
+    tx = Math.min(maxX, Math.max(-maxX, tx));
+    ty = Math.min(maxY, Math.max(-maxY, ty));
+  };
+  const zoomToward = (next, clientX, clientY, animate) => {
+    if (!root.isConnected) return;
+    next = Math.min(4, Math.max(1, next));
+    const rect = stage.getBoundingClientRect();
+    const cx = clientX - (rect.left + rect.width / 2);
+    const cy = clientY - (rect.top + rect.height / 2);
+    const ratio = scale > 0 ? next / scale : 1;
+    tx = cx - (cx - tx) * ratio;
+    ty = cy - (cy - ty) * ratio;
+    scale = next;
+    clamp();
+    apply(animate);
+  };
+  const onDown = (event) => {
+    if (event.target.closest(".photo-zoom-close")) return;
+    if (event.cancelable) event.preventDefault();
+    try { stage.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    moved = false;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale };
+      pan = null;
+      return;
+    }
+    pan = scale > 1
+      ? { x: event.clientX, y: event.clientY, tx, ty }
+      : { x: event.clientX, y: event.clientY, tx: 0, ty: 0, dismiss: true };
+  };
+  const onMove = (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size >= 2 && pinch) {
+      const [a, b] = [...pointers.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      zoomToward(pinch.scale * (dist / pinch.dist), (a.x + b.x) / 2, (a.y + b.y) / 2, false);
+      moved = true;
+      return;
+    }
+    if (!pan) return;
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    if (Math.hypot(dx, dy) > 8) moved = true;
+    if (pan.dismiss) {
+      const drop = Math.max(0, dy);
+      root.style.backgroundColor = `rgba(60, 42, 33, ${Math.max(0.15, 0.92 - drop / 420)})`;
+      img.classList.remove("is-anim");
+      img.style.transform = `translate3d(0, ${drop}px, 0) scale(1)`;
+      return;
+    }
+    tx = pan.tx + dx;
+    ty = pan.ty + dy;
+    clamp();
+    apply(false);
+  };
+  const onUp = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pan?.dismiss && pointers.size === 0) {
+      const dx = event.clientX - pan.x;
+      const dy = event.clientY - pan.y;
+      pan = null;
+      if (dy > 90 && dy > Math.abs(dx)) {
+        img.classList.add("is-anim");
+        img.style.transform = `translate3d(0, ${Math.max(dy, 160)}px, 0) scale(1)`;
+        closePhotoZoom();
+        return;
+      }
+      root.style.backgroundColor = "rgba(60, 42, 33, 0.92)";
+      apply(true);
+    } else if (pointers.size === 1) {
+      const pos = [...pointers.values()][0];
+      pan = scale > 1
+        ? { x: pos.x, y: pos.y, tx, ty }
+        : { x: pos.x, y: pos.y, tx: 0, ty: 0, dismiss: true };
+    } else {
+      pan = null;
+    }
+    if (moved || pointers.size) return;
+    const now = event.timeStamp || performance.now();
+    if (now - lastTap < 280) {
+      window.clearTimeout(tapTimer);
+      lastTap = 0;
+      zoomToward(scale > 1.05 ? 1 : 2.5, event.clientX, event.clientY, true);
+      return;
+    }
+    lastTap = now;
+    const target = event.target;
+    tapTimer = window.setTimeout(() => {
+      if (!root.isConnected || root.dataset.closing === "1") return;
+      if (scale <= 1.01 && target !== img) closePhotoZoom();
+    }, 280);
+  };
+  stage.addEventListener("pointerdown", onDown);
+  stage.addEventListener("pointermove", onMove);
+  stage.addEventListener("pointerup", onUp);
+  stage.addEventListener("pointercancel", onUp);
+  stage.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    zoomToward(scale * (event.deltaY < 0 ? 1.12 : 0.89), event.clientX, event.clientY, false);
+  }, { passive: false });
+  img.addEventListener("load", () => {
+    clamp();
+    apply(false);
+  });
+  closer.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closePhotoZoom();
+  });
+  closer.focus({ preventScroll: true });
+}
+
+let beanDismissVelocity = 0;
+
+function sheetTranslateY(sheet) {
+  const raw = getComputedStyle(sheet).transform;
+  if (!raw || raw === "none") return 0;
+  try {
+    return new DOMMatrix(raw).m42 || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function finishCloseBean() {
+  closePhotoZoom(true);
   if (!state.profile && state.selectedId == null) return;
   state.selectedId = null;
   state.profile = null;
   state.editBean = false;
   state.rateOpen = false;
   render();
+}
+
+function closeBean() {
+  if (!state.profile && state.selectedId == null) return;
+  const overlay = document.getElementById("bean-modal");
+  const sheet = overlay?.querySelector("[data-modal-sheet]");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const velocity = beanDismissVelocity;
+  beanDismissVelocity = 0;
+  if (!overlay || !sheet || reduce || overlay.dataset.closing === "1") {
+    if (overlay?.dataset.closing === "1") return;
+    finishCloseBean();
+    return;
+  }
+  overlay.dataset.closing = "1";
+  const currentY = sheetTranslateY(sheet);
+  const layoutTop = sheet.getBoundingClientRect().top - currentY;
+  const endY = Math.max(currentY + 24, window.innerHeight - layoutTop + 28);
+  const remaining = Math.max(1, endY - currentY);
+  const duration = Math.round(Math.min(300, Math.max(180, remaining / Math.max(velocity, 0.85))));
+  sheet.style.willChange = "transform";
+  sheet.style.transition = `transform ${duration}ms cubic-bezier(0.32, 0.72, 0, 1)`;
+  overlay.style.transition = `background-color ${duration}ms linear`;
+  sheet.getBoundingClientRect();
+  sheet.style.transform = `translate3d(0, ${endY}px, 0)`;
+  overlay.style.backgroundColor = "rgba(60, 42, 33, 0)";
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    sheet.removeEventListener("transitionend", onEnd);
+    finishCloseBean();
+  };
+  const onEnd = (event) => {
+    if (event.target !== sheet || event.propertyName !== "transform") return;
+    finish();
+  };
+  sheet.addEventListener("transitionend", onEnd);
+  window.setTimeout(finish, duration + 60);
 }
 
 function bindBeanSheetDismiss() {
@@ -3306,7 +3541,9 @@ function bindBeanSheetDismiss() {
   let lastY = 0;
   let lastT = 0;
   let velocity = 0;
+  const overlay = sheet.closest("#bean-modal");
   const atPullOrigin = (target) => {
+    if (overlay?.dataset.closing === "1") return false;
     if (target && target.closest && target.closest("input, textarea, select, .leaflet-container")) return false;
     let node = target;
     while (node && node !== sheet) {
@@ -3317,7 +3554,11 @@ function bindBeanSheetDismiss() {
   };
   const paint = () => {
     frame = 0;
+    if (overlay?.dataset.closing === "1") return;
     sheet.style.transform = offset > 0 ? `translate3d(0, ${offset}px, 0)` : "";
+    if (!overlay) return;
+    const fade = Math.min(1, offset / Math.max(window.innerHeight * 0.55, 220));
+    overlay.style.backgroundColor = `rgba(60, 42, 33, ${(0.5 * (1 - fade)).toFixed(3)})`;
   };
   const setOffset = (y) => {
     offset = y;
@@ -3325,6 +3566,7 @@ function bindBeanSheetDismiss() {
     frame = requestAnimationFrame(paint);
   };
   const reset = () => {
+    if (overlay?.dataset.closing === "1") return;
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
     const y = offset;
@@ -3335,6 +3577,7 @@ function bindBeanSheetDismiss() {
     sheet.style.willChange = "";
     if (reduce || y <= 0) {
       sheet.style.transform = "";
+      if (overlay) overlay.style.backgroundColor = "";
       return;
     }
     sheet.style.transition = "none";
@@ -3342,8 +3585,13 @@ function bindBeanSheetDismiss() {
     sheet.getBoundingClientRect();
     sheet.style.transition = "transform 0.22s ease";
     sheet.style.transform = "";
+    if (overlay) {
+      overlay.style.transition = "background-color 0.22s ease";
+      overlay.style.backgroundColor = "rgba(60, 42, 33, 0.5)";
+    }
   };
   sheet.addEventListener("touchstart", (event) => {
+    if (overlay?.dataset.closing === "1") return;
     if (event.touches.length !== 1) return;
     const touch = event.touches[0];
     startY = lastY = touch.clientY;
@@ -3369,6 +3617,7 @@ function bindBeanSheetDismiss() {
       if (!reduce) {
         sheet.style.transition = "none";
         sheet.style.willChange = "transform";
+        if (overlay) overlay.style.transition = "none";
       }
     }
     if (event.cancelable) event.preventDefault();
@@ -3387,6 +3636,16 @@ function bindBeanSheetDismiss() {
     const dy = touch ? touch.clientY - startY : offset;
     const flung = dy > 48 && velocity > 0.45;
     if (dy > 96 || flung) {
+      const swallowClick = (clickEvent) => {
+        clickEvent.preventDefault();
+        clickEvent.stopPropagation();
+        sheet.removeEventListener("click", swallowClick, true);
+      };
+      sheet.addEventListener("click", swallowClick, true);
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      paint();
+      beanDismissVelocity = Math.max(0, velocity);
       closeBean();
       return;
     }
@@ -3820,6 +4079,15 @@ function bindApp() {
     }
   }));
   $("[data-modal-sheet]")?.addEventListener("click", (event) => event.stopPropagation());
+  document.querySelectorAll("[data-zoom-photo]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const img = btn.querySelector("img");
+      const src = img?.currentSrc || img?.src;
+      if (src) openPhotoZoom(src);
+    });
+  });
   bindBeanSheetDismiss();
   document.querySelectorAll("[data-close-modal]").forEach((el) => {
     el.addEventListener("click", (event) => {
@@ -4585,6 +4853,10 @@ function bindBeanPhotoInput() {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (document.getElementById("photo-zoom")) {
+    closePhotoZoom();
+    return;
+  }
   if (state.authPrompt) {
     state.authPrompt = false;
     render();
