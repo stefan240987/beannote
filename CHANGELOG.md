@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.32] - 2026-09-22
+
+- snapshot: fix - keep Save masterdata visible in the desktop edit sheet
+- Edit details on a wide screen pins the save button to the bottom of the right column, so the form can scroll without the button disappearing under the sheet.
+
 ## [1.1.31] - 2026-09-22
 
 - snapshot: feat - zoom the bean photo and glide the sheet closed

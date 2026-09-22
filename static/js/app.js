@@ -2055,6 +2055,9 @@ function beanModal(profile) {
     suitableFor = [];
   }
   const suitableLine = suitabilityLine(suitableFor);
+  const saveBar = isAdmin() && state.editBean && !rating
+    ? `<div class="bean-modal-savebar"><button type="button" id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button></div>`
+    : "";
   const rateBtn = rating ? "" : `<button type="button" id="open-rate-form" class="flex min-h-12 w-full items-center justify-center rounded-xl bg-terracotta font-semibold text-cream" data-i18n="rate_this_bean">${t("rate_this_bean")}</button>`;
   const leftCta = rating ? "" : `<div class="bean-modal-cta">
           ${rateBtn}
@@ -2073,7 +2076,6 @@ function beanModal(profile) {
           ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
           ${editor}
           ${isAdmin() && state.editBean ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
-          ${isAdmin() && state.editBean ? `<button id="save-masterdata" class="min-h-12 w-full rounded-xl bg-espresso font-semibold text-cream">${t("save_masterdata")}</button>` : ""}
         </div>`;
   return `<div id="bean-modal" data-close-modal class="modal-overlay fixed inset-0 z-40 flex items-end justify-center bg-espresso/50 px-0 sm:items-center sm:px-4${rating ? " rating-focus" : ""}">
     <article class="modal-card bean-modal-content bean-modal-container relative max-h-[92dvh] w-full max-w-lg rounded-t-3xl bg-cream shadow-2xl sm:rounded-3xl" data-modal-sheet>
@@ -2100,6 +2102,7 @@ function beanModal(profile) {
             ${rating ? rateForm() : ""}
           </section>
           ${rightBody}
+          ${saveBar}
         </div>
       </div>
       </div>

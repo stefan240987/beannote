@@ -508,6 +508,13 @@ body.modal-open { overflow: hidden; }
   padding-top: 0.75rem;
   padding-bottom: 2rem;
 }
+.bean-modal-savebar {
+  order: 6;
+  padding: 0.25rem 1rem 1.25rem;
+}
+#bean-modal:has(.bean-modal-savebar) .bean-modal-body {
+  padding-bottom: 0.75rem;
+}
 .gear-picker-photo,
 .gear-saved-photo {
   background: var(--bg-card-subtle);
@@ -1516,7 +1523,8 @@ button.gear-badge-locked {
   #bean-modal .bean-modal-header,
   #bean-modal .bean-modal-cta,
   #bean-modal .bean-modal-suitable,
-  #bean-modal .bean-modal-body {
+  #bean-modal .bean-modal-body,
+  #bean-modal .bean-modal-savebar {
     order: 0;
     padding: 0;
     margin: 0;
@@ -1628,28 +1636,48 @@ button.gear-badge-locked {
   }
 
   #bean-modal.rating-focus .bean-modal-col-right,
-  #bean-modal:has(#scan-edit) .bean-modal-col-right,
   #bean-modal:has(#rate-form) .bean-modal-col-right {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
-  #bean-modal:has(#scan-edit) .bean-modal-body {
-    flex: 0 0 auto;
-    overflow: visible;
+  #bean-modal:has(#scan-edit) > article {
+    height: 90vh;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-grid {
+    align-items: stretch;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-col-left,
+  #bean-modal:has(#scan-edit) .bean-modal-col-right {
     min-height: 0;
+    max-height: none;
+    overflow: hidden;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-col-left {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-header,
+  #bean-modal:has(#scan-edit) .bean-modal-savebar {
+    flex: 0 0 auto;
+  }
+  #bean-modal:has(#scan-edit) .bean-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   #bean-modal:has(#scan-edit) .bean-modal-recipes {
     flex: 0 0 auto;
     overflow: visible;
   }
-  #bean-modal:has(#scan-edit) #save-masterdata {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
+  #bean-modal:has(#scan-edit) .bean-modal-savebar {
+    padding-top: 0.7rem;
     background: #faf6f0;
-    padding-top: 0.55rem;
-    padding-bottom: 0.35rem;
   }
 }
 
