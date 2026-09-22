@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.28] - 2026-09-22
+
+- snapshot: fix - keep each tasting note in one language
+- Link-import flavor pills no longer show the Danish and English wording together. Startup rewrites existing flavor maps, so beans already in the database are split without a manual edit.
+
 ## [1.1.27] - 2026-09-22
 
 - snapshot: feat - translate link imports from any shop language into Danish and English

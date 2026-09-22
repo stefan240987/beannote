@@ -21,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.1.27"
+VERSION = "1.1.28"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -620,19 +620,112 @@ def _clean_brew_obj(obj: dict[str, Any]) -> dict[str, str]:
     return {key: str(obj.get(key) or "").strip() for key in _BREW_KEYS}
 
 
+_DA_NOTE_CHAR = re.compile(r"[æøåÆØÅ]")
+_DA_NOTE_WORD = re.compile(
+    r"\b("
+    r"rosin|rosiner|cremet|fylde|fyldig|sød|sødme|blød|nød|nødder|nøddet|"
+    r"nøddeagtig|bær|syrlig|syre|frugtig|frugt|frugtagtig|chokolade|"
+    r"mælkechokolade|karamel|vanilje|honning|kakao|kakaonibs|mørk|ristet|"
+    r"krop|eftersmag|hasselnød|mandel|jordbær|blåbær|solbær|æble|fersken|"
+    r"blomstret|vinøs|jordagtig|tørret|krydret|grapefrugt|appelsin|citron|"
+    r"brombær|hindbær|kirsebær|abrikos|pære|blomme|valnød|kanel|lakrids|"
+    r"sirup|melasse|smør|fløde|sukker|rørsukker|brunt|stenfrugt|rund|"
+    r"kraftig|afrundet|mundfølelse|silkeblød"
+    r")\b",
+    re.I,
+)
+_EN_NOTE_WORD = re.compile(
+    r"\b("
+    r"raisin|raisins|creamy|body|sweet|sweetness|smooth|nutty|nuts|berry|"
+    r"berries|fruity|fruit|chocolate|caramel|vanilla|honey|cocoa|dark|"
+    r"roasted|hazelnut|almond|strawberry|blueberry|blackcurrant|apple|"
+    r"peach|floral|winey|earthy|dried|spicy|grapefruit|lemon|blackberry|"
+    r"raspberry|cherry|apricot|pear|plum|walnut|cinnamon|licorice|syrup|"
+    r"molasses|butter|cream|sugar|brown|stone|mouthfeel|aftertaste|"
+    r"rounded|powerful|silky"
+    r")\b",
+    re.I,
+)
+
+
+def _flavor_note_lang(tag: str) -> str:
+    """Return da or en when a short tasting note is clearly one of those languages."""
+    text = str(tag or "").strip()
+    if not text or _DA_NOTE_CHAR.search(text):
+        return "da" if text else ""
+    da_hits = len(_DA_NOTE_WORD.findall(text))
+    en_hits = len(_EN_NOTE_WORD.findall(text))
+    if da_hits > en_hits:
+        return "da"
+    if en_hits > da_hits:
+        return "en"
+    return ""
+
+
+def _separate_copied_flavor_notes(raw: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Put each tasting note back in its own language.
+
+    Link import stores da and en side by side. A later flatten copied every
+    unknown note into both lists, so English showed Rosin next to Raisin.
+    Notes that are the same word in both languages stay where they already are.
+    """
+    populated = {
+        str(code).lower().strip(): [str(tag).strip() for tag in tags if str(tag).strip()]
+        for code, tags in raw.items()
+        if tags
+    }
+    if len(populated) < 2:
+        return populated
+    order: list[str] = []
+    seen_all: set[str] = set()
+    for tags in populated.values():
+        for tag in tags:
+            key = tag.lower()
+            if key in seen_all:
+                continue
+            seen_all.add(key)
+            order.append(tag)
+    buckets: dict[str, list[str]] = {code: [] for code in populated}
+    bucket_seen: dict[str, set[str]] = {code: set() for code in populated}
+    for tag in order:
+        home = _flavor_note_lang(tag)
+        if home in buckets:
+            targets = [home]
+        else:
+            targets = [
+                code
+                for code, tags in populated.items()
+                if any(item.lower() == tag.lower() for item in tags)
+            ]
+        for code in targets:
+            key = tag.lower()
+            if key in bucket_seen[code]:
+                continue
+            buckets[code].append(tag)
+            bucket_seen[code].add(key)
+    return {code: tags for code, tags in buckets.items() if tags}
+
+
 def _complete_flavor_map(raw: dict[str, list[str]]) -> dict[str, list[str]]:
     if not raw:
         return {}
     try:
         from ocr import flavor_tags_lang_map
 
-        merged: list[str] = []
-        for tags in raw.values():
-            merged.extend(tags)
-        completed = flavor_tags_lang_map(merged)
+        sourced = {str(code): list(tags) for code, tags in raw.items() if tags}
+        if len(sourced) >= 2:
+            separated = _separate_copied_flavor_notes(sourced)
+            completed = flavor_tags_lang_map(separated)
+            fallback = separated
+        else:
+            merged: list[str] = []
+            for tags in sourced.values():
+                merged.extend(tags)
+            completed = flavor_tags_lang_map(merged)
+            fallback = sourced
         if completed:
-            for code, tags in raw.items():
-                if code not in completed and tags:
+            for code, tags in fallback.items():
+                if code not in completed and tags and code not in SUPPORTED_LANGUAGES:
                     completed[code] = tags
             return completed
     except Exception:

@@ -10,6 +10,7 @@ os.environ.setdefault("ENVIRONMENT", "dev")
 os.environ["RESET_DB_ON_START"] = "false"
 os.environ.setdefault("BEANNOTE_DB_PATH", "/tmp/beannote-from-url-test.db")
 
+from db import _complete_flavor_map, connect, get_bean, init_db, insert_bean
 from ocr import refine_label_fields
 from services.gemini import _from_url_prompt, parse_bean_from_url
 
@@ -102,8 +103,12 @@ class FromUrlLanguageTests(unittest.TestCase):
             self.assertIn(country, draft["origin"])
         self.assertIn("Chokolade", draft["flavor_tags"]["da"])
         self.assertIn("Rosin", draft["flavor_tags"]["da"])
+        self.assertNotIn("Raisin", draft["flavor_tags"]["da"])
+        self.assertNotIn("Creamy body", draft["flavor_tags"]["da"])
         self.assertIn("Chocolate", draft["flavor_tags"]["en"])
         self.assertIn("Raisin", draft["flavor_tags"]["en"])
+        self.assertNotIn("Rosin", draft["flavor_tags"]["en"])
+        self.assertNotIn("Cremet fylde", draft["flavor_tags"]["en"])
 
     def test_echoed_japanese_copy_is_not_stored_as_danish(self):
         echoed = {
@@ -163,6 +168,78 @@ class FromUrlLanguageTests(unittest.TestCase):
         )
         for country in ("Colombia", "Brasilien", "Etiopien", "Guatemala"):
             self.assertIn(country, refined["origin"])
+
+
+class FlavorLanguageRepairTests(unittest.TestCase):
+    def test_clean_bilingual_notes_stay_apart(self):
+        mapped = _complete_flavor_map(
+            {
+                "da": ["Rosin", "Chokolade", "Cremet fylde"],
+                "en": ["Raisin", "Chocolate", "Creamy body"],
+            }
+        )
+        self.assertEqual(mapped["da"], ["Chokolade", "Rosin", "Cremet fylde"])
+        self.assertEqual(mapped["en"], ["Chocolate", "Raisin", "Creamy body"])
+
+    def test_copied_notes_are_split_back(self):
+        mixed = ["Chokolade", "Rosin", "Cremet fylde", "Raisin", "Creamy body", "Chocolate"]
+        mapped = _complete_flavor_map({"da": list(mixed), "en": list(mixed)})
+        self.assertIn("Rosin", mapped["da"])
+        self.assertIn("Cremet fylde", mapped["da"])
+        self.assertNotIn("Raisin", mapped["da"])
+        self.assertNotIn("Creamy body", mapped["da"])
+        self.assertIn("Raisin", mapped["en"])
+        self.assertIn("Creamy body", mapped["en"])
+        self.assertNotIn("Rosin", mapped["en"])
+        self.assertNotIn("Cremet fylde", mapped["en"])
+
+    def test_startup_rewrites_stored_flavor_maps(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        previous = os.environ.get("BEANNOTE_DB_PATH")
+        os.environ["BEANNOTE_DB_PATH"] = str(Path(tmp.name) / "beannote.db")
+        try:
+            init_db()
+            created = insert_bean(
+                "no.17 Strong",
+                "Ogawa Test",
+                flavor_tags={"da": ["Chokolade"], "en": ["Chocolate"]},
+                skip_fuzzy=True,
+            )
+            bean_id = created["bean"]["id"]
+            mixed = {
+                "da": ["Chokolade", "Rosin", "Cremet fylde", "Raisin", "Creamy body"],
+                "en": ["Chocolate", "Rosin", "Cremet fylde", "Raisin", "Creamy body"],
+            }
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE beans SET flavor_tags = ? WHERE id = ?",
+                    (json.dumps(mixed, ensure_ascii=False), bean_id),
+                )
+            init_db()
+            with connect() as conn:
+                stored = json.loads(
+                    conn.execute(
+                        "SELECT flavor_tags FROM beans WHERE id = ?",
+                        (bean_id,),
+                    ).fetchone()["flavor_tags"]
+                )
+            self.assertIn("Rosin", stored["da"])
+            self.assertNotIn("Raisin", stored["da"])
+            self.assertIn("Raisin", stored["en"])
+            self.assertNotIn("Rosin", stored["en"])
+            bean = get_bean(bean_id)
+            self.assertNotIn("Raisin", bean["flavor_tags"]["da"])
+            self.assertNotIn("Rosin", bean["flavor_tags"]["en"])
+        finally:
+            if previous is None:
+                os.environ.pop("BEANNOTE_DB_PATH", None)
+            else:
+                os.environ["BEANNOTE_DB_PATH"] = previous
+            tmp.cleanup()
 
 
 if __name__ == "__main__":
