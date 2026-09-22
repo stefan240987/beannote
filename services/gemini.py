@@ -12,6 +12,7 @@ from db import get_catalog_dir, sanitize_roaster_url
 from image_search import fetch_official_image_bytes, sanitize_image_url
 from ocr import (
     MAX_PRODUCT_PAGE_CHARS,
+    STORY_LANG,
     _gemini_generate_json,
     _with_scan_matches,
     encode_scan_jpeg,
@@ -19,7 +20,7 @@ from ocr import (
     get_gemini_api_key,
     normalize_scan_fields,
 )
-from translations import normalize_lang
+from translations import SUPPORTED_LANGUAGES, normalize_lang
 
 _STATIC_BEAN_PREFIX = "/static/img/beans/"
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.I)
@@ -37,6 +38,24 @@ _IMG_SRC_RE = re.compile(
     re.I,
 )
 _TITLE_RE = re.compile(r"<title[^>]*>([\s\S]*?)</title>", re.I)
+# Scripts outside the active UI languages. A translated field that is still
+# mostly written in one of these was echoed from the shop page.
+_NON_APP_SCRIPT = re.compile(
+    "["
+    "\u0400-\u04FF"
+    "\u0500-\u052F"
+    "\u0590-\u05FF"
+    "\u0600-\u06FF"
+    "\u0900-\u097F"
+    "\u0E00-\u0E7F"
+    "\u1100-\u11FF"
+    "\u3040-\u30FF"
+    "\u31F0-\u31FF"
+    "\u3400-\u9FFF"
+    "\uAC00-\uD7AF"
+    "\uFF66-\uFF9D"
+    "]"
+)
 _TRACKING_QUERY = {
     "utm_source",
     "utm_medium",
@@ -73,30 +92,39 @@ def parse_bean_from_url(url: str, lang: str = "da") -> dict[str, Any]:
     facts = _page_facts(html, page_url)
     candidates = _page_image_candidates(html, page_url, facts)
     raw: dict[str, Any] = {}
-    have_facts = bool((facts.get("name") or "").strip() and (facts.get("roaster") or "").strip())
-    if not have_facts:
-        brief = _page_brief(facts, page_text or html, page_url)
-        try:
-            raw = _gemini_generate_json(
-                get_gemini_api_key(),
-                _from_url_prompt(brief, page_url, candidates, chosen),
-                20_000,
-                tools=None,
-            )
-        except Exception as exc:
-            print(f"from-url gemini skipped: {type(exc).__name__}: {exc}")
-            raw = {}
-        if not isinstance(raw, dict):
-            raw = {}
+    brief = _page_brief(facts, page_text or html, page_url)
+    try:
+        raw = _gemini_generate_json(
+            get_gemini_api_key(),
+            _from_url_prompt(brief, page_url, candidates, chosen),
+            20_000,
+            tools=None,
+        )
+    except Exception as exc:
+        print(f"from-url gemini skipped: {type(exc).__name__}: {exc}")
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
 
-    mapped = _merge_facts(_map_url_fields(raw, page_url, candidates), facts, page_url)
+    mapped = _merge_facts(
+        _map_url_fields(raw, page_url, candidates, chosen),
+        facts,
+        page_url,
+        keep_untranslated=not bool(raw),
+    )
+    mapped = _lock_printed_identity(mapped, facts)
     if not (mapped.get("name") or "").strip() or not (mapped.get("roaster") or "").strip():
         raise ValueError("required")
 
     parsed = normalize_scan_fields(mapped, lang=chosen)
     parsed["story"] = clean_story_field(parsed.get("story"))
-    parsed["official_notes"] = clean_story_text(parsed.get("official_notes"))
-    parsed["roaster_notes"] = clean_story_text(parsed.get("roaster_notes"))
+    active_story = _story_for_lang(parsed.get("story"), chosen)
+    if active_story:
+        parsed["official_notes"] = active_story
+        parsed["roaster_notes"] = active_story
+    else:
+        parsed["official_notes"] = clean_story_text(parsed.get("official_notes"))
+        parsed["roaster_notes"] = clean_story_text(parsed.get("roaster_notes"))
     parsed["scan_source"] = "url"
     parsed["scan_enrichment"] = "url+gemini" if raw else "url+jsonld"
     parsed["roaster_url"] = parsed.get("roaster_url") or page_url
@@ -149,29 +177,42 @@ def _load_product_page(page_url: str) -> tuple[str, str]:
 def _from_url_prompt(page_text: str, page_url: str, images: list[str], lang: str) -> str:
     snippet = (page_text or "")[:MAX_PRODUCT_PAGE_CHARS]
     image_hint = "\n".join(f"- {item}" for item in images[:6]) or "- (none found in HTML)"
+    chosen = normalize_lang(lang)
+    lang_keys = ", ".join(f'"{code}"' for code in SUPPORTED_LANGUAGES)
+    lang_names = " and ".join(STORY_LANG.get(code, code) for code in SUPPORTED_LANGUAGES)
+    active = STORY_LANG.get(chosen, "Danish")
     return (
         "Extract coffee bean product metadata from THIS SHOP PAGE only. "
+        "The page may be written in any language. "
         "No outside knowledge, no other coffees, no invented tasting notes.\n"
         f"Page: {page_url}\n"
         "Return JSON only with these keys:\n"
-        '- "name": coffee bean / product name\n'
-        '- "roaster": roaster / brand name\n'
-        '- "origin": origin country / region. Dedicated key only — never inside description.\n'
+        '- "name": product name exactly as printed. Do not translate it.\n'
+        '- "roaster": brand name exactly as printed. Do not translate it.\n'
+        f'- "origin": origin countries or regions in {active}. '
+        "Dedicated key only — never inside the story.\n"
         '- "altitude": farm altitude / MASL if stated. Dedicated key only.\n'
-        '- "process": processing method (washed, natural, honey, …). Dedicated key only.\n'
-        '- "roast_level": roast degree (Lys, Medium-Lys, Medium, Medium-Mørk, Mørk, or the page wording)\n'
-        '- "brew_ratio": brew ratio only if the page states one (e.g. 1:2, 1:16). Dedicated key only.\n'
-        '- "flavor_notes": array of flavor tags copied from the page\n'
-        '- "suitable_for": array of brew suitability tags (Espresso, Filter, AeroPress, etc.)\n'
+        '- "process": one catalog token if the page states a method, else "". '
+        "Use Vasket, Natural, Honey, Anaerob, Washed, or Anaerobic.\n"
+        '- "roast_level": one catalog token if the page states a roast degree, else "". '
+        "Use Lys, Medium-Lys, Medium, Medium-Mørk, Mørk, Light, Medium-Light, "
+        "Medium-Dark, or Dark.\n"
+        '- "brew_ratio": brew ratio only if the page states one (e.g. 1:2, 1:16).\n'
+        f'- "flavor_notes": object with keys {lang_keys}. Each value is an array of '
+        f"tasting notes translated into that language. Same notes, same order, in {lang_names}. "
+        "Do not leave the shop's original wording in these arrays.\n"
+        f'- "suitable_for": array of brew methods the page actually names '
+        f"(Espresso, Filter, AeroPress), written in {active}.\n"
         '- "image_url": main product photo URL (prefer the bag/packshot)\n'
-        '- "description" / "story": a concise, engaging summary of maximum 2-3 sentences '
-        "(around 30-40 words) focused exclusively on taste profile and roaster story. "
-        "FORBIDDEN in description/story: raw copy-pasted shop copy, product specifications, "
+        f'- "story": object with keys {lang_keys}. Each value is 2–3 sentences '
+        f"(around 30-40 words) in that language on taste and roaster story. "
+        f"Write every key in {lang_names} even when the page is another language. "
+        "Same facts in every language. "
+        "FORBIDDEN in story: the shop's original script, raw copy-paste, product specifications, "
         "weight options (e.g. 500g, 1kg), machine listings, brew-ratio specs, "
         "holdbarhed/shelf life, varianter/variants, or any Produktspecifikationer dump. "
         "Put every technical parameter in its dedicated JSON key instead.\n"
-        f"Write name, origin, description, and flavor notes in {lang} when the page language allows.\n"
-        "If a field is not on the page, use \"\" or [].\n\n"
+        "If a field is not on the page, use \"\" , [] , or an object with empty strings.\n\n"
         f"Candidate product images:\n{image_hint}\n\n"
         "PAGE TEXT:\n"
         f"{snippet}"
@@ -225,6 +266,70 @@ def _clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _is_untranslated(text: str) -> bool:
+    """True when a da/en field is still mostly the shop page's original script."""
+    letters = [ch for ch in str(text or "") if ch.isalpha()]
+    if not letters:
+        return False
+    foreign = sum(1 for ch in letters if _NON_APP_SCRIPT.match(ch))
+    if not foreign:
+        return False
+    ratio = foreign / len(letters)
+    if len(letters) <= 16:
+        return ratio >= 0.5
+    return foreign >= 8 and ratio >= 0.4
+
+
+def _story_for_lang(story: Any, lang: str) -> str:
+    if not isinstance(story, dict):
+        text = clean_story_text(story)
+        return "" if _is_untranslated(text) else text
+    chosen = normalize_lang(lang)
+    for code in (chosen, *SUPPORTED_LANGUAGES):
+        text = clean_story_text(story.get(code))
+        if text and not _is_untranslated(text):
+            return text
+    return ""
+
+
+def _supported_text_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for code in SUPPORTED_LANGUAGES:
+        text = clean_story_text(value.get(code))
+        if text and not _is_untranslated(text):
+            out[code] = text
+    return out
+
+
+def _supported_list_map(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for code in SUPPORTED_LANGUAGES:
+        tags = [tag for tag in _as_string_list(value.get(code)) if tag and not _is_untranslated(tag)]
+        if tags:
+            out[code] = tags
+    return out
+
+
+def _copy_for_lang(value: Any, lang: str) -> str:
+    if isinstance(value, dict):
+        return _story_for_lang(value, lang)
+    text = _clean_text(value)
+    if _is_untranslated(text):
+        return ""
+    return text
+
+
+def _flavor_field(value: Any) -> dict[str, list[str]] | list[str]:
+    mapped = _supported_list_map(value)
+    if mapped:
+        return mapped
+    return [tag for tag in _as_string_list(value) if not _is_untranslated(tag)]
+
+
 def clean_story_text(value: Any) -> str:
     """Strip shop boilerplate and cap a story/description at 350 characters."""
     raw = str(value or "").strip()
@@ -266,11 +371,23 @@ def clean_story_field(value: Any) -> Any:
     return clean_story_text(value)
 
 
-def _map_url_fields(raw: dict[str, Any], page_url: str, candidates: list[str]) -> dict[str, Any]:
+def _map_url_fields(
+    raw: dict[str, Any],
+    page_url: str,
+    candidates: list[str],
+    lang: str = "da",
+) -> dict[str, Any]:
     name = _clean_text(raw.get("name") or raw.get("bean_name"))
-    description = clean_story_text(
-        raw.get("description") or raw.get("official_notes") or raw.get("story")
-    )
+    story_map = _supported_text_map(raw.get("story")) or _supported_text_map(raw.get("description"))
+    description = ""
+    if not story_map:
+        description = clean_story_text(
+            _copy_for_lang(raw.get("description") or raw.get("official_notes") or raw.get("story"), lang)
+        )
+        if _is_untranslated(description):
+            description = ""
+    notes = _story_for_lang(story_map, lang) or description
+    flavors = _flavor_field(raw.get("flavor_notes") or raw.get("flavor_tags"))
     image_url = _first_image_url(
         raw.get("image_url"),
         raw.get("product_image_url"),
@@ -282,16 +399,17 @@ def _map_url_fields(raw: dict[str, Any], page_url: str, candidates: list[str]) -
         "name": name,
         "bean_name": name,
         "roaster": _clean_text(raw.get("roaster")),
-        "origin": _clean_text(raw.get("origin")),
-        "altitude": _clean_text(raw.get("altitude")),
-        "process": _clean_text(raw.get("process")),
-        "roast_level": _clean_text(raw.get("roast_level")),
+        "origin": _copy_for_lang(raw.get("origin"), lang),
+        "altitude": "" if _is_untranslated(_clean_text(raw.get("altitude"))) else _clean_text(raw.get("altitude")),
+        "process": "" if _is_untranslated(_clean_text(raw.get("process"))) else _clean_text(raw.get("process")),
+        "roast_level": "" if _is_untranslated(_clean_text(raw.get("roast_level"))) else _clean_text(raw.get("roast_level")),
         "brew_ratio": _clean_text(raw.get("brew_ratio")),
-        "flavor_notes": _as_string_list(raw.get("flavor_notes") or raw.get("flavor_tags")),
-        "suitable_for": _as_string_list(raw.get("suitable_for")),
-        "official_notes": description,
-        "roaster_notes": description,
-        "story": description,
+        "flavor_notes": flavors,
+        "flavor_tags": flavors if isinstance(flavors, dict) else {},
+        "suitable_for": [tag for tag in _as_string_list(raw.get("suitable_for")) if not _is_untranslated(tag)],
+        "official_notes": notes,
+        "roaster_notes": notes,
+        "story": story_map or description,
         "image_url": image_url,
         "product_image_url": image_url,
         "roaster_url": sanitize_roaster_url(raw.get("roaster_url") or page_url) or page_url,
@@ -299,7 +417,35 @@ def _map_url_fields(raw: dict[str, Any], page_url: str, candidates: list[str]) -
     }
 
 
-def _merge_facts(mapped: dict[str, Any], facts: dict[str, Any], page_url: str) -> dict[str, Any]:
+def _lock_printed_identity(mapped: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:
+    """Keep the shop's product title and brand. Those are the dedupe key."""
+    out = dict(mapped)
+    name = _clean_text(facts.get("name"))
+    roaster = _clean_text(facts.get("roaster"))
+    if name:
+        out["name"] = name
+        out["bean_name"] = name
+    if roaster:
+        out["roaster"] = roaster
+    return out
+
+
+def _page_copy(text: str, *, keep_untranslated: bool) -> str:
+    clean = clean_story_text(text)
+    if not clean:
+        return ""
+    if not keep_untranslated and _is_untranslated(clean):
+        return ""
+    return clean
+
+
+def _merge_facts(
+    mapped: dict[str, Any],
+    facts: dict[str, Any],
+    page_url: str,
+    *,
+    keep_untranslated: bool = True,
+) -> dict[str, Any]:
     out = dict(mapped)
     if not out.get("name"):
         out["name"] = facts.get("name") or ""
@@ -307,24 +453,37 @@ def _merge_facts(mapped: dict[str, Any], facts: dict[str, Any], page_url: str) -
     if not out.get("roaster"):
         out["roaster"] = facts.get("roaster") or ""
     if not out.get("origin"):
-        out["origin"] = facts.get("origin") or ""
+        origin = _clean_text(facts.get("origin"))
+        if origin and (keep_untranslated or not _is_untranslated(origin)):
+            out["origin"] = origin
     if not out.get("roast_level"):
-        out["roast_level"] = facts.get("roast_level") or ""
+        roast = _clean_text(facts.get("roast_level"))
+        if roast and (keep_untranslated or not _is_untranslated(roast)):
+            out["roast_level"] = roast
     if not out.get("flavor_notes"):
-        out["flavor_notes"] = list(facts.get("flavor_notes") or [])
+        flavors = [
+            tag
+            for tag in list(facts.get("flavor_notes") or [])
+            if keep_untranslated or not _is_untranslated(str(tag))
+        ]
+        if flavors:
+            out["flavor_notes"] = flavors
     if not out.get("suitable_for"):
         out["suitable_for"] = list(facts.get("suitable_for") or [])
     if not out.get("process"):
-        out["process"] = facts.get("process") or ""
+        process = _clean_text(facts.get("process"))
+        if process and (keep_untranslated or not _is_untranslated(process)):
+            out["process"] = process
     if not out.get("altitude"):
         out["altitude"] = facts.get("altitude") or ""
     if not out.get("brew_ratio"):
         out["brew_ratio"] = facts.get("brew_ratio") or ""
     if not out.get("official_notes"):
-        story = clean_story_text(facts.get("description") or "")
-        out["official_notes"] = story
-        out["roaster_notes"] = story
-        out["story"] = story
+        story = _page_copy(str(facts.get("description") or ""), keep_untranslated=keep_untranslated)
+        if story:
+            out["official_notes"] = story
+            out["roaster_notes"] = story
+            out["story"] = story
     if not out.get("image_url"):
         image_url = _first_image_url(facts.get("image_url"), facts.get("images"), page_url=page_url)
         out["image_url"] = image_url

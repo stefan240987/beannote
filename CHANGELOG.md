@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.27] - 2026-09-22
+
+- snapshot: feat - translate link imports from any shop language into Danish and English
+- Creating a bean from a product link always asks Gemini, including when the page already has a name and roaster. Story and flavor notes are stored as da/en. The printed product name and brand stay as on the bag. A Gemini outage still creates the bean from the page facts.
+
 ## [1.1.26] - 2026-09-22
 
 - snapshot: fix - hide the mobile bean-modal close X now that pull-to-dismiss is available

@@ -1257,7 +1257,14 @@ def refine_label_fields(parsed: dict[str, Any], lang: str = "da") -> dict[str, A
         printed.append("Brasilien")
     if re.search(r"etiopien|ethiopia", search):
         printed.append("Etiopien")
-    if len(printed) >= 2:
+    origin_parts = [
+        part.strip()
+        for part in re.split(r"\s*(?:&|/|,| og | and )\s*", origin)
+        if part.strip()
+    ]
+    if len(origin_parts) >= 2:
+        origin = _localize_origin_text(origin, code)
+    elif len(printed) >= 2:
         origin = " & ".join(localize_mapped(part, ORIGIN_PRINT_LOCALES, code) for part in printed)
     elif origin:
         origin = _localize_origin_text(origin, code)
