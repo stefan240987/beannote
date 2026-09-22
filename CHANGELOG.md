@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.29] - 2026-09-22
+
+- snapshot: fix - show the full bean photo on desktop cards
+- Explore cards from 1024px use the photo's own size instead of a cropped 200px frame. The mat, padding, and border are gone, so the picture sits directly on the card.
+
 ## [1.1.28] - 2026-09-22
 
 - snapshot: fix - keep each tasting note in one language

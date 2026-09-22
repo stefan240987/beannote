@@ -1295,13 +1295,21 @@ button.gear-badge-locked {
   }
   .bean-card-img-wrap,
   .bean-card-photo {
-    height: 200px;
+    height: auto;
     padding: 0;
+    border: 0;
     border-radius: 0;
+    background: transparent;
+    box-shadow: none;
   }
   .bean-card-img-wrap img,
   .bean-card-img {
-    object-fit: cover;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: none;
+    object-fit: contain;
+    object-position: center;
   }
   .app-page,
   .explore-list,
