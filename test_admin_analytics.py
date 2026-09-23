@@ -190,6 +190,29 @@ class AdminAnalyticsTests(unittest.TestCase):
         self.assertEqual(missing.status_code, 404)
         self.client.cookies.clear()
 
+    def test_admin_can_toggle_origin_map(self):
+        self.client.cookies.clear()
+        try:
+            guest = self.client.get("/api/config")
+            self.assertTrue(guest.json()["show_origin_map"])
+            denied = self.client.put("/api/admin/settings/origin-map", json={"enabled": False})
+            self.assertEqual(denied.status_code, 401)
+            self._login("member@beannote.test")
+            member = self.client.put("/api/admin/settings/origin-map", json={"enabled": False})
+            self.assertEqual(member.status_code, 403)
+            self._login("admin@beannote.test")
+            off = self.client.put("/api/admin/settings/origin-map", json={"enabled": False})
+            self.assertEqual(off.status_code, 200)
+            self.assertFalse(off.json()["show_origin_map"])
+            self.assertFalse(self.client.get("/api/config").json()["show_origin_map"])
+            on = self.client.put("/api/admin/settings/origin-map", json={"enabled": True})
+            self.assertEqual(on.status_code, 200)
+            self.assertTrue(on.json()["show_origin_map"])
+        finally:
+            self._login("admin@beannote.test")
+            self.client.put("/api/admin/settings/origin-map", json={"enabled": True})
+            self.client.cookies.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

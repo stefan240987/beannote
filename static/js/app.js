@@ -223,6 +223,7 @@ const state = {
   },
 };
 let originMap = null;
+let originMapToggleBusy = false;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (value) => String(value ?? "")
@@ -1319,12 +1320,33 @@ function metaBadges(source) {
   return bits.length ? `<div class="flex flex-wrap gap-1">${bits.join("")}</div>` : "";
 }
 
+function showOriginMap() {
+  if (!state.config || state.config.show_origin_map == null) return true;
+  return !!state.config.show_origin_map;
+}
+
+function mapToggle(on) {
+  return `<button type="button" class="map-toggle" data-toggle-origin-map aria-pressed="${on ? "true" : "false"}" aria-label="${esc(t(on ? "map_toggle_hide" : "map_toggle_show"))}">
+    <span class="map-toggle-label" data-i18n="map_toggle">${esc(t("map_toggle"))}</span>
+    <span class="map-switch" aria-hidden="true"></span>
+  </button>`;
+}
+
 function originMapBox(source) {
   if (source?.latitude == null || source?.longitude == null) {
-    return `<p class="my-3 text-sm text-muted">${t("no_map_coords")}</p>`;
+    return `<p class="origin-map-empty my-3 text-sm text-muted">${t("no_map_coords")}</p>`;
   }
   const label = source.region_full || source.origin || source.name || t("map_origin");
   return `<div id="origin-map" class="h-44 w-full rounded-xl overflow-hidden my-3" data-lat="${source.latitude}" data-lng="${source.longitude}" data-label="${esc(label)}"></div>`;
+}
+
+function originMapSection(bean) {
+  const on = showOriginMap();
+  if (!on && !isAdmin()) return "";
+  if (!on) return `<section class="bean-modal-map is-off">${mapToggle(false)}</section>`;
+  const map = originMapBox(bean);
+  if (!isAdmin()) return `<section class="bean-modal-map is-on">${map}</section>`;
+  return `<section class="bean-modal-map is-on has-toggle">${mapToggle(true)}${map}</section>`;
 }
 
 function brewBadge(source) {
@@ -2071,7 +2093,7 @@ function beanModal(profile) {
           ${storyBlock(bean.story)}
           ${roasterProfileCard(profile)}
           <div class="bean-modal-recipes">${personalLogSection(profile)}</div>
-          <section class="bean-modal-map">${originMapBox(bean)}</section>
+          ${originMapSection(bean)}
           ${isAdmin() ? `<button type="button" data-enrich-bean class="min-h-12 w-full rounded-xl bg-foam font-semibold ring-1 ring-latte" data-i18n="enrich_bean">${t("enrich_bean")}</button>` : ""}
           ${isAdmin() ? `<button id="toggle-bean-edit" class="min-h-11 w-full text-sm font-semibold text-muted">${t("edit_details")}</button>` : ""}
           ${editor}
@@ -4147,6 +4169,32 @@ function bindApp() {
     if (!isAdmin()) return;
     state.editBean = !state.editBean;
     render();
+  });
+  $("[data-toggle-origin-map]")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isAdmin() || originMapToggleBusy) return;
+    const enabled = !showOriginMap();
+    const tops = [...document.querySelectorAll("#bean-modal [data-modal-scroll], #bean-modal .bean-modal-body")].map((node) => node.scrollTop);
+    originMapToggleBusy = true;
+    state.config.show_origin_map = enabled;
+    render();
+    document.querySelectorAll("#bean-modal [data-modal-scroll], #bean-modal .bean-modal-body").forEach((node, index) => {
+      node.scrollTop = tops[index] || 0;
+    });
+    try {
+      const result = await api("/api/admin/settings/origin-map", {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
+      state.config.show_origin_map = !!result.show_origin_map;
+      if (!!result.show_origin_map !== enabled) render();
+    } catch (err) {
+      state.config.show_origin_map = !enabled;
+      toast(t(err.detail || "map_toggle_fail"));
+    } finally {
+      originMapToggleBusy = false;
+    }
   });
   document.querySelectorAll("[data-approve-bean-photo]").forEach((btn) => {
     btn.addEventListener("click", (event) => {

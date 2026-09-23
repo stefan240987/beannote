@@ -6,7 +6,15 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Request
 
-from db import ENVIRONMENT, VERSION, distinct_values, get_db_path, is_local_dev, should_auto_flush
+from db import (
+    ENVIRONMENT,
+    VERSION,
+    distinct_values,
+    get_db_path,
+    is_local_dev,
+    should_auto_flush,
+    show_origin_map,
+)
 from deps import BREW_METHODS, UI_LANGS, _oauth_configured, optional_user, support_config
 from jobs import queue_stats
 from ocr import (
@@ -77,6 +85,7 @@ def config(request: Request, user: Optional[dict[str, Any]] = Depends(optional_u
         "brew_method_i18n": brew_method_i18n_table(),
         "origins": distinct_values("origin"),
         "roasts": distinct_values("roast_level"),
+        "show_origin_map": show_origin_map(),
         **support_config(),
     }
 

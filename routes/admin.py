@@ -6,7 +6,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from db import admin_analytics, list_admin_users, record_pageview, set_user_blocked
+from db import (
+    admin_analytics,
+    list_admin_users,
+    record_pageview,
+    set_show_origin_map,
+    set_user_blocked,
+)
 from deps import (
     _auth_error,
     analytics_ids,
@@ -14,7 +20,7 @@ from deps import (
     optional_user,
     require_admin,
 )
-from schemas import PageviewIn
+from schemas import OriginMapSettingIn, PageviewIn
 
 router = APIRouter(tags=["admin"])
 
@@ -80,3 +86,12 @@ def unblock_admin_user(
     except ValueError as exc:
         raise _auth_error(str(exc)) from exc
     return {"user": user}
+
+
+@router.put("/api/admin/settings/origin-map")
+def update_origin_map_setting(
+    payload: OriginMapSettingIn,
+    _admin: dict[str, Any] = Depends(require_admin),
+) -> dict[str, bool]:
+    del _admin
+    return {"show_origin_map": set_show_origin_map(payload.enabled)}

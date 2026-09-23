@@ -21,7 +21,7 @@ import bcrypt
 
 from translations import FALLBACK_LANG, SUPPORTED_LANGUAGES, normalize_lang
 
-VERSION = "1.1.32"
+VERSION = "1.1.33"
 _BREW_KEYS = ("recommended_method", "grind_size", "water_temp", "brew_ratio", "usage")
 _ROASTER_URL_RE = re.compile(
     r"(https?://[^\s<>\"']+|www\.[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s<>\"']*)?)",
@@ -1082,6 +1082,11 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ratings_user ON ratings(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(auth_provider, oauth_id);
             CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         _ensure_columns(conn)
@@ -1096,6 +1101,31 @@ def init_db() -> None:
         sync_gemini_slots_on(conn)
     get_images_dir()
     ensure_admin_from_env()
+
+
+def show_origin_map() -> bool:
+    """World map in the bean modal. Missing row means on."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'show_origin_map'"
+        ).fetchone()
+    if row is None:
+        return True
+    return str(row["value"]).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def set_show_origin_map(enabled: bool) -> bool:
+    value = "1" if enabled else "0"
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value)
+            VALUES ('show_origin_map', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (value,),
+        )
+    return bool(enabled)
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:

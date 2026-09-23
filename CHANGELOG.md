@@ -2,6 +2,11 @@
 
 All notable BeanNote changes are recorded here.
 
+## [1.1.33] - 2026-09-23
+
+- snapshot: feat - admin can hide the world map inside the bean modal
+- The origin map folds into a single switch row for admins. With the map on, that switch is the card header and the pin sits underneath. With it off, the card collapses to the same row, so the sheet does not keep an empty map.
+
 ## [1.1.32] - 2026-09-22
 
 - snapshot: fix - keep Save masterdata visible in the desktop edit sheet

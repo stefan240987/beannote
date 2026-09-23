@@ -254,6 +254,72 @@ input, select, textarea, button { font-family: inherit; }
 #origin-map.leaflet-container { background: #f3ebe3; }
 .leaflet-container { font-family: inherit; background: #f3ebe3; }
 .leaflet-control-attribution { font-size: 9px; }
+.map-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #e8d8c8;
+  border-radius: 0.85rem;
+  background: #fff;
+  color: #3c2a21;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+}
+.map-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 2.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  background: #e8d8c8;
+}
+.map-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(60, 42, 33, 0.18);
+  transition: transform 0.15s ease;
+}
+.map-toggle[aria-pressed="true"] .map-switch { background: #b85c38; }
+.map-toggle[aria-pressed="true"] .map-switch::after { transform: translateX(1rem); }
+#bean-modal .bean-modal-map.has-toggle {
+  overflow: hidden;
+  border: 1px solid #e8d8c8;
+  border-radius: 0.85rem;
+  background: #fff;
+}
+#bean-modal .bean-modal-map.has-toggle .map-toggle {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid #e8d8c8;
+  background: transparent;
+}
+#bean-modal .bean-modal-map #origin-map,
+#bean-modal .bean-modal-map .origin-map-empty {
+  margin: 0;
+}
+#bean-modal .bean-modal-map.has-toggle #origin-map {
+  border-radius: 0;
+}
+#bean-modal .origin-map-empty {
+  border-radius: 0.75rem;
+  background: #f3ebe3;
+  padding: 0.8rem 0.9rem;
+}
+#bean-modal .bean-modal-map.has-toggle .origin-map-empty {
+  border-radius: 0;
+  background: transparent;
+}
 .coffee-pin { background: transparent !important; border: none !important; font-size: 1.6rem; line-height: 1; }
 .coffee-pattern {
   background-color: #3c2a21;
@@ -1625,13 +1691,18 @@ button.gear-badge-locked {
     flex-shrink: 0;
   }
 
+  #bean-modal .bean-modal-map.is-off {
+    flex-shrink: 0;
+  }
+
   #bean-modal .bean-modal-map #origin-map,
   #bean-modal .bean-modal-map .h-44 {
-    height: 7rem;
+    height: 7.5rem;
     margin-block: 0;
   }
 
-  #bean-modal .bean-modal-map .my-3 {
+  #bean-modal .bean-modal-map .my-3,
+  #bean-modal .bean-modal-map .origin-map-empty {
     margin-block: 0;
   }
 

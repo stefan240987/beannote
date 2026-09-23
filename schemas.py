@@ -133,3 +133,7 @@ class GearCreateIn(BaseModel):
 class PageviewIn(BaseModel):
     path: str = Field(default="/", max_length=160)
 
+
+class OriginMapSettingIn(BaseModel):
+    enabled: bool
+
